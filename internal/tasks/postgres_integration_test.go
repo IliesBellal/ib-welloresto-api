@@ -397,6 +397,108 @@ func TestProcessUpsellPatternsForMerchant_Postgres(t *testing.T) {
 	}
 }
 
+// Les variantes (by_product_of) sont comptées sous leur produit groupe
+// (docs/UPSELL_COMPLETION.md, D1). A est commandé 3 fois avec la variante V1
+// et 3 fois avec la variante V2 du groupe G : aucune paire A+Vn n'atteint
+// upsellMinCoOccur=5, mais la paire A+G (6 commandes) l'atteint une fois les
+// variantes rattachées. Sans ce rattachement, aucun pattern n'est produit.
+func TestProcessUpsellPatternsForMerchant_VariantsRolledUp_Postgres(t *testing.T) {
+	rawDB := pgtest.Open(t)
+	ctx := context.Background()
+	merchantID := seedTaskMerchant(t, rawDB, ctx, 1)
+
+	seedProduct := func(name string, groupID any) int64 {
+		var id int64
+		if err := rawDB.QueryRowContext(ctx, `
+			INSERT INTO products (merchant_id, name, price, category, by_product_of)
+			VALUES ($1, $2, 300, 'itest', $3)
+			RETURNING product_id`, merchantID, name, groupID).Scan(&id); err != nil {
+			t.Fatalf("seed product %s: %v", name, err)
+		}
+		return id
+	}
+	productA := seedProduct("itest product A", nil)
+	group := seedProduct("itest group G", nil)
+	variant1 := seedProduct("itest variant G1", group)
+	variant2 := seedProduct("itest variant G2", group)
+
+	now := time.Now().UTC()
+	for i, variant := range []int64{variant1, variant1, variant1, variant2, variant2, variant2} {
+		var orderID int64
+		if err := rawDB.QueryRowContext(ctx, `
+			INSERT INTO orders (merchant_id, order_num, brand_status, state, price, tva, ht, created_by, creation_date)
+			VALUES ($1, $2, 'ACCEPTED', 'CLOSED', 800, 0, 800, 'itest', $3)
+			RETURNING order_id`, merchantID, 300+i, now.Add(-time.Duration(i)*time.Hour)).Scan(&orderID); err != nil {
+			t.Fatalf("seed order %d: %v", i, err)
+		}
+		for _, pid := range []int64{productA, variant} {
+			if _, err := rawDB.ExecContext(ctx, `
+				INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, price)
+				VALUES ($1, $2, $3, 1, 300)`, orderID, pid, merchantID); err != nil {
+				t.Fatalf("seed orderitem order=%d product=%d: %v", orderID, pid, err)
+			}
+		}
+	}
+
+	tm := &TasksManager{DB: rawDB}
+	pairs, err := tm.processUpsellPatternsForMerchant(ctx, merchantID)
+	if err != nil {
+		t.Fatalf("processUpsellPatternsForMerchant failed against postgres: %v", err)
+	}
+	// A→G et G→A.
+	if pairs != 2 {
+		t.Fatalf("expected 2 directed patterns (A<->G) once variants are rolled up, got %d", pairs)
+	}
+}
+
+// Liste « petits prix » (docs/UPSELL_COMPLETION.md, D10) : prix effectif d'un
+// groupe = sa variante disponible la moins chère, produits à 0 € et
+// indisponibles écartés, seuil = médiane / 3.
+func TestComputeUpsellLowPriceList_Postgres(t *testing.T) {
+	rawDB := pgtest.Open(t)
+	ctx := context.Background()
+	merchantID := seedTaskMerchant(t, rawDB, ctx, 1)
+
+	seed := func(name string, price int, isGroup bool, groupID any, available bool) string {
+		var id int64
+		if err := rawDB.QueryRowContext(ctx, `
+			INSERT INTO products (merchant_id, name, price, category, is_product_group, by_product_of, available, enabled, status)
+			VALUES ($1, $2, $3, 'itest', $4, $5, $6, TRUE, 'available')
+			RETURNING product_id`, merchantID, name, price, isGroup, groupID, available).Scan(&id); err != nil {
+			t.Fatalf("seed product %s: %v", name, err)
+		}
+		return strconv.FormatInt(id, 10)
+	}
+	coca := seed("itest Coca", 0, true, nil, true)
+	cocaID, _ := strconv.ParseInt(coca, 10, 64)
+	seed("itest Coca 33cl", 190, false, cocaID, true)
+	seed("itest Coca 1.25L", 400, false, cocaID, true)
+	seed("itest Coca 50cl hors vente", 150, false, cocaID, false)
+	eau := seed("itest Eau", 140, false, nil, true)
+	sauce := seed("itest Sauce", 0, false, nil, true)
+	retired := seed("itest Tiramisu retiré", 300, false, nil, false)
+	var mains []string
+	for i := 0; i < 5; i++ {
+		mains = append(mains, seed("itest Pizza "+strconv.Itoa(i), 990, false, nil, true))
+	}
+
+	sales := map[string]int{coca: 50, eau: 80, sauce: 40, retired: 30, mains[0]: 300}
+
+	tm := &TasksManager{DB: rawDB}
+	entries, median, err := tm.computeUpsellLowPriceList(ctx, merchantID, sales)
+	if err != nil {
+		t.Fatalf("computeUpsellLowPriceList failed against postgres: %v", err)
+	}
+	// Prix > 0 des produits proposables : 140, 190 (groupe Coca), 990 ×5 →
+	// médiane 990, seuil 330.
+	if median != 990 {
+		t.Fatalf("median = %v, want 990", median)
+	}
+	if len(entries) != 2 || entries[0].ProductID != eau || entries[1].ProductID != coca || entries[1].Price != 190 {
+		t.Fatalf("entries = %+v, want [Eau 140, Coca 190 (variante disponible la moins chère)]", entries)
+	}
+}
+
 // TestCleanupExpiredPasswordResets_Postgres exercises the exported cron entry
 // point directly — unlike the other tasks in this file.
 //

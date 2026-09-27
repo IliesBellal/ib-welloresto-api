@@ -5867,3 +5867,35 @@ Le formulaire de démo du site vitrine (`DemoForm.astro`) envoie désormais `utm
 - **Pas encore fait (délibérément)** : aucune exploitation des utm_* (tableau de bord, export), et pas de demande sans créneau (`slot_start` reste obligatoire). Le site gère ce cas en proposant au visiteur un e-mail prérempli.
 
 Tests : `TestCleanUTM`, `TestCleanUTMTruncatesOnRuneBoundary`, `TestFormatOrigin` (demorequest) et `TestRenderDemoRequestTemplateWith(out)Origin` (mailer).
+
+### Upsell — Variantes et complément boissons / desserts : décisions de conception (2026-09-27)
+
+Constat : `upsell_max_items` n'est presque jamais atteint par les associations (patterns). La voie `pattern` est abandonnée dès qu'elle trouve moins de `maxItems` produits (1 suggestion `pattern` sur 321 sur staging). Détail, chiffres et points ouverts : [UPSELL_COMPLETION.md](UPSELL_COMPLETION.md).
+
+- **D1 — Variantes rattachées à leur groupe (validé).** Les lignes de commande portent l'id de la variante (`by_product_of`), mais seuls les groupes sont proposables. Les associations qui visent une variante étaient donc perdues sans message. L'analyse de paniers et la recherche au moment de la suggestion comptent désormais chaque variante sous l'id de son groupe.
+- **D2 — Toujours viser `upsell_max_items` (validé).** On garde les associations trouvées, même si elles sont moins nombreuses que `maxItems`, puis on complète.
+- **D3 — Complément avec des boissons et desserts moins chers qui se vendent (validé dans le principe).** Restent à fixer : la détection des catégories (noms libres, pas de type en base), le seuil de prix, le classement ventes / prix et la répartition entre boissons et desserts.
+- **D4 — Pas de calibrage sur staging**, jugée non représentative. D1 et D2 n'en dépendent pas. D3 attend des données de prod.
+- **Reporté** : associations catégorie → catégorie génériques, score lissé à la place du lift, exclusion des lignes `is_upsell`, suivi des acceptations (1 acceptation sur 320 suggestions : sans ce suivi, on ne peut pas mesurer l'effet du chantier).
+
+**Implémentation de D1 et D2 (2026-09-27), avec trois décisions prises en cours de route :**
+
+- **D5 — Complément provisoire** : les places restantes vont d'abord au LLM, puis aux produits `is_popular`, en attendant D3.
+- **D6 — Champ `origin` par article** (`pattern`, `llm` ou `featured`) dans `suggested_items`. La colonne `source` garde ses valeurs et nomme la première étape qui a contribué.
+- **D7 — `{MAX_ITEMS}` réellement remplacé** dans le prompt LLM par le nombre de places restantes. Il était envoyé tel quel jusqu'ici.
+
+Il n'y a ni migration ni variable d'environnement nouvelle. Pour éviter une nuit sans associations sur les paniers contenant une variante, lancer `POST /admin/upsell/recompute-patterns` juste après le déploiement. Tests unitaires (`service_test.go`) et d'intégration sur staging au vert. Le test du rattachement des variantes échoue bien sur l'ancien cron. D3 attend les résultats de [upsell-analyse-prod.sql](upsell-analyse-prod.sql), à exécuter sur la prod.
+
+Statut : non commité, non déployé.
+
+### Upsell — Petits prix à succès, filtres par canal, borne sans plafond (2026-09-27)
+
+Suite de l'entrée précédente, après analyse des données de prod ([upsell-analyse-prod.sql](upsell-analyse-prod.sql)). Détail : [UPSELL_COMPLETION.md](UPSELL_COMPLETION.md), §6 et §7.
+
+- **Complément sans reconnaissance de catégories.** Aucune règle sur les noms (« boisson », « dessert ») n'est jugée assez solide. Le complément prend les **produits à petit prix qui se vendent** (D10) : prix effectif > 0 et au plus le tiers du prix médian de la carte, vendus au moins une fois sur 90 jours, meilleures ventes d'abord. Sur les données de prod, cela donne naturellement boissons, desserts et accompagnements (les frites chez 226). La liste est calculée chaque nuit par le cron de 3h et stockée dans Redis (`upsell:lowprice:<merchant>`) ; au moment de proposer, cela coûte une lecture Redis. Les produits à 0 € sont exclus de cette liste seulement : une association peut toujours proposer une sauce maison.
+- **Ordre final (D11)** : associations → petits prix → LLM (désactivé en prod) → arrêt. `is_popular` sort du complément : ce drapeau est calculé chaque nuit (top des ventes, surtout des plats), il ne sert plus qu'en secours total. Nouvelles valeurs de `source` : `low_price`, `cached_low_price`, `none` (liste vide, enregistrée mais pas mise en cache).
+- **Filtres par canal dans le moteur (D9)** : `is_available_on_sno` sur SNO, `is_available_on_kiosk` sur la borne, et les horaires sur les deux, appliqués avant la sélection pour que le complément remplace ce qui est retiré. Le canal entre dans la clé du cache. SNO ne vérifiait pas du tout `is_available_on_sno` pour l'upsell.
+- **La borne suit `upsell_max_items` (D8)** : elle était plafonnée à 3 en dur dans l'API. Aucun changement côté Flutter (grille qui défile).
+- **Reporté, à analyser à l'usage** : varier les catégories (sinon plusieurs boissons d'affilée), ne pas élargir aux produits plus chers quand les petits prix manquent (la liste peut rester courte), associations entre catégories, options populaires (`is_popular` sur `configurable_attribute_options`, badge borne/SNO, sans jamais pré-cocher une option payante). Suppléments vendus comme produits : laissés en l'état.
+
+Aucune migration. **Juste après le déploiement, lancer `POST /admin/upsell/recompute-patterns`**, sinon il n'y a ni petits prix ni associations avec variantes avant 3h. Statut : non commité, non déployé.

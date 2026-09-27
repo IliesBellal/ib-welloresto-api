@@ -5,6 +5,7 @@ package upsell
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 
 	"welloresto-api/internal/database/dbx/pgtest"
@@ -97,12 +98,64 @@ func TestUpsellRepository_Postgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed products: %v", err)
 	}
-	items, err := repo.ListFeaturedProducts(ctx, merchantID, 5)
+	items, err := repo.ListFeaturedProducts(ctx, merchantID, ChannelPOS, 5)
 	if err != nil {
 		t.Fatalf("ListFeaturedProducts failed against postgres: %v", err)
 	}
 	if len(items) != 1 || items[0].Name != "ITest Burger" || items[0].Price != 950 {
 		t.Fatalf("unexpected featured products: %+v", items)
+	}
+	// Retiré de SNO et de la borne (les deux drapeaux valent TRUE par défaut) :
+	// il ne reste proposable que sur le POS.
+	if _, err := db.ExecContext(ctx, `
+		UPDATE products SET is_available_on_sno = FALSE, is_available_on_kiosk = FALSE
+		WHERE merchant_id = $1`, merchantID); err != nil {
+		t.Fatalf("disable on sno/kiosk: %v", err)
+	}
+	if items, err = repo.ListFeaturedProducts(ctx, merchantID, ChannelPOS, 5); err != nil || len(items) != 1 {
+		t.Fatalf("ListFeaturedProducts(POS) = (%+v, %v), want the burger", items, err)
+	}
+	for _, channel := range []string{ChannelSNO, ChannelKiosk} {
+		items, err = repo.ListFeaturedProducts(ctx, merchantID, channel, 5)
+		if err != nil || len(items) != 0 {
+			t.Fatalf("ListFeaturedProducts(%s) = (%+v, %v), want none", channel, items, err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE products SET is_available_on_kiosk = TRUE WHERE merchant_id = $1`, merchantID); err != nil {
+		t.Fatalf("enable on kiosk: %v", err)
+	}
+	if items, err = repo.ListFeaturedProducts(ctx, merchantID, ChannelKiosk, 5); err != nil || len(items) != 1 {
+		t.Fatalf("ListFeaturedProducts(KIOSK) after enabling = (%+v, %v), want the burger", items, err)
+	}
+
+	// --- GetProductGroups : variante → groupe, le reste absent ---
+	var groupID, variantID, plainID int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO products (merchant_id, name, price, category, is_product_group)
+		VALUES ($1, 'ITest Coca', 0, 'itest', TRUE) RETURNING product_id`, merchantID).Scan(&groupID); err != nil {
+		t.Fatalf("seed group: %v", err)
+	}
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO products (merchant_id, name, price, category, by_product_of)
+		VALUES ($1, 'ITest Coca 33cl', 250, 'itest', $2) RETURNING product_id`, merchantID, groupID).Scan(&variantID); err != nil {
+		t.Fatalf("seed variant: %v", err)
+	}
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO products (merchant_id, name, price, category)
+		VALUES ($1, 'ITest Pizza', 990, 'itest') RETURNING product_id`, merchantID).Scan(&plainID); err != nil {
+		t.Fatalf("seed plain product: %v", err)
+	}
+	toStr := func(id int64) string { return strconv.FormatInt(id, 10) }
+	groups, err := repo.GetProductGroups(ctx, merchantID, []string{toStr(variantID), toStr(plainID), toStr(groupID)})
+	if err != nil {
+		t.Fatalf("GetProductGroups failed against postgres: %v", err)
+	}
+	if len(groups) != 1 || groups[toStr(variantID)] != toStr(groupID) {
+		t.Fatalf("GetProductGroups = %v, want only %d -> %d", groups, variantID, groupID)
+	}
+	other, err := repo.GetProductGroups(ctx, "other-merchant", []string{toStr(variantID)})
+	if err != nil || len(other) != 0 {
+		t.Fatalf("GetProductGroups leaked across merchants: %v (err=%v)", other, err)
 	}
 
 	// --- GetMerchantUpsellSettings : défauts sans ligne, puis avec ligne ---

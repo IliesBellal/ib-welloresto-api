@@ -104,6 +104,10 @@ type AvailableProduct struct {
 	CategoryName string
 	ImageURL     *string
 	IsPopular    bool
+	// Channel flags, NULL read as false (same rule as the SNO and Kiosk
+	// catalogues).
+	IsAvailableOnSNO   bool
+	IsAvailableOnKiosk bool
 }
 
 // ListAvailableProductsForUpsell returns all orderable products for a merchant.
@@ -125,7 +129,9 @@ func (r *MenuRepository) ListAvailableProductsForUpsell(ctx context.Context, mer
 			COALESCE(p.category, '')   AS category_id,
 			COALESCE(pc.categ_name, '') AS category_name,
 			p.image_url,
-			COALESCE(p.is_popular, FALSE)  AS is_popular
+			COALESCE(p.is_popular, FALSE)  AS is_popular,
+			COALESCE(p.is_available_on_sno, FALSE)   AS is_available_on_sno,
+			COALESCE(p.is_available_on_kiosk, FALSE) AS is_available_on_kiosk
 		FROM products p
 		LEFT JOIN productcateg pc
 			ON pc.merchant_categ_id = p.category
@@ -156,6 +162,8 @@ func (r *MenuRepository) ListAvailableProductsForUpsell(ctx context.Context, mer
 			&ap.CategoryName,
 			&imageURL,
 			&isPopular,
+			&ap.IsAvailableOnSNO,
+			&ap.IsAvailableOnKiosk,
 		); err != nil {
 			log.Error("upsell: ListAvailableProductsForUpsell scan failed: " + err.Error())
 			return nil, err
@@ -1153,7 +1161,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
             SELECT p.product_id, p.by_product_of, p.name, p.category, p.category, p.price, p.price_take_away, p.price_delivery, p.product_desc,
                    p.available_in, p.available_take_away, p.available_delivery,
                    tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away, p.bg_color, p.is_product_group, p.is_available_on_sno, p.is_available_on_kiosk, p.status,
-				   p.display_order
+				   p.display_order, p.image_url
             FROM products p
             INNER JOIN tva_categories tva_in on tva_in.tva_id = p.tva_in_id
             INNER JOIN tva_categories tva_delivery on tva_delivery.tva_id = p.tva_delivery_id
@@ -1173,13 +1181,21 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			var bg sql.NullString
 			var desc sql.NullString
 			var availIn, availTake, availDel sql.NullBool
+			// image_url manquait ici alors que la requête des racines le lit :
+			// les sous-produits sortaient sans image sur la caisse, la borne et
+			// le Scan & Order (qui les affiche comme des produits à part entière),
+			// seul le back-office — qui passe par GetAll* — les montrait.
+			var imageURL sql.NullString
 			if err := rows.Scan(&p.ProductID, &by, &p.Name, &p.Category, &p.CategoryID, &p.Price, &p.PriceTakeAway,
 				&p.PriceDelivery, &desc, &availIn, &availTake, &availDel, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup,
-				&p.IsAvailableOnSNO, &p.IsAvailableOnKiosk, &p.Status, &p.DisplayOrder); err != nil {
+				&p.IsAvailableOnSNO, &p.IsAvailableOnKiosk, &p.Status, &p.DisplayOrder, &imageURL); err != nil {
 				return nil, err
 			}
 			if by.Valid {
 				p.ByProductOf = &by.String
+			}
+			if imageURL.Valid {
+				p.ImageURL = &imageURL.String
 			}
 			if tvaIn.Valid {
 				p.TVAIn = &tvaIn.Float64

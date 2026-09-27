@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,14 +20,15 @@ import (
 )
 
 const (
-	upsellTask         = "upsell"
-	cacheKeyResultFmt  = "upsell:result:%s:%s:%s" // merchantID, cartSignature, orderType
-	cacheKeyPatternFmt = "upsell:patterns:%s:%s"  // merchantID, productID
-	cacheResultTTL     = 30 * time.Minute
-	llmTimeout         = 1500 * time.Millisecond
-	maxAvailableForLLM = 50
-	maxFreqPairsForLLM = 20
-	minLift            = 1.5
+	upsellTask          = "upsell"
+	cacheKeyResultFmt   = "upsell:result:%s:%s:%s:%s" // merchantID, cartSignature, orderType, channel
+	cacheKeyPatternFmt  = "upsell:patterns:%s:%s"     // merchantID, productID
+	cacheKeyLowPriceFmt = "upsell:lowprice:%s"        // merchantID
+	cacheResultTTL      = 30 * time.Minute
+	llmTimeout          = 1500 * time.Millisecond
+	maxAvailableForLLM  = 50
+	maxFreqPairsForLLM  = 20
+	minLift             = 1.5
 )
 
 // UpsellResult is returned by GenerateUpsell to the HTTP handler.
@@ -64,6 +66,7 @@ type Service struct {
 	menuRepo   *menu.MenuRepository
 	aiRegistry *ai.Registry
 	aiCache    *aicache.Cache
+	schedules  ScheduleAvailability
 	logger     *zap.Logger
 }
 
@@ -73,6 +76,7 @@ func NewService(
 	menuRepo *menu.MenuRepository,
 	aiRegistry *ai.Registry,
 	aiCache *aicache.Cache,
+	schedules ScheduleAvailability,
 	logger *zap.Logger,
 ) *Service {
 	return &Service{
@@ -80,6 +84,7 @@ func NewService(
 		menuRepo:   menuRepo,
 		aiRegistry: aiRegistry,
 		aiCache:    aiCache,
+		schedules:  schedules,
 		logger:     logger,
 	}
 }
@@ -131,12 +136,16 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 		s.logger.Warn("upsell: redis unavailable, skipping cache/patterns/llm, falling back to featured products",
 			zap.String("merchant_id", merchantID),
 		)
-		return s.featuredFallback(ctx, merchantID, cartProducts, maxItems, channel)
+		cart := s.resolveCart(ctx, merchantID, cartProducts)
+		unavailable := s.unavailableNow(ctx, merchantID, channel)
+		return s.featuredFallback(ctx, merchantID, cartProducts, mergeSets(cart.excluded, unavailable), maxItems, channel)
 	}
 
 	// ── 4.2 Cart signature & cache check ─────────────────────────────────────
+	// The channel is part of the key: each channel filters its own products
+	// (availability flag, schedules), so two channels may get different lists.
 	cartSignature := cartSignatureFrom(cartProducts)
-	cacheKey := fmt.Sprintf(cacheKeyResultFmt, merchantID, cartSignature, normalizeOrderType(orderType))
+	cacheKey := fmt.Sprintf(cacheKeyResultFmt, merchantID, cartSignature, normalizeOrderType(orderType), channel)
 
 	if cached, hit, _ := s.aiCache.Get(ctx, cacheKey); hit {
 		var cachedResult UpsellResult
@@ -165,34 +174,44 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 	}
 
 	// ── 4.3 Load candidates ───────────────────────────────────────────────────
+	// Variants in the cart are resolved to their product group: patterns are
+	// stored per group, and a group must not be suggested when one of its
+	// variants is already in the cart.
+	cart := s.resolveCart(ctx, merchantID, cartProducts)
+	// Products the channel cannot sell right now are filtered out before any
+	// selection, so that the next steps fill their slot
+	// (docs/UPSELL_COMPLETION.md, D9).
+	unavailable := s.unavailableNow(ctx, merchantID, channel)
+
 	available, err := s.menuRepo.ListAvailableProductsForUpsell(ctx, merchantID)
 	if err != nil {
 		s.logger.Error("upsell: failed to list available products, using featured fallback",
 			zap.String("merchant_id", merchantID),
 			zap.Error(err),
 		)
-		return s.featuredFallback(ctx, merchantID, cartProducts, maxItems, channel)
+		return s.featuredFallback(ctx, merchantID, cartProducts, mergeSets(cart.excluded, unavailable), maxItems, channel)
 	}
 
-	// Build cart set for fast exclusion.
-	cartSet := make(map[string]struct{}, len(cartProducts))
-	for _, p := range cartProducts {
-		cartSet[p.ProductID] = struct{}{}
-	}
-
-	// Index candidates (not in cart) by product_id.
+	// Index candidates (not in cart, sellable on the channel now) by product_id.
 	candidateMap := make(map[string]menu.AvailableProduct, len(available))
 	for _, ap := range available {
-		if _, inCart := cartSet[ap.ProductID]; !inCart {
-			candidateMap[ap.ProductID] = ap
+		if _, inCart := cart.excluded[ap.ProductID]; inCart {
+			continue
 		}
+		if _, outOfSchedule := unavailable[ap.ProductID]; outOfSchedule {
+			continue
+		}
+		if !availableOnChannel(ap, channel) {
+			continue
+		}
+		candidateMap[ap.ProductID] = ap
 	}
 
 	// ── 4.4 Pattern (Apriori from Redis) ─────────────────────────────────────
 	// Aggregate scores across all cart products.
 	aggregated := make(map[string]float64)
-	for _, cp := range cartProducts {
-		patKey := fmt.Sprintf(cacheKeyPatternFmt, merchantID, cp.ProductID)
+	for _, key := range cart.patternKeys {
+		patKey := fmt.Sprintf(cacheKeyPatternFmt, merchantID, key)
 		raw, hit, _ := s.aiCache.Get(ctx, patKey)
 		if !hit || raw == "" {
 			continue
@@ -208,7 +227,7 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 		}
 	}
 
-	// Find best lift to decide whether pattern is sufficient.
+	// Find best lift to decide whether patterns are trustworthy.
 	bestLift := 0.0
 	for _, score := range aggregated {
 		if score > bestLift {
@@ -216,70 +235,95 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 		}
 	}
 
-	if bestLift >= minLift && len(aggregated) >= maxItems {
-		// Sort by aggregated lift DESC.
-		type scored struct {
-			pid   string
-			score float64
-		}
-		ranked := make([]scored, 0, len(aggregated))
-		for pid, sc := range aggregated {
-			ranked = append(ranked, scored{pid, sc})
-		}
-		sort.Slice(ranked, func(i, j int) bool { return ranked[i].score > ranked[j].score })
-		if len(ranked) > maxItems {
-			ranked = ranked[:maxItems]
-		}
-
-		suggestions := make([]SuggestedItem, 0, len(ranked))
-		for _, r := range ranked {
-			ap := candidateMap[r.pid]
-			suggestions = append(suggestions, SuggestedItem{
-				ProductID: r.pid,
-				Title:     fmt.Sprintf(titleTemplates[hashIndex(r.pid, len(titleTemplates))], ap.Name),
-				Score:     normalizeScore(r.score),
-				Name:      ap.Name,
-				Price:     ap.Price,
-				ImageURL:  ap.ImageURL,
-			})
-		}
-
-		s.enrichWithProductConfig(ctx, merchantID, suggestions)
-
-		return s.persistAndCache(ctx, merchantID, cartSignature, suggestions, SourcePattern, cacheKey, nil, nil, channel)
+	// Patterns are kept even when there are fewer than maxItems of them; the
+	// remaining slots are completed by low-price best sellers, then by the LLM
+	// (docs/UPSELL_COMPLETION.md, D2 and D10).
+	var suggestions []SuggestedItem
+	if bestLift >= minLift {
+		suggestions = rankPatternSuggestions(aggregated, candidateMap, maxItems)
 	}
 
-	// ── 4.5 LLM fallback ─────────────────────────────────────────────────────
+	// ── 4.5 Low-price best sellers ───────────────────────────────────────────
+	if remaining := maxItems - len(suggestions); remaining > 0 {
+		lowPrice := s.lowPriceSuggestions(ctx, merchantID, withoutSuggested(candidateMap, suggestions), remaining)
+		suggestions = appendUnique(suggestions, lowPrice, maxItems)
+	}
+
+	// ── 4.6 LLM completion ───────────────────────────────────────────────────
+	var llmResp *ai.CompletionResponse
+	var llmProvider *string
+	if remaining := maxItems - len(suggestions); remaining > 0 {
+		llmItems, resp, provider := s.llmSuggestions(ctx, merchantID, cartProducts, cart.groupOf, available,
+			withoutSuggested(candidateMap, suggestions), aggregated, orderType, remaining)
+		if len(llmItems) > 0 {
+			suggestions = appendUnique(suggestions, llmItems, maxItems)
+			llmResp, llmProvider = resp, provider
+		}
+	}
+
+	// No further completion: featured (is_popular) products are mostly main
+	// dishes, and the list stays short rather than offering expensive items
+	// (docs/UPSELL_COMPLETION.md, arbitrage (c)).
+	source := sourceOf(suggestions)
+	if len(suggestions) == 0 {
+		// Empty lists are not cached, so the next call tries every step again
+		// (e.g. after a transient LLM failure or the nightly recomputation).
+		cacheKey = ""
+	}
+
+	s.enrichWithProductConfig(ctx, merchantID, suggestions)
+
+	return s.persistAndCache(ctx, merchantID, cartSignature, suggestions, source, cacheKey, llmResp, llmProvider, channel)
+}
+
+// llmSuggestions asks the LLM for at most limit products among candidates.
+// Any failure (LLM disabled or unavailable, timeout, invalid answer) is logged
+// and yields no item, so the list simply stays shorter.
+func (s *Service) llmSuggestions(
+	ctx context.Context,
+	merchantID string,
+	cartProducts []models.ProductEntry,
+	groupOf map[string]string,
+	available []menu.AvailableProduct,
+	candidates map[string]menu.AvailableProduct,
+	aggregated map[string]float64,
+	orderType string,
+	limit int,
+) ([]SuggestedItem, *ai.CompletionResponse, *string) {
+	if len(candidates) == 0 {
+		return nil, nil, nil
+	}
+
 	provider, provErr := s.aiRegistry.GetProviderForTask(upsellTask)
 	if provErr != nil {
 		if errors.Is(provErr, ai.ErrTaskDisabled) {
-			s.logger.Warn("upsell: LLM fallback disabled via config (AI_TASK_UPSELL_ENABLED=false), going to featured fallback",
+			s.logger.Warn("upsell: LLM fallback disabled via config (AI_TASK_UPSELL_ENABLED=false), skipping LLM completion",
 				zap.String("merchant_id", merchantID),
 			)
 		} else {
-			s.logger.Warn("upsell: LLM provider unavailable, going to featured fallback",
+			s.logger.Warn("upsell: LLM provider unavailable, skipping LLM completion",
 				zap.String("merchant_id", merchantID),
 				zap.Error(provErr),
 			)
 		}
-		return s.featuredFallback(ctx, merchantID, cartProducts, maxItems, channel)
+		return nil, nil, nil
 	}
 
 	taskCfg, _ := s.aiRegistry.TaskConfig(upsellTask)
 
-	// Limit available products for LLM context: prefer categories not in cart.
-	llmAvailable := selectLLMCandidates(candidateMap, cartSet, maxAvailableForLLM)
+	// Limit available products for LLM context.
+	llmAvailable := selectLLMCandidates(candidates, maxAvailableForLLM)
 
 	// Frequent pairs for LLM context (top by lift).
-	frequentPairs := buildFrequentPairsForPrompt(aggregated, candidateMap, maxFreqPairsForLLM)
+	frequentPairs := buildFrequentPairsForPrompt(aggregated, candidates, maxFreqPairsForLLM)
 
-	userPrompt, promptErr := buildUserPrompt(cartProducts, available, llmAvailable, frequentPairs, orderType)
+	userPrompt, promptErr := buildUserPrompt(cartProducts, groupOf, available, llmAvailable, frequentPairs, orderType)
 	if promptErr != nil {
 		s.logger.Error("upsell: failed to build user prompt",
 			zap.String("merchant_id", merchantID),
 			zap.Error(promptErr),
 		)
-		return s.featuredFallback(ctx, merchantID, cartProducts, maxItems, channel)
+		return nil, nil, nil
 	}
 
 	llmCtx, cancel := context.WithTimeout(context.Background(), llmTimeout)
@@ -287,7 +331,7 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 
 	completionReq := ai.CompletionRequest{
 		Task:         upsellTask,
-		SystemPrompt: upsellSystemPrompt,
+		SystemPrompt: strings.ReplaceAll(upsellSystemPrompt, "{MAX_ITEMS}", strconv.Itoa(limit)),
 		UserPrompt:   userPrompt,
 		Temperature:  taskCfg.Temperature,
 		MaxTokens:    taskCfg.MaxTokens,
@@ -300,12 +344,12 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 	var parseErr error
 
 	if llmErr == nil {
-		suggestions, parseErr = parseLLMResponse(resp.Content, candidateMap, maxItems)
+		suggestions, parseErr = parseLLMResponse(resp.Content, candidates, limit)
 		if parseErr != nil {
 			// One retry.
 			resp2, retryErr := provider.Complete(llmCtx, completionReq)
 			if retryErr == nil {
-				suggestions, parseErr = parseLLMResponse(resp2.Content, candidateMap, maxItems)
+				suggestions, parseErr = parseLLMResponse(resp2.Content, candidates, limit)
 				if parseErr == nil {
 					resp = resp2
 				}
@@ -314,95 +358,189 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 	}
 
 	if llmErr != nil || parseErr != nil || len(suggestions) == 0 {
-		s.logger.Warn("upsell: LLM call failed or produced no valid suggestions, going to featured fallback",
+		s.logger.Warn("upsell: LLM call failed or produced no valid suggestions, skipping LLM completion",
 			zap.String("merchant_id", merchantID),
 			zap.Error(llmErr),
 			zap.Error(parseErr),
 		)
-		return s.featuredFallback(ctx, merchantID, cartProducts, maxItems, channel)
+		return nil, nil, nil
 	}
 
 	// Enrich with product metadata.
 	for i, sg := range suggestions {
-		if ap, ok := candidateMap[sg.ProductID]; ok {
+		if ap, ok := candidates[sg.ProductID]; ok {
 			suggestions[i].Name = ap.Name
 			suggestions[i].Price = ap.Price
 			suggestions[i].ImageURL = ap.ImageURL
 		}
+		suggestions[i].Origin = OriginLLM
 	}
 
-	s.enrichWithProductConfig(ctx, merchantID, suggestions)
-
-	llmProvider := provider.Name()
-
-	return s.persistAndCache(ctx, merchantID, cartSignature, suggestions, SourceLLM, cacheKey, &ai.CompletionResponse{
+	providerName := provider.Name()
+	return suggestions, &ai.CompletionResponse{
 		Model:        resp.Model,
 		InputTokens:  resp.InputTokens,
 		OutputTokens: resp.OutputTokens,
 		LatencyMs:    resp.LatencyMs,
-	}, &llmProvider, channel)
+	}, &providerName
 }
 
-// featuredFallback is the last-resort path when both pattern and LLM fail.
-// It always persists (even for empty suggestions) to allow analytics.
-func (s *Service) featuredFallback(ctx context.Context, merchantID string, cartProducts []models.ProductEntry, maxItems int, channel string) (*UpsellResult, error) {
-	cartSet := make(map[string]struct{}, len(cartProducts))
-	for _, p := range cartProducts {
-		cartSet[p.ProductID] = struct{}{}
+// lowPriceSuggestions returns at most limit products of the merchant's
+// low-price best sellers list (computed nightly, see
+// tasks.RecomputeUpsellPatterns) that are still candidates. A missing or
+// unreadable list yields no item.
+func (s *Service) lowPriceSuggestions(ctx context.Context, merchantID string, candidates map[string]menu.AvailableProduct, limit int) []SuggestedItem {
+	raw, hit, _ := s.aiCache.Get(ctx, fmt.Sprintf(cacheKeyLowPriceFmt, merchantID))
+	if !hit || raw == "" {
+		return nil
 	}
-
-	cartSignature := cartSignatureFrom(cartProducts)
-
-	featured, err := s.repo.ListFeaturedProducts(ctx, merchantID, maxItems+len(cartSet))
-	if err != nil {
-		s.logger.Error("upsell: ListFeaturedProducts failed in fallback",
+	var entries []LowPriceEntry
+	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+		s.logger.Warn("upsell: unreadable low-price list, skipping it",
 			zap.String("merchant_id", merchantID),
 			zap.Error(err),
 		)
-		featured = []SuggestedItem{}
+		return nil
+	}
+	return lowPriceFromEntries(entries, candidates, limit)
+}
+
+// featuredSuggestions returns at most limit featured (is_popular) products that
+// are orderable on channel and not in excluded. A failure is logged and yields
+// no item.
+func (s *Service) featuredSuggestions(ctx context.Context, merchantID string, channel string, excluded map[string]struct{}, limit int) []SuggestedItem {
+	featured, err := s.repo.ListFeaturedProducts(ctx, merchantID, channel, limit+len(excluded))
+	if err != nil {
+		s.logger.Error("upsell: ListFeaturedProducts failed",
+			zap.String("merchant_id", merchantID),
+			zap.Error(err),
+		)
+		return []SuggestedItem{}
 	}
 
-	// Filter out cart products.
-	filtered := make([]SuggestedItem, 0, len(featured))
+	result := make([]SuggestedItem, 0, limit)
 	for _, sg := range featured {
-		if _, inCart := cartSet[sg.ProductID]; !inCart {
-			filtered = append(filtered, sg)
-		}
-		if len(filtered) >= maxItems {
+		if len(result) >= limit {
 			break
 		}
+		if _, skip := excluded[sg.ProductID]; !skip {
+			result = append(result, sg)
+		}
 	}
+	return result
+}
 
-	s.enrichWithProductConfig(ctx, merchantID, filtered)
+// featuredFallback is the last-resort path when patterns and the LLM cannot
+// even be tried (Redis down, candidate listing failed).
+// It always persists (even for empty suggestions) to allow analytics.
+func (s *Service) featuredFallback(ctx context.Context, merchantID string, cartProducts []models.ProductEntry, excluded map[string]struct{}, maxItems int, channel string) (*UpsellResult, error) {
+	suggestions := s.featuredSuggestions(ctx, merchantID, channel, excluded, maxItems)
 
-	suggID, createErr := s.repo.CreateSuggestion(ctx, CreateSuggestionParams{
-		MerchantID:     merchantID,
-		CartSignature:  cartSignature,
-		SuggestedItems: filtered,
-		Source:         SourceFeaturedFallback,
-		Channel:        channel,
-	})
-	if createErr != nil {
-		s.logger.Error("upsell: failed to persist featured_fallback suggestion",
-			zap.String("merchant_id", merchantID),
-			zap.Error(createErr),
-		)
-	}
+	s.enrichWithProductConfig(ctx, merchantID, suggestions)
 
 	s.logger.Warn("upsell: featured_fallback used",
 		zap.String("merchant_id", merchantID),
-		zap.Int("suggestions_count", len(filtered)),
+		zap.Int("suggestions_count", len(suggestions)),
 	)
 
-	return &UpsellResult{
-		SuggestionID: suggID,
-		Suggestions:  filtered,
-		Source:       SourceFeaturedFallback,
-	}, nil
+	return s.persistAndCache(ctx, merchantID, cartSignatureFrom(cartProducts), suggestions, SourceFeaturedFallback, "", nil, nil, channel)
+}
+
+// unavailableNow returns the products hidden right now by a schedule
+// availability, on the SNO and Kiosk channels only: the POS ignores schedules,
+// as in its own catalogue. A failed lookup is logged and filters nothing.
+func (s *Service) unavailableNow(ctx context.Context, merchantID string, channel string) map[string]struct{} {
+	if s.schedules == nil || (channel != ChannelSNO && channel != ChannelKiosk) {
+		return nil
+	}
+	unavailable, err := s.schedules.GetUnavailableProductsAt(ctx, merchantID, time.Now())
+	if err != nil {
+		s.logger.Warn("upsell: schedule availability lookup failed, not filtering on schedules",
+			zap.String("merchant_id", merchantID),
+			zap.Error(err),
+		)
+		return nil
+	}
+	set := make(map[string]struct{}, len(unavailable))
+	for pid := range unavailable {
+		set[pid] = struct{}{}
+	}
+	return set
+}
+
+// availableOnChannel reports whether ap may be offered on channel: SNO and
+// Kiosk each have an availability flag, the POS sells everything.
+func availableOnChannel(ap menu.AvailableProduct, channel string) bool {
+	switch channel {
+	case ChannelSNO:
+		return ap.IsAvailableOnSNO
+	case ChannelKiosk:
+		return ap.IsAvailableOnKiosk
+	default:
+		return true
+	}
+}
+
+// cartView is the cart as seen by the suggestion steps, with variants resolved
+// to their product group (docs/UPSELL_COMPLETION.md, D1).
+type cartView struct {
+	// excluded holds the cart product ids and the groups of the cart variants:
+	// none of them may be suggested.
+	excluded map[string]struct{}
+	// patternKeys holds, without duplicates, the ids patterns are stored under:
+	// the group for a variant, the product itself otherwise.
+	patternKeys []string
+	// groupOf maps each cart variant to its product group.
+	groupOf map[string]string
+}
+
+// resolveCart builds the cartView of cartProducts. When the variant lookup
+// fails, the raw cart ids are used, as before variants were resolved.
+func (s *Service) resolveCart(ctx context.Context, merchantID string, cartProducts []models.ProductEntry) cartView {
+	ids := make([]string, 0, len(cartProducts))
+	seen := make(map[string]struct{}, len(cartProducts))
+	for _, p := range cartProducts {
+		if _, ok := seen[p.ProductID]; ok || p.ProductID == "" {
+			continue
+		}
+		seen[p.ProductID] = struct{}{}
+		ids = append(ids, p.ProductID)
+	}
+
+	groupOf, err := s.repo.GetProductGroups(ctx, merchantID, ids)
+	if err != nil {
+		s.logger.Warn("upsell: failed to resolve cart variants to their groups, using raw cart ids",
+			zap.String("merchant_id", merchantID),
+			zap.Error(err),
+		)
+		groupOf = nil
+	}
+	return buildCartView(cartProducts, groupOf)
+}
+
+func buildCartView(cartProducts []models.ProductEntry, groupOf map[string]string) cartView {
+	view := cartView{
+		excluded: make(map[string]struct{}, len(cartProducts)),
+		groupOf:  groupOf,
+	}
+	seenKeys := make(map[string]struct{}, len(cartProducts))
+	for _, p := range cartProducts {
+		view.excluded[p.ProductID] = struct{}{}
+		key := p.ProductID
+		if group, ok := groupOf[p.ProductID]; ok {
+			view.excluded[group] = struct{}{}
+			key = group
+		}
+		if _, seen := seenKeys[key]; !seen {
+			seenKeys[key] = struct{}{}
+			view.patternKeys = append(view.patternKeys, key)
+		}
+	}
+	return view
 }
 
 // persistAndCache writes the suggestion to DB and caches the result.
-// llmResp and llmProvider are nil for non-LLM sources.
+// llmResp and llmProvider are nil when the LLM did not contribute.
 func (s *Service) persistAndCache(
 	ctx context.Context,
 	merchantID, cartSignature string,
@@ -440,9 +578,12 @@ func (s *Service) persistAndCache(
 	}
 
 	// Cache the result (ignore errors — cache failure must not block).
-	resultForCache := UpsellResult{Suggestions: suggestions, Source: source}
-	if rawCache, marshalErr := json.Marshal(resultForCache); marshalErr == nil {
-		_ = s.aiCache.Set(ctx, cacheKey, string(rawCache), cacheResultTTL)
+	// An empty cacheKey means the result must not be cached.
+	if cacheKey != "" {
+		resultForCache := UpsellResult{Suggestions: suggestions, Source: source}
+		if rawCache, marshalErr := json.Marshal(resultForCache); marshalErr == nil {
+			_ = s.aiCache.Set(ctx, cacheKey, string(rawCache), cacheResultTTL)
+		}
 	}
 
 	s.logger.Info("upsell suggestion generated",
@@ -535,6 +676,8 @@ func cachedSourceOf(source string) string {
 		return SourceCachedLLM
 	case SourcePattern, SourceCachedPattern:
 		return SourceCachedPattern
+	case SourceLowPrice, SourceCachedLowPrice:
+		return SourceCachedLowPrice
 	default:
 		return source
 	}
@@ -565,12 +708,139 @@ func normalizeScore(lift float64) float64 {
 	return lift / 5.0
 }
 
-// selectLLMCandidates returns up to limit products from candidateMap, preferring
-// categories not represented in the cart to maximise complementarity.
-func selectLLMCandidates(candidateMap map[string]menu.AvailableProduct, cartSet map[string]struct{}, limit int) []menu.AvailableProduct {
-	// Collect cart category IDs.
-	// Note: we don't have category info on cartProducts here, so we just take the
-	// first `limit` candidates ordered deterministically by name.
+// rankPatternSuggestions turns aggregated pattern scores into at most maxItems
+// suggestions, best score first. Ties are broken by product id so the list
+// (and therefore the cached result) is deterministic.
+func rankPatternSuggestions(aggregated map[string]float64, candidateMap map[string]menu.AvailableProduct, maxItems int) []SuggestedItem {
+	type scored struct {
+		pid   string
+		score float64
+	}
+	ranked := make([]scored, 0, len(aggregated))
+	for pid, sc := range aggregated {
+		if _, ok := candidateMap[pid]; ok {
+			ranked = append(ranked, scored{pid, sc})
+		}
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].score != ranked[j].score {
+			return ranked[i].score > ranked[j].score
+		}
+		return ranked[i].pid < ranked[j].pid
+	})
+	if len(ranked) > maxItems {
+		ranked = ranked[:maxItems]
+	}
+
+	suggestions := make([]SuggestedItem, 0, len(ranked))
+	for _, r := range ranked {
+		ap := candidateMap[r.pid]
+		suggestions = append(suggestions, SuggestedItem{
+			ProductID: r.pid,
+			Title:     fmt.Sprintf(titleTemplates[hashIndex(r.pid, len(titleTemplates))], ap.Name),
+			Score:     normalizeScore(r.score),
+			Name:      ap.Name,
+			Price:     ap.Price,
+			ImageURL:  ap.ImageURL,
+			Origin:    OriginPattern,
+		})
+	}
+	return suggestions
+}
+
+// appendUnique appends the items of extra whose product is not already in
+// list, stopping once list holds maxItems items.
+func appendUnique(list, extra []SuggestedItem, maxItems int) []SuggestedItem {
+	seen := make(map[string]struct{}, len(list))
+	for _, item := range list {
+		seen[item.ProductID] = struct{}{}
+	}
+	for _, item := range extra {
+		if len(list) >= maxItems {
+			break
+		}
+		if _, dup := seen[item.ProductID]; dup {
+			continue
+		}
+		seen[item.ProductID] = struct{}{}
+		list = append(list, item)
+	}
+	return list
+}
+
+// withoutSuggested returns a copy of candidateMap without the products already
+// in suggestions.
+func withoutSuggested(candidateMap map[string]menu.AvailableProduct, suggestions []SuggestedItem) map[string]menu.AvailableProduct {
+	result := make(map[string]menu.AvailableProduct, len(candidateMap))
+	for pid, ap := range candidateMap {
+		result[pid] = ap
+	}
+	for _, sg := range suggestions {
+		delete(result, sg.ProductID)
+	}
+	return result
+}
+
+// mergeSets returns a new set holding the keys of a and b.
+func mergeSets(a, b map[string]struct{}) map[string]struct{} {
+	result := make(map[string]struct{}, len(a)+len(b))
+	for k := range a {
+		result[k] = struct{}{}
+	}
+	for k := range b {
+		result[k] = struct{}{}
+	}
+	return result
+}
+
+// lowPriceFromEntries turns the nightly low-price list into at most limit
+// suggestions, keeping its order (best sellers first) and only the products
+// that are still candidates (available, sellable on the channel, not in the
+// cart, not already suggested).
+func lowPriceFromEntries(entries []LowPriceEntry, candidates map[string]menu.AvailableProduct, limit int) []SuggestedItem {
+	result := make([]SuggestedItem, 0, limit)
+	for _, e := range entries {
+		if len(result) >= limit {
+			break
+		}
+		ap, ok := candidates[e.ProductID]
+		if !ok {
+			continue
+		}
+		result = append(result, SuggestedItem{
+			ProductID: e.ProductID,
+			Title:     fmt.Sprintf(titleTemplates[hashIndex(e.ProductID, len(titleTemplates))], ap.Name),
+			Score:     0.5,
+			Name:      ap.Name,
+			Price:     ap.Price,
+			ImageURL:  ap.ImageURL,
+			Origin:    OriginLowPrice,
+		})
+	}
+	return result
+}
+
+// sourceOf names the first step that contributed to the list: items keep the
+// order of the steps (patterns, low-price best sellers, LLM).
+func sourceOf(suggestions []SuggestedItem) string {
+	if len(suggestions) == 0 {
+		return SourceNone
+	}
+	switch suggestions[0].Origin {
+	case OriginPattern:
+		return SourcePattern
+	case OriginLowPrice:
+		return SourceLowPrice
+	case OriginLLM:
+		return SourceLLM
+	default:
+		return SourceFeaturedFallback
+	}
+}
+
+// selectLLMCandidates returns up to limit products from candidateMap, ordered
+// deterministically by name.
+func selectLLMCandidates(candidateMap map[string]menu.AvailableProduct, limit int) []menu.AvailableProduct {
 	result := make([]menu.AvailableProduct, 0, limit)
 	for _, ap := range candidateMap {
 		result = append(result, ap)
@@ -611,8 +881,11 @@ func buildFrequentPairsForPrompt(aggregated map[string]float64, candidateMap map
 }
 
 // buildUserPrompt constructs the JSON user prompt sent to the LLM.
+// groupOf maps cart variants to their product group, which carries the
+// category (variants are not in allAvailable).
 func buildUserPrompt(
 	cartProducts []models.ProductEntry,
+	groupOf map[string]string,
 	allAvailable []menu.AvailableProduct,
 	llmCandidates []menu.AvailableProduct,
 	frequentPairs []map[string]interface{},
@@ -632,10 +905,14 @@ func buildUserPrompt(
 			continue
 		}
 		seen[cp.ProductID] = struct{}{}
+		category, ok := catByID[cp.ProductID]
+		if !ok {
+			category = catByID[groupOf[cp.ProductID]]
+		}
 		cartItems = append(cartItems, map[string]string{
 			"product_id": cp.ProductID,
 			"name":       cp.Name,
-			"category":   catByID[cp.ProductID],
+			"category":   category,
 		})
 	}
 

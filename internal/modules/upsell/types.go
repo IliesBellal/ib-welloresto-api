@@ -1,6 +1,7 @@
 package upsell
 
 import (
+	"context"
 	"time"
 
 	"welloresto-api/internal/models"
@@ -9,13 +10,43 @@ import (
 // Source constants identify the origin of an upsell suggestion.
 const (
 	SourcePattern          = "pattern"
+	SourceLowPrice         = "low_price"
 	SourceLLM              = "llm"
 	SourceFeaturedFallback = "featured_fallback"
 	SourceCachedPattern    = "cached_pattern"
+	SourceCachedLowPrice   = "cached_low_price"
 	SourceCachedLLM        = "cached_llm"
+	SourceNone             = "none"
 	SourceDisabled         = "disabled"
 	SourceErrorFallback    = "error_fallback"
 )
+
+// Origin constants identify which step picked a single suggested item. One
+// suggestion list can mix several origins (patterns completed by low-price
+// best sellers, then by the LLM); Source then names the first step that
+// contributed.
+const (
+	OriginPattern  = "pattern"
+	OriginLowPrice = "low_price"
+	OriginLLM      = "llm"
+	OriginFeatured = "featured"
+)
+
+// LowPriceEntry is one product of the low-price best sellers list computed
+// nightly per merchant (tasks.RecomputeUpsellPatterns) and stored in Redis.
+// Price is the effective price in centimes (cheapest variant for a group).
+type LowPriceEntry struct {
+	ProductID string `json:"product_id"`
+	Price     int64  `json:"price"`
+	Orders    int    `json:"orders"`
+}
+
+// ScheduleAvailability reports the products hidden by a schedule availability
+// at a given time (product_id → name). availabilities.AvailabilitiesService
+// satisfies it.
+type ScheduleAvailability interface {
+	GetUnavailableProductsAt(ctx context.Context, merchantID string, at time.Time) (map[string]string, error)
+}
 
 // Channel constants identify which platform triggered a GenerateUpsell call.
 // Persisted on upsell_suggestions.channel for per-platform analytics.
@@ -52,6 +83,8 @@ type Suggestion struct {
 // uncleaned — each channel (POS/Kiosk/SNO) applies its own cleanup on top.
 // It is additive and nil-able so existing consumers relying only on the flat
 // fields above keep working unchanged.
+// Origin is one of the Origin* constants (empty on rows persisted before it
+// existed).
 type SuggestedItem struct {
 	ProductID string               `json:"product_id"`
 	Title     string               `json:"title"`
@@ -59,6 +92,7 @@ type SuggestedItem struct {
 	Name      string               `json:"name"`
 	Price     int64                `json:"price"`
 	ImageURL  *string              `json:"image_url,omitempty"`
+	Origin    string               `json:"origin,omitempty"`
 	Product   *models.ProductEntry `json:"product,omitempty"`
 }
 

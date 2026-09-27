@@ -313,10 +313,16 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	translationRepo := translationModule.NewRepository(selectedDB)
 	translationService := translationModule.NewService(translationRepo, aiRegistry, aiCache)
 
+	// ---- Availabilities ----
+	// Construit avant Upsell, ScanNOrder et Kiosk : tous filtrent les
+	// produits hors créneau horaire via availabilitiesService.
+	availabilitiesRepo := availabilitiesModule.NewAvailabilitiesRepository(selectedDB)
+	availabilitiesService := availabilitiesModule.NewAvailabilitiesService(availabilitiesRepo)
+
 	// ---- Upsell ----
 	upsellRepo := upsellModule.NewRepository(selectedDB)
 	upsellTracker := upsellModule.NewTracker(upsellRepo, log)
-	upsellService := upsellModule.NewService(upsellRepo, menuRepoLegacy, aiRegistry, aiCache, log)
+	upsellService := upsellModule.NewService(upsellRepo, menuRepoLegacy, aiRegistry, aiCache, availabilitiesService, log)
 
 	// ---- Receipt ----
 	receiptRepo := receipt.NewReceiptRepository(selectedDB)
@@ -363,12 +369,6 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	messaggioClient := messaggioModule.NewMessaggioClient()
 	messaggioSMSService := messaggioModule.NewSMSService(messaggioMarketingRepo, messaggioClient)
 	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, notificationService, ordersLifeCycleService, messaggioSMSService, uberService, log)
-
-	// ---- Availabilities ----
-	// Construit avant ScanNOrder/Kiosk : leurs menus filtrent les produits
-	// hors créneau horaire via availabilitiesService.
-	availabilitiesRepo := availabilitiesModule.NewAvailabilitiesRepository(selectedDB)
-	availabilitiesService := availabilitiesModule.NewAvailabilitiesService(availabilitiesRepo)
 
 	// ---- ScanNOrder ----
 	scannRepo := scannorder.NewRepository(selectedDB)

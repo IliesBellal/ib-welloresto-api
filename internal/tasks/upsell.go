@@ -3,6 +3,7 @@ package tasks
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"time"
 	"welloresto-api/internal/database/dbx"
 
@@ -19,6 +20,10 @@ const (
 	upsellMaxPairsStored = 10 // top N patterns stored per product
 	upsellPatternTTL     = 36 * time.Hour
 	upsellCleanupMonths  = 8
+	// Low-price best sellers: products priced at most a third of the median
+	// catalogue price, best sellers first (docs/UPSELL_COMPLETION.md, D10).
+	upsellLowPriceDivisor  = 3
+	upsellLowPriceMaxItems = 30
 )
 
 // RecomputeUpsellPatterns runs a market basket analysis for every active merchant
@@ -66,6 +71,26 @@ func (tm *TasksManager) RecomputeUpsellPatterns() {
 		zap.Int("total_patterns", totalPairs))
 }
 
+// upsellBasketLinesSQL lists the distinct (order, product) lines of a
+// merchant's closed orders in the analysis window.
+// A variant (products.by_product_of) is counted under its product group: only
+// groups can be suggested (menu.ListAvailableProductsForUpsell excludes
+// variants), so a pattern pointing to a variant would never be usable, and
+// pooling the variants of a group strengthens its statistics. A line whose
+// product no longer exists keeps its own id.
+// Placeholders: merchant_id, window in days. See docs/UPSELL_COMPLETION.md (D1).
+func upsellBasketLinesSQL() string {
+	return `
+			SELECT DISTINCT oi.order_id,
+			       COALESCE(NULLIF(p.by_product_of, 0), oi.product_id) AS product_id
+			FROM orderitems oi
+			INNER JOIN orders o ON o.order_id = oi.order_id
+			LEFT JOIN products p ON p.product_id = oi.product_id
+			WHERE o.merchant_id   = ?
+			  AND o.state         = 'CLOSED'
+			  AND o.creation_date >= ` + tskNowMinusDays()
+}
+
 // processUpsellPatternsForMerchant computes market basket patterns for a single merchant
 // and writes them to Redis. Returns the number of (directed) pattern pairs written.
 func (tm *TasksManager) processUpsellPatternsForMerchant(ctx context.Context, merchantID string) (int, error) {
@@ -86,13 +111,9 @@ func (tm *TasksManager) processUpsellPatternsForMerchant(ctx context.Context, me
 
 	// ── Step 2: Per-product support count ────────────────────────────────────
 	suppRows, err := db.QueryContext(ctx, `
-		SELECT oi.product_id, COUNT(DISTINCT oi.order_id) AS cnt
-		FROM orderitems oi
-		INNER JOIN orders o ON o.order_id = oi.order_id
-		WHERE o.merchant_id   = ?
-		  AND o.state         = 'CLOSED'
-		  AND o.creation_date >= `+tskNowMinusDays()+`
-		GROUP BY oi.product_id
+		SELECT l.product_id, COUNT(*) AS cnt
+		FROM (`+upsellBasketLinesSQL()+`) l
+		GROUP BY l.product_id
 	`, merchantID, upsellPatternWindow)
 	if err != nil {
 		return 0, err
@@ -108,30 +129,29 @@ func (tm *TasksManager) processUpsellPatternsForMerchant(ctx context.Context, me
 		}
 	}
 
+	// ── Step 2b: Low-price best sellers ─────────────────────────────────────
+	// Independent from the patterns: a failure is logged and the patterns are
+	// still computed.
+	lowPrice, lowPriceMedian, lpErr := tm.computeUpsellLowPriceList(ctx, merchantID, productCount)
+	if lpErr != nil {
+		tm.logWarn("[CRON] RecomputeUpsellPatterns: liste petits prix en échec",
+			zap.String("merchant_id", merchantID), zap.Error(lpErr))
+	} else if raw, marshalErr := json.Marshal(lowPrice); marshalErr == nil {
+		// Key without "ai:" prefix — aiCache.Set will add it automatically.
+		_ = tm.AICache.Set(ctx, "upsell:lowprice:"+merchantID, string(raw), upsellPatternTTL)
+	}
+
 	// ── Step 3: Co-occurrence matrix ─────────────────────────────────────────
 	pairRows, err := db.QueryContext(ctx, `
 		SELECT
 			a.product_id AS product_a,
 			b.product_id AS product_b,
-			COUNT(DISTINCT a.order_id) AS count_ab
-		FROM (
-			SELECT DISTINCT oi.order_id, oi.product_id
-			FROM orderitems oi
-			INNER JOIN orders o ON o.order_id = oi.order_id
-			WHERE o.merchant_id   = ?
-			  AND o.state         = 'CLOSED'
-			  AND o.creation_date >= `+tskNowMinusDays()+`
-		) a
-		INNER JOIN (
-			SELECT DISTINCT oi.order_id, oi.product_id
-			FROM orderitems oi
-			INNER JOIN orders o ON o.order_id = oi.order_id
-			WHERE o.merchant_id   = ?
-			  AND o.state         = 'CLOSED'
-			  AND o.creation_date >= `+tskNowMinusDays()+`
-		) b ON a.order_id = b.order_id AND a.product_id < b.product_id
+			COUNT(*)     AS count_ab
+		FROM (`+upsellBasketLinesSQL()+`) a
+		INNER JOIN (`+upsellBasketLinesSQL()+`) b
+			ON a.order_id = b.order_id AND a.product_id < b.product_id
 		GROUP BY a.product_id, b.product_id
-		HAVING COUNT(DISTINCT a.order_id) >= ?
+		HAVING COUNT(*) >= ?
 	`, merchantID, upsellPatternWindow,
 		merchantID, upsellPatternWindow,
 		upsellMinCoOccur)
@@ -225,6 +245,9 @@ func (tm *TasksManager) processUpsellPatternsForMerchant(ctx context.Context, me
 		"orders_analyzed":     totalOrders,
 		"items_with_patterns": len(perProduct),
 		"total_pairs":         totalWritten,
+		"low_price_median":    lowPriceMedian,
+		"low_price_threshold": lowPriceMedian / upsellLowPriceDivisor,
+		"low_price_items":     len(lowPrice),
 	}
 	if metaRaw, err := json.Marshal(meta); err == nil {
 		metaKey := "upsell:patterns:" + merchantID + ":_meta"
@@ -232,6 +255,110 @@ func (tm *TasksManager) processUpsellPatternsForMerchant(ctx context.Context, me
 	}
 
 	return totalWritten, nil
+}
+
+// upsellCatalogProduct is an orderable root product with its effective price:
+// the cheapest available variant for a product group (whose own price is 0).
+type upsellCatalogProduct struct {
+	ProductID string
+	Price     int64
+}
+
+// computeUpsellLowPriceList loads the merchant's orderable catalogue and returns
+// its low-price best sellers (see selectUpsellLowPrice) along with the median
+// catalogue price it was computed from. sales maps a product (variants rolled up
+// to their group) to its number of orders in the analysis window.
+func (tm *TasksManager) computeUpsellLowPriceList(ctx context.Context, merchantID string, sales map[string]int) ([]upsellModule.LowPriceEntry, float64, error) {
+	db := dbx.GetDB(ctx, tm.DB)
+
+	// Same filters as menu.ListAvailableProductsForUpsell, so that the list
+	// only holds products the suggestion step can offer.
+	rows, err := db.QueryContext(ctx, `
+		SELECT p.product_id,
+		       CASE WHEN p.is_product_group = TRUE
+		            THEN COALESCE((
+		                SELECT MIN(v.price) FROM products v
+		                WHERE v.by_product_of = p.product_id
+		                  AND v.available = TRUE
+		                  AND v.enabled   = TRUE
+		                  AND v.status    IN ('available', '1')
+		            ), 0)
+		            ELSE COALESCE(p.price, 0)
+		       END AS effective_price
+		FROM products p
+		WHERE p.merchant_id = ?
+		  AND p.available   = TRUE
+		  AND p.enabled     = TRUE
+		  AND p.status      IN ('available', '1')
+		  AND (p.by_product_of IS NULL OR p.by_product_of = 0)
+	`, merchantID)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var catalog []upsellCatalogProduct
+	for rows.Next() {
+		var cp upsellCatalogProduct
+		if err := rows.Scan(&cp.ProductID, &cp.Price); err != nil {
+			return nil, 0, err
+		}
+		catalog = append(catalog, cp)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	entries, median := selectUpsellLowPrice(catalog, sales, upsellLowPriceMaxItems)
+	return entries, median, nil
+}
+
+// selectUpsellLowPrice keeps the products that sold at least once and whose
+// price is above 0 and at most a third of the median catalogue price (median of
+// the prices above 0). They are sorted by orders descending, then price
+// ascending, then product id for a stable order, and capped at limit.
+// Products at 0 € are left out on purpose: sorted by price they would come
+// first, and they are only worth offering when a pattern backs them (e.g. a
+// house sauce). Returns the median alongside for logging.
+func selectUpsellLowPrice(catalog []upsellCatalogProduct, sales map[string]int, limit int) ([]upsellModule.LowPriceEntry, float64) {
+	prices := make([]int64, 0, len(catalog))
+	for _, cp := range catalog {
+		if cp.Price > 0 {
+			prices = append(prices, cp.Price)
+		}
+	}
+	if len(prices) == 0 {
+		return []upsellModule.LowPriceEntry{}, 0
+	}
+	sort.Slice(prices, func(i, j int) bool { return prices[i] < prices[j] })
+	mid := len(prices) / 2
+	median := float64(prices[mid])
+	if len(prices)%2 == 0 {
+		median = float64(prices[mid-1]+prices[mid]) / 2
+	}
+	threshold := median / upsellLowPriceDivisor
+
+	entries := make([]upsellModule.LowPriceEntry, 0)
+	for _, cp := range catalog {
+		orders := sales[cp.ProductID]
+		if cp.Price <= 0 || float64(cp.Price) > threshold || orders == 0 {
+			continue
+		}
+		entries = append(entries, upsellModule.LowPriceEntry{ProductID: cp.ProductID, Price: cp.Price, Orders: orders})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Orders != entries[j].Orders {
+			return entries[i].Orders > entries[j].Orders
+		}
+		if entries[i].Price != entries[j].Price {
+			return entries[i].Price < entries[j].Price
+		}
+		return entries[i].ProductID < entries[j].ProductID
+	})
+	if len(entries) > limit {
+		entries = entries[:limit]
+	}
+	return entries, median
 }
 
 // CleanupOldUpsellSuggestions deletes suggestion rows older than upsellCleanupMonths.

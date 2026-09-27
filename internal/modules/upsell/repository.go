@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
@@ -215,11 +216,21 @@ func (r *Repository) DeleteOldSuggestions(ctx context.Context, olderThanMonths i
 	return deleted, nil
 }
 
-// ListFeaturedProducts returns up to limit products marked as popular for a merchant.
-// Each result is shaped into a SuggestedItem with a default title template and score 0.5.
-func (r *Repository) ListFeaturedProducts(ctx context.Context, merchantID string, limit int) ([]SuggestedItem, error) {
+// ListFeaturedProducts returns up to limit products marked as popular for a merchant
+// and orderable on channel (SNO and Kiosk have their own availability flag, the POS
+// has none). Each result is shaped into a SuggestedItem with a default title
+// template and score 0.5.
+func (r *Repository) ListFeaturedProducts(ctx context.Context, merchantID string, channel string, limit int) ([]SuggestedItem, error) {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
+
+	channelFilter := ""
+	switch channel {
+	case ChannelSNO:
+		channelFilter = "AND is_available_on_sno = TRUE"
+	case ChannelKiosk:
+		channelFilter = "AND is_available_on_kiosk = TRUE"
+	}
 
 	rows, err := db.QueryContext(ctx, `
 		SELECT product_id, name, price, image_url
@@ -229,6 +240,7 @@ func (r *Repository) ListFeaturedProducts(ctx context.Context, merchantID string
 		  AND available   = TRUE
 		  AND enabled     = TRUE
 		  AND status      IN ('available', '1')
+		  `+channelFilter+`
 		LIMIT ?
 	`, merchantID, limit)
 	if err != nil {
@@ -252,6 +264,7 @@ func (r *Repository) ListFeaturedProducts(ctx context.Context, merchantID string
 			Score:     0.5,
 			Name:      name,
 			Price:     price,
+			Origin:    OriginFeatured,
 		}
 		if imageURL.Valid {
 			item.ImageURL = &imageURL.String
@@ -260,6 +273,52 @@ func (r *Repository) ListFeaturedProducts(ctx context.Context, merchantID string
 	}
 
 	return result, rows.Err()
+}
+
+// GetProductGroups maps each variant among productIDs to the product group it
+// belongs to (products.by_product_of). Products that are not variants, or that
+// do not belong to the merchant, are absent from the result.
+func (r *Repository) GetProductGroups(ctx context.Context, merchantID string, productIDs []string) (map[string]string, error) {
+	groups := make(map[string]string)
+	if len(productIDs) == 0 {
+		return groups, nil
+	}
+
+	db := dbx.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
+	placeholders := make([]string, len(productIDs))
+	args := make([]interface{}, 0, len(productIDs)+1)
+	args = append(args, merchantID)
+	for i, id := range productIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT product_id, by_product_of
+		FROM products
+		WHERE merchant_id = ?
+		  AND product_id IN (`+strings.Join(placeholders, ",")+`)
+		  AND by_product_of IS NOT NULL
+		  AND by_product_of <> 0
+	`, args...)
+	if err != nil {
+		log.Error("upsell: GetProductGroups query failed: " + err.Error())
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var productID, groupID string
+		if err := rows.Scan(&productID, &groupID); err != nil {
+			log.Error("upsell: GetProductGroups scan failed: " + err.Error())
+			return nil, err
+		}
+		groups[productID] = groupID
+	}
+
+	return groups, rows.Err()
 }
 
 // GetMerchantUpsellSettings reads enable_upsell and upsell_max_items from

@@ -1,8 +1,8 @@
 package upsell
 
 // upsellSystemPrompt is the system prompt sent to the LLM for upsell suggestions.
-// {MAX_ITEMS} is a documentation placeholder; the actual limit is injected at runtime
-// via the user prompt JSON.
+// {MAX_ITEMS} is replaced at runtime by the number of slots left for the LLM
+// (maxItems minus the pattern suggestions already chosen).
 const upsellSystemPrompt = `Tu es un serveur expérimenté qui suggère des compléments à une commande dans un restaurant. Tu reçois :
 - Le panier actuel du client (produits avec leur catégorie)
 - La liste des produits disponibles à proposer (déjà filtrés : en stock, pas dans le panier)

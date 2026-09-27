@@ -1526,11 +1526,13 @@ func (s *Service) GetUpsellSuggestions(ctx context.Context, merchantID string, c
 		return nil, err
 	}
 
-	suggestions := make([]KioskUpsellSuggestion, 0, 3)
+	// Pas de plafond propre à la borne : elle affiche autant de suggestions que
+	// upsell_max_items (docs/UPSELL_COMPLETION.md, D8). Les filtres ci-dessous
+	// sont un filet de sécurité : le moteur exclut déjà les produits hors
+	// borne et hors créneau (D9), mais un résultat en cache peut dater de
+	// jusqu'à 30 minutes.
+	suggestions := make([]KioskUpsellSuggestion, 0, len(result.Suggestions))
 	for _, sugg := range result.Suggestions {
-		if len(suggestions) >= 3 {
-			break
-		}
 		if _, outOfSchedule := unavailable[sugg.ProductID]; outOfSchedule {
 			continue
 		}
