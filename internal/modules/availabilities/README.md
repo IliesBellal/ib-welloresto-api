@@ -21,10 +21,20 @@ GET    /menu/availabilities/check?product_id=X # Vérifier disponibilité
 
 ## Logique clé
 
-### IsProductAvailable(productID, merchantID)
-1. Aucune disponibilité définie → produit disponible par défaut
-2. Disponibilités définies → vérifier si heure UTC et jour_of_week correspondent
-3. Retourner booléen
+### GetUnavailableProductsAt(merchantID, at) / UnavailableProductsAt
+Règle « liste blanche », une seule requête (`GetActiveProductSchedules`) :
+1. Produit rattaché à aucune disponibilité active → disponible
+2. Sinon → disponible seulement si `at`, exprimé dans le fuseau du merchant (`merchant.timezone`), tombe dans un de ses créneaux actifs
+3. Disponibilité active = `enabled` + `available` + `availabilities_products.enabled` ; créneau actif = `enabled`
+
+`IsProductAvailable` / `IsProductAvailableAt` appliquent la même règle.
+
+### Stockage en heure locale
+Les créneaux sont des heures de mur du merchant (« 6h–11h le lundi », été comme
+hiver) : stockés tels que saisis dans le back-office, renvoyés tels quels, sans
+aucune conversion. Même convention que les horaires d'ouverture et les
+promotions programmées. `validateSchedules` impose début < fin : un créneau ne
+passe jamais minuit.
 
 ### Jours de la semaine
 - 1 = Lundi, ..., 7 = Dimanche
@@ -38,12 +48,13 @@ GET    /menu/availabilities/check?product_id=X # Vérifier disponibilité
 
 ## Intégration
 
-Utilisé par ScanNOrder pour filtrer le menu selon les créneaux disponibles.
+Utilisé par Kiosk et ScanNOrder (menu, fiche produit, upsell, pricing/commande),
+pas par le POS — voir `docs/KIOSK_DECISIONS.md` (2026-09-26).
 
 ### Exemple
 ```go
-isAvailable, err := availabilitiesService.IsProductAvailable(ctx, merchantID, productID)
-if isAvailable {
+unavailable, err := availabilitiesService.GetUnavailableProductsAt(ctx, merchantID, time.Now())
+if _, hidden := unavailable[productID]; !hidden {
     // Inclure le produit dans le menu
 }
 ```
@@ -54,7 +65,7 @@ if isAvailable {
 - ✅ Transactions atomiques (3 tables)
 - ✅ Suppression logique (enabled = 0)
 - ✅ IDs UUID (CHAR(36))
-- ✅ Heures en UTC
+- ✅ Heures stockées en heure locale du merchant (évaluées dans `merchant.timezone`)
 - ✅ JSON tags en snake_case
 - ✅ Pas de logs manuels (middleware)
 

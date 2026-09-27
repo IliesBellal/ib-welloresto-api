@@ -57,3 +57,13 @@ func UTCNow() string {
 	}
 	return "UTC_TIMESTAMP()"
 }
+
+// UTCDate retourne l'expression SQL de la date calendaire UTC d'une colonne
+// instant (timestamptz Postgres, datetime UTC MySQL). Indépendante du fuseau
+// de session Postgres, contrairement à un simple CAST(col AS date).
+func UTCDate(column string) string {
+	if ActiveDialect() == Postgres {
+		return "CAST((" + column + ") AT TIME ZONE 'UTC' AS date)"
+	}
+	return "DATE(" + column + ")"
+}

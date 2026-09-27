@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"welloresto-api/internal/database/dbx/pgtest"
 	"welloresto-api/internal/models"
@@ -240,6 +241,20 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 	mustExec("discount schedule", `
 		INSERT INTO discounts_schedules (discount_id, day_of_week, available_from, available_to, enabled)
 		VALUES ('itest-disc-2', EXTRACT(ISODOW FROM now() AT TIME ZONE 'UTC'), '00:00:00', '23:59:59', true)`)
+	// Second créneau identique : la jointure renvoie deux lignes pour
+	// itest-disc-2, GetDiscounts ne doit en garder qu'une.
+	mustExec("discount schedule (doublon)", `
+		INSERT INTO discounts_schedules (discount_id, day_of_week, available_from, available_to, enabled)
+		VALUES ('itest-disc-2', EXTRACT(ISODOW FROM now() AT TIME ZONE 'UTC'), '00:00:00', '23:59:59', true)`)
+	// « Tous modes » (discount_order_type et min_order_unit NULL, écrits par
+	// le back-office quand rien n'est coché) : doit être lue sans erreur.
+	mustExec("discount 3 (tous modes)", `
+		INSERT INTO discounts (discount_id, merchant_id, discount_name, discount_desc, discount_order_type, discount_code, discount_value, discount_unit, min_order_unit, discounted_quantity, is_cumulative, is_time_limited, available, valid_from)
+		VALUES ('itest-disc-3', $1, 'Promo tous modes', 'itest', NULL, NULL, 15, 'PERCENTAGE', NULL, 1, false, false, true, now() - interval '1 day')`, merchantID)
+	// Supprimée dans le back-office (enabled = false) : ne doit plus s'appliquer.
+	mustExec("discount 4 (supprimée)", `
+		INSERT INTO discounts (discount_id, merchant_id, discount_name, discount_desc, discount_order_type, discount_code, discount_value, discount_unit, min_order_unit, discounted_quantity, is_cumulative, is_time_limited, available, enabled, valid_from)
+		VALUES ('itest-disc-4', $1, 'Promo supprimee', 'itest', 'IN', NULL, 50, 'PERCENTAGE', 'CURRENCY', 1, false, false, true, false, now() - interval '1 day')`, merchantID)
 	mustExec("discounts_products", `
 		INSERT INTO discounts_products (discount_id, product_id, new_price) VALUES ('itest-disc-1', $1, 800)`, prodA)
 	mustExec("discounts_products_options", `
@@ -571,13 +586,25 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 		t.Fatalf("expected 3 pricing products, got %d", len(dbProducts))
 	}
 
-	// ============ GetDiscounts (prédicat schedule par dialecte) ============
+	// ============ GetDiscounts (créneau comparé à l'heure locale de req) ============
+	// Heure « locale » de la requête = UTC ici, comme le créneau seedé
+	// (ISODOW de now() AT TIME ZONE 'UTC', 00:00-23:59:59).
+	nowUTC := time.Now().UTC()
+	preq.Time = nowUTC.Format("2006-01-02 15:04:05")
+	preq.DayOfWeek = int(nowUTC.Weekday())
+	if preq.DayOfWeek == 0 {
+		preq.DayOfWeek = 7
+	}
 	discounts, err := repo.GetDiscounts(ctx, preq)
 	if err != nil {
 		t.Fatalf("GetDiscounts failed against postgres: %v", err)
 	}
-	if len(discounts) != 2 {
-		t.Fatalf("expected both discounts (permanent + creneau du jour), got %d", len(discounts))
+	gotIDs := map[string]bool{}
+	for _, d := range discounts {
+		gotIDs[d.DiscountID] = true
+	}
+	if len(discounts) != 3 || !gotIDs["itest-disc-1"] || !gotIDs["itest-disc-2"] || !gotIDs["itest-disc-3"] {
+		t.Fatalf("expected disc-1 (permanent), disc-2 (creneau du jour, une seule fois) et disc-3 (tous modes), sans disc-4 (supprimee), got %+v", discounts)
 	}
 
 	// ============ GetDiscountProducts ============
@@ -585,21 +612,20 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetDiscountProducts failed against postgres: %v", err)
 	}
-	if dp["itest-disc-1"] == nil || dp["itest-disc-1"][prodAStr] == nil || dp["itest-disc-1"][prodAStr].NewPrice != 800 {
+	if dp["itest-disc-1"] == nil || dp["itest-disc-1"][prodAStr] == nil || dp["itest-disc-1"][prodAStr].NewPrice == nil || *dp["itest-disc-1"][prodAStr].NewPrice != 800 {
 		t.Fatalf("unexpected discount products: %+v", dp)
 	}
 
-	// ============ GetDiscountProductOptions (jointure castée + fenêtre horaire) ============
-	// NOTE bug préexistant identique aux deux dialectes (documenté, non
-	// corrigé) : l'ordre du Scan est décalé par rapport au SELECT — la map
-	// externe est en réalité indexée par option_id (et OptionID contient le
-	// discount_id). Le test fige ce comportement historique.
+	// ============ GetDiscountProductOptions (discount_id → product_id → options) ============
+	// L'ancien Scan décalé (map indexée par option_id) est corrigé : la map
+	// est indexée par discount_id, OptionID porte bien l'option.
 	dpo, err := repo.GetDiscountProductOptions(ctx, merchantID)
 	if err != nil {
 		t.Fatalf("GetDiscountProductOptions failed against postgres: %v", err)
 	}
 	optIDStr := strconv.FormatInt(optionID, 10)
-	if len(dpo[optIDStr][prodAStr]) != 1 || dpo[optIDStr][prodAStr][0].OptionID != "itest-disc-1" {
+	opts := dpo["itest-disc-1"][prodAStr]
+	if len(opts) != 1 || opts[0].OptionID != optIDStr || !opts[0].IsOptionMandatory || opts[0].NewPrice == nil || *opts[0].NewPrice != 40 {
 		t.Fatalf("unexpected discount product options: %+v", dpo)
 	}
 

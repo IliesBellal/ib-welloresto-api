@@ -2,7 +2,9 @@ package availabilities
 
 import (
 	"context"
+	"crypto/md5"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 	"welloresto-api/internal/middleware"
@@ -30,12 +32,8 @@ func (s *AvailabilitiesService) GetAvailabilitiesByMerchant(ctx context.Context)
 		return nil, err
 	}
 
-	loc, locErr := time.LoadLocation(strings.TrimSpace(user.TimeZone))
-	if locErr != nil {
-		loc = time.UTC
-	}
-
-	return convertAvailabilitiesSchedulesFromUTC(availabilities, loc, time.Now().UTC()), nil
+	// Créneaux stockés en heure locale du merchant, renvoyés tels quels.
+	return availabilities, nil
 }
 
 // GetAvailabilityByID récupère une disponibilité spécifique
@@ -126,73 +124,103 @@ func (s *AvailabilitiesService) DeleteAvailability(ctx context.Context, availabi
 
 // ============ Logique de Validation ============
 
-// IsProductAvailable vérifie si un produit est disponible à l'heure actuelle
-// Retourne true si:
-// - Aucune disponibilité n'est définie pour ce produit (par défaut disponible)
-// - Au moins une disponibilité active correspond à l'heure et au jour actuels
+// IsProductAvailable vérifie si un produit est disponible à l'heure actuelle.
+// Même règle que le filtre des menus Kiosk/ScanNOrder (UnavailableProductsAt).
 func (s *AvailabilitiesService) IsProductAvailable(ctx context.Context, merchantID, productID string) (bool, error) {
-	// Récupérer les disponibilités pour ce produit
-	availabilities, err := s.availabilitiesRepo.GetAvailabilitiesForProduct(ctx, merchantID, productID)
-	if err != nil {
-		return false, fmt.Errorf("failed to check product availability: %w", err)
-	}
-
-	// Si aucune disponibilité n'est définie, le produit est disponible par défaut
-	if len(availabilities) == 0 {
-		return true, nil
-	}
-
-	// Vérifier si l'heure et le jour actuels correspondent à au moins une disponibilité
-	now := time.Now().UTC()
-	currentTime := now.Format("15:04:05")
-	currentDayOfWeek := getDayOfWeek(now)
-
-	for _, availability := range availabilities {
-		for _, schedule := range availability.Schedules {
-			// Vérifier le jour de la semaine
-			if schedule.DayOfWeek != currentDayOfWeek {
-				continue
-			}
-
-			// Vérifier l'heure (comparaison en string format HH:MM:SS)
-			if currentTime >= schedule.StartTime && currentTime <= schedule.EndTime {
-				return true, nil
-			}
-		}
-	}
-
-	// Aucune disponibilité ne correspond à l'heure actuelle
-	return false, nil
+	return s.IsProductAvailableAt(ctx, merchantID, productID, time.Now())
 }
 
-// IsProductAvailableAt vérifie la disponibilité d'un produit à une heure spécifique
-// Utile pour les tests ou les calculs futures
+// IsProductAvailableAt vérifie la disponibilité d'un produit à un instant donné.
 func (s *AvailabilitiesService) IsProductAvailableAt(ctx context.Context, merchantID, productID string, checkTime time.Time) (bool, error) {
-	availabilities, err := s.availabilitiesRepo.GetAvailabilitiesForProduct(ctx, merchantID, productID)
+	unavailable, err := s.GetUnavailableProductsAt(ctx, merchantID, checkTime)
 	if err != nil {
 		return false, fmt.Errorf("failed to check product availability: %w", err)
 	}
+	_, blocked := unavailable[productID]
+	return !blocked, nil
+}
 
-	if len(availabilities) == 0 {
-		return true, nil
+// GetUnavailableProductsAt retourne les produits du merchant masqués par une
+// disponibilité horaire à l'instant at (product_id → nom). Une seule requête
+// quel que soit le nombre de produits — utilisé par les menus, fiches produit,
+// upsell et pricing des canaux Kiosk et ScanNOrder (pas le POS).
+func (s *AvailabilitiesService) GetUnavailableProductsAt(ctx context.Context, merchantID string, at time.Time) (map[string]string, error) {
+	rows, err := s.availabilitiesRepo.GetActiveProductSchedules(ctx, merchantID)
+	if err != nil {
+		return nil, err
 	}
+	// Fuseau lu seulement si un produit est restreint (cas minoritaire).
+	if len(rows) == 0 {
+		return map[string]string{}, nil
+	}
+	timeZone, err := s.availabilitiesRepo.GetMerchantTimezone(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	return UnavailableProductsAt(rows, at, merchantLocation(timeZone)), nil
+}
 
-	timeStr := checkTime.Format("15:04:05")
-	dayOfWeek := getDayOfWeek(checkTime)
-
-	for _, availability := range availabilities {
-		for _, schedule := range availability.Schedules {
-			if schedule.DayOfWeek != dayOfWeek {
-				continue
-			}
-
-			if timeStr >= schedule.StartTime && timeStr <= schedule.EndTime {
-				return true, nil
-			}
+// UnavailableProductsAt applique la règle « liste blanche » des disponibilités :
+//   - un produit rattaché à aucune disponibilité active n'est jamais restreint
+//     (il n'apparaît simplement pas dans rows) ;
+//   - un produit rattaché à au moins une disponibilité active n'est disponible
+//     que si at tombe dans au moins un de ses créneaux actifs.
+//
+// Les créneaux sont des heures de mur du merchant (« 6h–11h le lundi », été
+// comme hiver) : at est évalué dans loc, le fuseau du merchant.
+func UnavailableProductsAt(rows []ProductScheduleRow, at time.Time, loc *time.Location) map[string]string {
+	if loc == nil {
+		loc = time.UTC
+	}
+	atLocal := at.In(loc)
+	restricted := make(map[string]string)
+	open := make(map[string]bool)
+	for _, row := range rows {
+		restricted[row.ProductID] = row.ProductName
+		if row.HasSchedule && isScheduleOpenAt(row.DayOfWeek, row.StartTime, row.EndTime, atLocal) {
+			open[row.ProductID] = true
 		}
 	}
 
-	return false, nil
+	unavailable := make(map[string]string)
+	for productID, name := range restricted {
+		if !open[productID] {
+			unavailable[productID] = name
+		}
+	}
+	return unavailable
+}
+
+// isScheduleOpenAt teste un créneau [start, end[ du jour day, en heure locale
+// (atLocal déjà exprimé dans le fuseau du merchant). Une fin à 00:00 signifie
+// « jusqu'à minuit » (ex. 19:00–00:00) ; validateSchedules refuse tout autre
+// créneau à l'envers : un créneau ne déborde jamais sur le lendemain.
+func isScheduleOpenAt(day int, start, end string, atLocal time.Time) bool {
+	start = normalizeTime(strings.TrimSpace(start))
+	end = normalizeTime(strings.TrimSpace(end))
+	if end == midnight {
+		end = "24:00:00"
+	}
+	clock := atLocal.Format("15:04:05")
+	return getDayOfWeek(atLocal) == day && clock >= start && clock < end
+}
+
+const midnight = "00:00:00"
+
+// UnavailabilityFingerprint résume un ensemble de produits indisponibles en
+// une clé stable (indépendante de l'ordre de la map), à suffixer aux clés de
+// cache des menus : le menu mis en cache reste ainsi exact à chaque
+// changement de créneau, sans dépendre du TTL ni d'une invalidation active.
+func UnavailabilityFingerprint(unavailable map[string]string) string {
+	if len(unavailable) == 0 {
+		return "all"
+	}
+	ids := make([]string, 0, len(unavailable))
+	for id := range unavailable {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return fmt.Sprintf("%x", md5.Sum([]byte(strings.Join(ids, ","))))
 }
 
 // ============ Helper Functions ============
@@ -208,8 +236,16 @@ func getDayOfWeek(t time.Time) int {
 	return int(weekday)
 }
 
-// validateSchedules valide les créneaux horaires
+// validateSchedules valide les créneaux horaires. Le dimanche envoyé en 0
+// (ancienne convention JS du back-office) est ramené à 7 (ISO, convention
+// d'évaluation) : il était refusé, une disponibilité le dimanche ne pouvait
+// pas être enregistrée. Fin à 00:00 = jusqu'à minuit.
 func validateSchedules(schedules []CreateAvailabilityScheduleReq) error {
+	for i := range schedules {
+		if schedules[i].DayOfWeek == 0 {
+			schedules[i].DayOfWeek = 7
+		}
+	}
 	for i, schedule := range schedules {
 		// Valider le jour de la semaine (1-7)
 		if schedule.DayOfWeek < 1 || schedule.DayOfWeek > 7 {
@@ -228,78 +264,21 @@ func validateSchedules(schedules []CreateAvailabilityScheduleReq) error {
 			return fmt.Errorf("invalid end_time format at schedule %d: must be HH:MM or HH:MM:SS", i)
 		}
 
-		if startTime >= endTime {
-			return fmt.Errorf("invalid time range at schedule %d: start_time must be before end_time", i)
+		if startTime >= endTime && endTime != midnight {
+			return fmt.Errorf("invalid time range at schedule %d: start_time must be before end_time (use 00:00 as end for midnight)", i)
 		}
 	}
 
 	return nil
 }
 
-func convertAvailabilitiesSchedulesFromUTC(availabilities []Availability, loc *time.Location, refUTC time.Time) []Availability {
-	if loc == nil {
-		loc = time.UTC
+// merchantLocation charge le fuseau du merchant, UTC en repli.
+func merchantLocation(timeZone string) *time.Location {
+	loc, err := time.LoadLocation(strings.TrimSpace(timeZone))
+	if err != nil {
+		return time.UTC
 	}
-
-	converted := make([]Availability, 0, len(availabilities))
-	for _, a := range availabilities {
-		updated := a
-		updatedSchedules := make([]AvailabilitySchedule, 0, len(a.Schedules))
-		for _, schedule := range a.Schedules {
-			updatedSchedules = append(updatedSchedules, convertScheduleUTCToLocation(schedule, loc, refUTC))
-		}
-		updated.Schedules = updatedSchedules
-		converted = append(converted, updated)
-	}
-
-	return converted
-}
-
-func convertScheduleUTCToLocation(schedule AvailabilitySchedule, loc *time.Location, refUTC time.Time) AvailabilitySchedule {
-	updated := schedule
-
-	startHour, startMin, startSec, okStart := parseClockToHMS(schedule.StartTime)
-	endHour, endMin, endSec, okEnd := parseClockToHMS(schedule.EndTime)
-	if !okStart || !okEnd {
-		return updated
-	}
-
-	baseMondayUTC := mondayStartUTC(refUTC)
-	baseDayUTC := baseMondayUTC.AddDate(0, 0, schedule.DayOfWeek-1)
-
-	startUTC := time.Date(baseDayUTC.Year(), baseDayUTC.Month(), baseDayUTC.Day(), startHour, startMin, startSec, 0, time.UTC)
-	endUTC := time.Date(baseDayUTC.Year(), baseDayUTC.Month(), baseDayUTC.Day(), endHour, endMin, endSec, 0, time.UTC)
-
-	startLocal := startUTC.In(loc)
-	endLocal := endUTC.In(loc)
-
-	updated.DayOfWeek = getDayOfWeek(startLocal)
-	updated.StartTime = startLocal.Format("15:04:05")
-	updated.EndTime = endLocal.Format("15:04:05")
-
-	return updated
-}
-
-func parseClockToHMS(value string) (int, int, int, bool) {
-	normalized := normalizeTime(value)
-	var h, m, s int
-	if _, err := fmt.Sscanf(normalized, "%d:%d:%d", &h, &m, &s); err != nil {
-		return 0, 0, 0, false
-	}
-	if h < 0 || h > 23 || m < 0 || m > 59 || s < 0 || s > 59 {
-		return 0, 0, 0, false
-	}
-	return h, m, s, true
-}
-
-func mondayStartUTC(refUTC time.Time) time.Time {
-	d := refUTC.UTC()
-	dayStart := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)
-	weekday := dayStart.Weekday()
-	if weekday == time.Sunday {
-		return dayStart.AddDate(0, 0, -6)
-	}
-	return dayStart.AddDate(0, 0, -(int(weekday) - 1))
+	return loc
 }
 
 // isValidTimeFormat vérifie si une chaîne est au format HH:MM:SS valide

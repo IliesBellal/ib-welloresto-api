@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/customers"
 	"welloresto-api/internal/modules/openinghours"
@@ -299,20 +300,24 @@ func (r *Repository) GetLoyaltyPrograms(ctx context.Context, merchantID, orderTy
 	return result, nil
 }
 
-func (r *Repository) GetDiscounts(ctx context.Context, merchantID string, orderType string, dow int) ([]Discount, error) {
+// GetDiscounts liste les promotions actives à localNow (heure locale du
+// merchant) : date de validité comparée en date calendaire locale (fin
+// incluse), créneau [début, fin[ au jour et à l'heure locaux — mêmes règles
+// que le pricing (orders.GetDiscounts).
+func (r *Repository) GetDiscounts(ctx context.Context, merchantID string, orderType string, localNow time.Time) ([]Discount, error) {
 	db := dbx.GetDB(ctx, r.database)
 
 	query := `
 	SELECT DISTINCT
 		d.discount_id,
-		d.discount_order_type,
+		COALESCE(d.discount_order_type, ''),
 		d.discount_code,
 		d.discount_desc,
 		d.discount_name,
 		d.discount_value,
 		d.discount_unit,
 		d.min_order_value,
-		d.min_order_unit,
+		COALESCE(d.min_order_unit, ''),
 		d.max_discount_value,
 		d.max_discount_unit,
 		d.discounted_quantity,
@@ -321,30 +326,29 @@ func (r *Repository) GetDiscounts(ctx context.Context, merchantID string, orderT
 	FROM discounts d
 	LEFT JOIN discounts_schedules ds ON ds.discount_id = d.discount_id AND ds.enabled = true
 	WHERE d.merchant_id = ?
-	AND d.discount_order_type LIKE ?
-	AND (d.valid_from < %[1]s
-		AND (d.valid_to > %[1]s OR d.valid_to IS NULL))
+	AND (COALESCE(d.discount_order_type, '') = '' OR d.discount_order_type LIKE ?)
+	AND %[1]s <= ?
+	AND (d.valid_to IS NULL OR %[2]s >= ?)
 	AND (
-		(%[2]s
+		(ds.available_from <= ? AND (ds.available_to > ? OR ds.available_to = '00:00:00')
 		 AND ds.day_of_week = ?)
 		OR NOT d.is_time_limited
 	)
 	AND d.available = true
 	AND d.enabled = true
 	`
-	// available_from/to sont des colonnes time comparees a un timestamp en
-	// MySQL (coercition implicite) — traduites en comparaison d'heure du jour
-	// UTC cote PG, comme orders.GetDiscountProductOptions. Les scans
-	// is_cumulative/available passent par CASE 1/0 (booleens PG vs int Go).
-	timeWindow := `(ds.available_from < UTC_TIMESTAMP()
-		 AND ds.available_to > UTC_TIMESTAMP())`
-	if dbx.ActiveDialect() == dbx.Postgres {
-		timeWindow = `(ds.available_from < CAST(now() AT TIME ZONE 'UTC' AS time)
-		 AND ds.available_to > CAST(now() AT TIME ZONE 'UTC' AS time))`
-	}
-	query = fmt.Sprintf(query, dbx.UTCNow(), timeWindow)
+	// discount_order_type vide/NULL = tous les modes, comme le pricing
+	// (orders.applyDiscounts) : ces promotions étaient exclues par le LIKE
+	// alors qu'elles s'appliquent au panier. min_order_unit, nullable, est lu
+	// via COALESCE (un NULL faisait échouer le scan de toute la liste).
+	//
+	// Les scans is_cumulative/available passent par CASE 1/0 (booleens PG vs
+	// int Go).
+	query = fmt.Sprintf(query, dbx.UTCDate("d.valid_from"), dbx.UTCDate("d.valid_to"))
 
-	rows, err := db.QueryContext(ctx, query, merchantID, "%"+orderType+"%", dow)
+	localDate := localNow.Format("2006-01-02")
+	clock := localNow.Format("15:04:05")
+	rows, err := db.QueryContext(ctx, query, merchantID, "%"+orderType+"%", localDate, localDate, clock, clock, helpers.ISOWeekday(localNow))
 	if err != nil {
 		return nil, err
 	}
@@ -440,8 +444,7 @@ func (r *Repository) GetMerchantStatus(ctx context.Context, merchantID string, d
 		return nil, err
 	}
 
-	loc, _ := time.LoadLocation(timezone)
-	localNow := time.Now().In(loc)
+	localNow := time.Now().In(helpers.MerchantLocation(ctx, timezone))
 	holidayDate := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, time.UTC)
 	holiday, err := holidayRepo.ResolvePlanningHoliday(ctx, merchantID, holidayDate)
 	if err != nil {
@@ -590,40 +593,6 @@ func formatHour(hour string) string {
 		return hour[:5]
 	}
 	return hour
-}
-
-func (r *Repository) GetUnavailableProducts(ctx context.Context, merchantID string, dow int, currentTime string) (map[int64]string, error) {
-	db := dbx.GetDB(ctx, r.database)
-
-	query := `
-	SELECT DISTINCT p.product_id, p.name
-	FROM availabilities a
-	INNER JOIN availabilities_products ap ON ap.availability_id = a.availability_id
-	INNER JOIN availabilities_schedules asch ON asch.availability_id = a.availability_id
-	INNER JOIN products p ON ap.product_id = p.product_id
-	WHERE a.merchant_id = ?
-	AND ((asch.day_of_week = ? AND asch.available_from > ?) OR asch.available_to < ?)
-	AND asch.enabled = true
-	AND a.enabled = true
-	AND a.available = true
-	AND ap.enabled = true`
-
-	rows, err := db.QueryContext(ctx, query, merchantID, dow, currentTime, currentTime)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	result := make(map[int64]string)
-	for rows.Next() {
-		var id int64
-		var name string
-		if err := rows.Scan(&id, &name); err != nil {
-			return nil, err
-		}
-		result[id] = name
-	}
-	return result, nil
 }
 
 // GetDeliverySessionByOrderID resolves the delivery session currently linked to an order.

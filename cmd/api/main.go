@@ -1,6 +1,10 @@
 package main
 
 import (
+	// Base IANA embarquée : les calculs à l'heure du merchant
+	// (helpers.MerchantLocation) ne dépendent pas des données de fuseaux de
+	// l'hôte (image minimale sans tzdata).
+	_ "time/tzdata"
 	"context"
 	"database/sql"
 	"log"

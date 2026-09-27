@@ -364,9 +364,15 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	messaggioSMSService := messaggioModule.NewSMSService(messaggioMarketingRepo, messaggioClient)
 	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, notificationService, ordersLifeCycleService, messaggioSMSService, uberService, log)
 
+	// ---- Availabilities ----
+	// Construit avant ScanNOrder/Kiosk : leurs menus filtrent les produits
+	// hors créneau horaire via availabilitiesService.
+	availabilitiesRepo := availabilitiesModule.NewAvailabilitiesRepository(selectedDB)
+	availabilitiesService := availabilitiesModule.NewAvailabilitiesService(availabilitiesRepo)
+
 	// ---- ScanNOrder ----
 	scannRepo := scannorder.NewRepository(selectedDB)
-	scannService := scannorder.NewService(cfg.ScanNOrder, scannRepo, menuService, ordersService, stripeManager, redisClient, ordersLifeCycleService, upsellService, deliverySessionsService)
+	scannService := scannorder.NewService(cfg.ScanNOrder, scannRepo, menuService, ordersService, stripeManager, redisClient, ordersLifeCycleService, upsellService, deliverySessionsService, availabilitiesService)
 	scannHandler := scannorder.NewHandler(scannService)
 
 	// ---- Integrations dashboard ----
@@ -573,10 +579,6 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	discountsRepo := discountsModule.NewRepository(selectedDB)
 	discountsService := discountsModule.NewService(discountsRepo)
 
-	// ---- Availabilities ----
-	availabilitiesRepo := availabilitiesModule.NewAvailabilitiesRepository(selectedDB)
-	availabilitiesService := availabilitiesModule.NewAvailabilitiesService(availabilitiesRepo)
-
 	// ---- HACCP ----
 	haccpRepo := haccpModule.NewRepository(selectedDB)
 	haccpService := haccpModule.NewService(haccpRepo, auditService, selectedDB, r2Client, notificationService)
@@ -598,7 +600,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		// clé Stripe live.
 		StripeTestMode: strings.HasPrefix(cfg.Stripe.APIKey, "sk_test_") || strings.HasPrefix(cfg.Stripe.APIKey, "rk_test_"),
 	}
-	kioskService := kioskModule.NewService(kioskCfg, kioskRepo, selectedDB, redisClient, menuService, ordersService, ordersLifeCycleService, upsellService, notificationService, terminalService)
+	kioskService := kioskModule.NewService(kioskCfg, kioskRepo, selectedDB, redisClient, menuService, ordersService, ordersLifeCycleService, upsellService, notificationService, terminalService, availabilitiesService)
 	kioskService.SetOnboardingService(onboardingService)
 	kioskHandler := kioskModule.NewHandler(kioskService)
 	kioskAdminHandler := kioskModule.NewAdminHandler(kioskService, r2Client)
@@ -1210,6 +1212,8 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			Patch("/products/bulk/components", menuH.BulkSetProductsComponents) // used by: back-office
 		r.With(middleware.RequirePermission(permission.CatalogManage)).
 			Post("/products/bulk/delete", menuH.BulkDeleteProducts) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Post("/products/bulk/duplicate", menuH.BulkDuplicateProducts) // used by: back-office
 		r.With(middleware.RequirePermission(permission.CatalogManage)).
 			Patch("/products/bulk/tags", menuH.BulkSetProductsTags) // used by: back-office
 		r.With(middleware.RequirePermission(permission.CatalogManage)).

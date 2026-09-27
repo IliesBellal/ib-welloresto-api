@@ -19,12 +19,14 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{database: db}
 }
 
-// GetActiveDiscounts retrieves all active discounts for a merchant (valid now)
-func (r *Repository) GetActiveDiscounts(ctx context.Context, merchantID string) ([]Discount, error) {
+// GetActiveDiscounts retrieves all active discounts for a merchant, valid on
+// localDate ("2006-01-02", date calendaire du merchant) : dates de validité
+// comparées en dates calendaires, fin incluse — même règle que le pricing
+// (orders.GetDiscounts).
+func (r *Repository) GetActiveDiscounts(ctx context.Context, merchantID, localDate string) ([]Discount, error) {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	now := time.Now().UTC()
 	rows, err := db.QueryContext(ctx, `
 		SELECT d.discount_id_new, d.merchant_id, d.discount_name, d.discount_desc,
 		       d.prefered_order, d.discount_code, d.discount_order_type,
@@ -34,9 +36,9 @@ func (r *Repository) GetActiveDiscounts(ctx context.Context, merchantID string) 
 		       d.is_time_limited, d.available, d.enabled, d.creation_date
 		FROM discounts d
 		WHERE d.merchant_id = ? AND d.enabled = true AND d.available = true
-		  AND d.valid_from <= ? AND (d.valid_to IS NULL OR d.valid_to > ?)
+		  AND `+dbx.UTCDate("d.valid_from")+` <= ? AND (d.valid_to IS NULL OR `+dbx.UTCDate("d.valid_to")+` >= ?)
 		ORDER BY d.prefered_order ASC
-	`, merchantID, now, now)
+	`, merchantID, localDate, localDate)
 	if err != nil {
 		log.Error(err.Error())
 		return nil, err
@@ -339,6 +341,8 @@ func (r *Repository) UpdateDiscount(ctx context.Context, merchantID string, disc
 	if req.ValidTo != nil {
 		updates = append(updates, "valid_to = ?")
 		args = append(args, *req.ValidTo)
+	} else if req.ClearValidTo {
+		updates = append(updates, "valid_to = NULL")
 	}
 	if req.MinOrderValue != nil {
 		updates = append(updates, "min_order_value = ?")
@@ -405,8 +409,9 @@ func (r *Repository) UpdateDiscount(ctx context.Context, merchantID string, disc
 		}
 	}
 
-	// Update schedules if provided
-	if len(req.Schedules) > 0 {
+	// Update schedules if provided — une liste vide (non nil) retire tous les
+	// créneaux (restriction horaire désactivée dans le back-office).
+	if req.Schedules != nil {
 		// Delete existing schedules
 		if _, err := db.ExecContext(ctx, "DELETE FROM discounts_schedules WHERE discount_id_new = ?", discountIDNew); err != nil {
 			log.Error(err.Error())

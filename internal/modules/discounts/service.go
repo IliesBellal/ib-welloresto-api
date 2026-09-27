@@ -3,6 +3,7 @@ package discounts
 import (
 	"context"
 	"strconv"
+	"time"
 
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/middleware"
@@ -23,7 +24,8 @@ func (s *Service) GetActiveDiscounts(ctx context.Context, token string) ([]Disco
 		return nil, err
 	}
 
-	return s.repo.GetActiveDiscounts(ctx, user.MerchantID)
+	localDate := time.Now().In(helpers.MerchantLocation(ctx, user.TimeZone)).Format("2006-01-02")
+	return s.repo.GetActiveDiscounts(ctx, user.MerchantID, localDate)
 }
 
 // GetAllDiscounts retrieves all non-deleted discounts for the authenticated merchant
@@ -68,6 +70,10 @@ func (s *Service) CreateDiscount(ctx context.Context, token string, req *CreateD
 
 	req.DiscountID = helpers.GeneratePrefixedID(helpers.DiscountIDPrefix)
 
+	// Restriction horaire = présence de créneaux : le back-office ne
+	// renseignait jamais is_time_limited, les créneaux saisis étaient ignorés.
+	req.IsTimeLimited = len(req.Schedules) > 0
+
 	return s.repo.CreateDiscount(ctx, user.MerchantID, req)
 }
 
@@ -81,6 +87,13 @@ func (s *Service) UpdateDiscount(ctx context.Context, token string, discountID s
 	discountIDNew, err := strconv.Atoi(discountID)
 	if err != nil {
 		return nil, ErrInvalidDiscountID
+	}
+
+	// Créneaux fournis (liste vide comprise = tous retirés) : la restriction
+	// horaire en découle, comme à la création.
+	if req.Schedules != nil {
+		timeLimited := len(req.Schedules) > 0
+		req.IsTimeLimited = &timeLimited
 	}
 
 	return s.repo.UpdateDiscount(ctx, user.MerchantID, discountIDNew, req)

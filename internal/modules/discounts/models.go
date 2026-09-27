@@ -2,6 +2,8 @@ package discounts
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -159,7 +161,16 @@ type CreateScheduleRequest struct {
 	AvailableTo   time.Time `json:"available_to"`
 }
 
-// UnmarshalJSON parses schedule request with HH:MM time format
+// UnmarshalJSON lit et valide un créneau saisi dans le back-office :
+//   - day_of_week ISO 1 = lundi … 7 = dimanche, convention de toutes les
+//     évaluations (pricing, listes Kiosk/ScanNOrder). 0 est accepté comme
+//     dimanche (ancienne convention JS du back-office) et ramené à 7 —
+//     stocké tel quel, un dimanche 0 n'était jamais actif ;
+//   - heures "HH:MM" ou "HH:MM:SS" (heure locale du merchant) ; une heure
+//     illisible est une erreur (400), elle devenait silencieusement 00:00 ;
+//   - intervalle [début, fin[ avec début < fin, ou fin à 00:00 = jusqu'à
+//     minuit (ex. 19:00–00:00). Tout autre créneau à l'envers est refusé :
+//     il n'aurait jamais été actif.
 func (s *CreateScheduleRequest) UnmarshalJSON(data []byte) error {
 	type Alias struct {
 		DayOfWeek     int    `json:"day_of_week"`
@@ -171,19 +182,45 @@ func (s *CreateScheduleRequest) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	s.DayOfWeek = aux.DayOfWeek
-
-	// Parse available_from (HH:MM format)
-	if t, err := time.Parse("15:04", aux.AvailableFrom); err == nil {
-		s.AvailableFrom = t
+	day := aux.DayOfWeek
+	if day == 0 {
+		day = 7
+	}
+	if day < 1 || day > 7 {
+		return fmt.Errorf("invalid schedule day_of_week %d: must be 1 (monday) to 7 (sunday)", aux.DayOfWeek)
+	}
+	from, err := parseClock(aux.AvailableFrom)
+	if err != nil {
+		return fmt.Errorf("invalid schedule available_from: %w", err)
+	}
+	to, err := parseClock(aux.AvailableTo)
+	if err != nil {
+		return fmt.Errorf("invalid schedule available_to: %w", err)
+	}
+	if !from.Before(to) && !isMidnight(to) {
+		return fmt.Errorf("invalid schedule %s-%s: start must be before end (use 00:00 as end for midnight)",
+			aux.AvailableFrom, aux.AvailableTo)
 	}
 
-	// Parse available_to (HH:MM format)
-	if t, err := time.Parse("15:04", aux.AvailableTo); err == nil {
-		s.AvailableTo = t
-	}
-
+	s.DayOfWeek = day
+	s.AvailableFrom = from
+	s.AvailableTo = to
 	return nil
+}
+
+// parseClock lit une heure "HH:MM" ou "HH:MM:SS".
+func parseClock(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	for _, layout := range []string{"15:04", "15:04:05"} {
+		if t, err := time.Parse(layout, value); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("%q is not a HH:MM time", value)
+}
+
+func isMidnight(t time.Time) bool {
+	return t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0
 }
 
 // CreateDiscountRequestHelper handles date parsing for CreateDiscountRequest
@@ -263,6 +300,17 @@ func (r *CreateDiscountRequest) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// isExplicitNull indique si la clé est présente dans le JSON avec la valeur
+// null (à distinguer d'une clé absente, « ne pas modifier »).
+func isExplicitNull(data []byte, key string) bool {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return false
+	}
+	value, ok := raw[key]
+	return ok && strings.TrimSpace(string(value)) == "null"
+}
+
 // UpdateDiscountRequest is the payload for updating a discount
 type UpdateDiscountRequest struct {
 	DiscountName       *string                 `json:"discount_name,omitempty"`
@@ -274,6 +322,9 @@ type UpdateDiscountRequest struct {
 	DiscountUnit       *DiscountUnit           `json:"discount_unit,omitempty"`
 	ValidFrom          *time.Time              `json:"valid_from,omitempty"`
 	ValidTo            *time.Time              `json:"valid_to,omitempty"`
+	// ClearValidTo : "valid_to": null explicite (« Sans limite » dans le
+	// back-office) — retire la date de fin. Une clé absente ne modifie rien.
+	ClearValidTo       bool                    `json:"-"`
 	MinOrderValue      *float64                `json:"min_order_value,omitempty"`
 	MinOrderUnit       *MinOrderUnit           `json:"min_order_unit,omitempty"`
 	MaxDiscountValue   *float64                `json:"max_discount_value,omitempty"`
@@ -356,6 +407,7 @@ func (r *UpdateDiscountRequest) UnmarshalJSON(data []byte) error {
 			r.ValidTo = &t
 		}
 	}
+	r.ClearValidTo = helper.ValidTo == nil && isExplicitNull(data, "valid_to")
 
 	return nil
 }

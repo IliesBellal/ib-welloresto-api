@@ -34,6 +34,7 @@ func TestKioskRepository_Postgres(t *testing.T) {
 		}
 		_, _ = db.ExecContext(ctx, `DELETE FROM kiosk_settings WHERE merchant_id = $1`, mid)
 		_, _ = db.ExecContext(ctx, `DELETE FROM discounts_schedules WHERE discount_id = 'itest-kiosk-disc'`)
+		_, _ = db.ExecContext(ctx, `DELETE FROM discounts_products WHERE discount_id IN ('itest-kiosk-disc', 'itest-kiosk-disc-all')`)
 		_, _ = db.ExecContext(ctx, `DELETE FROM discounts WHERE merchant_id = $1`, mid)
 		_, _ = db.ExecContext(ctx, `DELETE FROM orders WHERE merchant_id = $1`, mid)
 		_, _ = db.ExecContext(ctx, `DELETE FROM products WHERE merchant_Id = $1`, mid)
@@ -304,9 +305,32 @@ func TestKioskRepository_Postgres(t *testing.T) {
 	if dow == 0 {
 		dow = 7
 	}
-	discounts, err := repo.GetDiscounts(ctx, merchantID, "", dow)
-	if err != nil || len(discounts) != 1 || discounts[0].IsCumulative {
+	// Promotion « tous modes » (discount_order_type NULL) : listée elle aussi,
+	// comme le pricing l'applique.
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO discounts (discount_id, merchant_id, discount_name, discount_desc, discount_order_type, discount_code, discount_value, discount_unit, min_order_unit, discounted_quantity, is_cumulative, is_time_limited, available, valid_from)
+		VALUES ('itest-kiosk-disc-all', $1, 'Promo tous modes', 'desc', NULL, NULL, 10, 'PERCENTAGE', 'CURRENCY', 1, false, false, true, now() - interval '1 day')`, merchantID); err != nil {
+		t.Fatalf("seed discount (all order types): %v", err)
+	}
+	discounts, err := repo.GetDiscounts(ctx, merchantID, "", time.Now().UTC())
+	if err != nil || len(discounts) != 2 {
 		t.Fatalf("GetDiscounts = (%+v, %v)", discounts, err)
+	}
+	for _, d := range discounts {
+		if d.DiscountID == "itest-kiosk-disc" && d.IsCumulative {
+			t.Fatalf("unexpected cumulative discount: %+v", d)
+		}
+		if d.DiscountID == "itest-kiosk-disc-all" && d.DiscountOrderType != "" {
+			t.Fatalf("NULL discount_order_type must scan as empty, got %q", d.DiscountOrderType)
+		}
+	}
+
+	if _, err := db.ExecContext(ctx, `INSERT INTO discounts_products (discount_id, product_id) VALUES ('itest-kiosk-disc-all', 4242)`); err != nil {
+		t.Fatalf("seed discount product: %v", err)
+	}
+	discountProducts, err := repo.GetDiscountProductIDs(ctx, []string{"itest-kiosk-disc", "itest-kiosk-disc-all"})
+	if err != nil || len(discountProducts) != 1 || len(discountProducts["itest-kiosk-disc-all"]) != 1 || discountProducts["itest-kiosk-disc-all"][0] != "4242" {
+		t.Fatalf("GetDiscountProductIDs = (%+v, %v)", discountProducts, err)
 	}
 
 	// suppression du code d'enrôlement

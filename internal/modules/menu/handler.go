@@ -1613,19 +1613,7 @@ func (h *MenuHandler) UploadProductImage(w http.ResponseWriter, r *http.Request)
 	ext := r2.GetExtensionFromContentType(contentType)
 	key := r2.GenerateProductKey(user.MerchantID, productID, ext)
 
-	// 8. Supprimer l'ancienne image de R2 (si elle existe)
-	if oldImageURL != "" {
-		// Essayer d'extraire la clé à partir de l'URL publique
-		oldKey := h.r2Client.GetKeyFromURL(oldImageURL)
-		if oldKey != "" {
-			if err := h.r2Client.DeleteFile(ctx, oldKey); err != nil {
-				// On log l'erreur mais on continue (pas bloquant)
-				log.Warn("[WARN] UploadProductImage DeleteFile (old image): " + err.Error())
-			}
-		}
-	}
-
-	// 9. Upload le nouveau fichier vers R2
+	// 8. Upload le nouveau fichier vers R2
 	publicURL, err := h.r2Client.UploadFile(ctx, key, file, contentType)
 	if err != nil {
 		log.Error("[ERROR] UploadProductImage UploadFile: " + err.Error())
@@ -1633,17 +1621,37 @@ func (h *MenuHandler) UploadProductImage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 10. Mettre à jour la base de données
-	if err := h.service.UpdateProductImage(ctx, token, productID, publicURL); err != nil {
+	// La clé R2 est fixe par produit : remplacer une image par une autre du
+	// même format redonnerait la même URL, et navigateurs/CDN/apps
+	// continueraient d'afficher l'ancienne depuis leur cache. Le paramètre de
+	// version change l'URL à chaque upload ; GetKeyFromURL l'ignore, donc la
+	// suppression de l'ancienne image retrouve toujours la bonne clé.
+	versionedURL := publicURL + "?v=" + strconv.FormatInt(time.Now().UnixMilli(), 10)
+
+	// 9. Mettre à jour la base de données
+	if err := h.service.UpdateProductImage(ctx, token, productID, versionedURL); err != nil {
 		log.Error("[ERROR] UploadProductImage UpdateProductImage: " + err.Error())
 		models.SendErrorJSON(w, "menu", "upload_product_image", err)
 		return
 	}
 
-	// 9. Réponse
+	// 10. Supprimer l'ancienne image de R2, seulement une fois la nouvelle en
+	// place (un échec d'upload ne laisse plus le produit sans image) et
+	// seulement si elle portait une autre clé (sinon on effacerait la nouvelle).
+	if oldImageURL != "" {
+		oldKey := h.r2Client.GetKeyFromURL(oldImageURL)
+		if oldKey != "" && oldKey != key {
+			if err := h.r2Client.DeleteFile(ctx, oldKey); err != nil {
+				// On log l'erreur mais on continue (pas bloquant)
+				log.Warn("[WARN] UploadProductImage DeleteFile (old image): " + err.Error())
+			}
+		}
+	}
+
+	// 11. Réponse
 	models.SendJSON(w, http.StatusOK, "menu", "upload_product_image", map[string]interface{}{
 		"status":    "success",
-		"photo_url": publicURL,
+		"photo_url": versionedURL,
 	})
 }
 

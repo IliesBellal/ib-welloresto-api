@@ -4606,10 +4606,15 @@ du résumé et de l'historique de caisse.
 
 ### Correction
 
-Filtre de l'étape 3bis élargi à `p.mop IN ('KIOSK','CB')` (même condition
-`cash_register_id IS NULL OR = 'KIOSK'`). `'CB'` est conservé pour les
-paiements borne enregistrés avant la distinction KIOSK/CB, et pour les
-paiements carte différés sans caisse que l'étape couvrait déjà.
+Filtre de l'étape 3bis remplacé par `p.mop = 'KIOSK'` (même condition
+`cash_register_id IS NULL OR = 'KIOSK'`). `'CB'` est volontairement retiré
+(décision utilisateur) : l'étape ne requalifie plus les paiements carte sans
+caisse — un paiement `CB` à `cash_register_id = NULL` n'est plus rattaché
+automatiquement à la clôture suivante. Conséquence assumée : les éventuels
+paiements borne enregistrés en `CB` avant la distinction KIOSK/CB et encore
+non rattachés ne le seront plus (staging compte ~600 paiements `CB` actifs
+sans caisse, historiques, qui ne seront donc plus aspirés d'un coup par la
+prochaine clôture).
 
 Pas de rattrapage de données : l'étape 3bis ne dépend pas de la date du
 paiement, les paiements `KIOSK` restés à `NULL` depuis le déploiement
@@ -4619,5 +4624,314 @@ Staging (vérifié le 2026-09-25) ne contient encore aucun paiement `KIOSK`.
 ### Tests
 
 `TestCashRegisterLifecycle_Postgres` (`cash_registers/postgres_integration_test.go`) :
-ajout d'un paiement `KIOSK` à `cash_register_id = NULL`, attendus portés à
-6 paiements / 3200 de revenu.
+les paiements borne du seed passent en `KIOSK` (un à `NULL`, un à la
+sentinelle `'KIOSK'`), et un paiement `CB` à `NULL` sert de cas négatif (non
+rattaché) — attendus : 5 paiements / 3000 de revenu.
+
+## Disponibilités horaires produits sur Kiosk et ScanNOrder (2026-09-26)
+
+### Constat
+
+Les disponibilités horaires (module `availabilities` : un produit rattaché à
+une disponibilité n'est vendable que pendant ses créneaux) n'étaient
+appliquées sur aucun canal. Le menu Kiosk ne filtrait que
+`is_available_on_kiosk` ; `scannorder.Repository.GetUnavailableProducts`
+existait mais n'était jamais appelé, avec une condition fausse (plusieurs
+créneaux dans la journée → produit masqué hors du premier ; produit du lundi
+visible le mardi). Les créneaux étaient en outre stockés en heure locale
+saisie alors que le GET du back-office les convertissait « depuis UTC ».
+
+### Décisions (utilisateur)
+
+- **Créneaux stockés en heure locale du merchant** et évalués dans
+  `merchant.timezone`. Un créneau est une heure de mur (« 6h–11h le lundi »,
+  été comme hiver), pas un instant : l'UTC le décalerait d'une heure à chaque
+  changement d'heure. Même convention que les horaires d'ouverture et les
+  promotions programmées. La conversion « depuis UTC » du GET
+  `/menu/availabilities` est supprimée : le back-office réaffiche exactement
+  ce qu'il a saisi. Aucune migration de données (les créneaux en base sont
+  déjà en heure locale), aucun changement back-office.
+  (Un stockage UTC avec conversion à l'écriture a d'abord été implémenté puis
+  abandonné avant commit pour cette raison.)
+- **Canaux concernés : Kiosk et ScanNOrder** (menu, fiche produit, upsell,
+  pricing/création de commande). **Pas le POS** : le filtre upsell est
+  appliqué dans les services Kiosk/SNO, pas dans `upsell.Service` qui est
+  partagé avec le POS.
+- **Règle liste blanche** (`availabilities.UnavailableProductsAt`) : un
+  produit sans disponibilité active n'est jamais restreint ; sinon il n'est
+  disponible que dans un de ses créneaux actifs. Disponibilité active =
+  `enabled` + `available` (toggle « active » du back-office) +
+  `availabilities_products.enabled` ; créneau actif = `enabled`. Une
+  disponibilité active sans créneau actif masque ses produits en permanence.
+- Un groupe hors créneau est retiré avec ses sous-produits. Le filtre est
+  appliqué avant le retrait des catégories vides.
+
+### Implémentation
+
+- Une requête par appel (`AvailabilitiesRepository.GetActiveProductSchedules`),
+  lue à chaque requête, jamais cachée ; le fuseau du merchant n'est lu que si
+  au moins un produit est restreint.
+- Cache Redis des menus : l'empreinte des produits hors créneau
+  (`availabilities.UnavailabilityFingerprint`) suffixe la clé
+  (`kiosk:merchant:menu:{merchant}:{orderType}:{empreinte}`, idem SNO). Un
+  changement de créneau ou d'une disponibilité donne immédiatement un autre
+  menu et un autre ETag, sans invalidation active ni attente du TTL ; le motif
+  d'invalidation `{merchant}:*` couvre toujours ces clés. L'upsell GET SNO
+  (clé par merchant) est filtré après lecture du cache.
+- Kiosk : `GetProduct` et `validateKioskProductAvailability` (pricing et
+  création de commande) renvoient `ErrKioskProductUnavailable`, déjà géré par
+  l'app. Côté Flutter rien ne change : le menu est rechargé avec ETag à chaque
+  début de session.
+- ScanNOrder : `GetPricingSNO` renvoie `unavailable_products` avec le statut
+  `out_of_schedule` (affiché « indisponible » par le front), et
+  `CreateOrderSNO` refuse alors la commande (`unavailable_products`, garde
+  existante). `GetProduct` renvoie `product_not_available_on_sno`.
+- `scannorder.Repository.GetUnavailableProducts` supprimée (code mort et
+  faux) ; son scénario de test d'intégration est repris dans
+  `availabilities/postgres_integration_test.go`.
+
+### Limites connues
+
+- Le contrôle porte sur l'instant présent, y compris pour une commande SNO
+  programmée pour plus tard.
+
+## Badge promo borne : `promo_products` et `show_promo_badge` (2026-09-27)
+
+- `GET /kiosk/discounts` renvoie `promo_products`
+  (`[{product_id, discount_id, discount_name}]`) : produits visés
+  (`discounts_products`) par une promotion en cours, automatique
+  (`discount_code` NULL) et compatible avec `?fulfillment_type=IN|TAKE_AWAY`
+  (`discount_order_type` vide = tous modes). Mêmes règles que
+  `orders.applyDiscounts`, y compris l'absence de filtre sur
+  `discounts_products.enabled`. La liste `discounts` du bandeau reste non
+  filtrée par mode. Calcul pur : `promoProducts` (testé).
+- Le badge affiche le titre de la promotion (`discount_name`). Un produit
+  visé par plusieurs promotions porte la première par `prefered_order`
+  (priorité du pricing) : `Repository.GetDiscounts` trie désormais par
+  `prefered_order, discount_id`, ce qui ordonne aussi le bandeau.
+- **Correctif** : `Repository.GetDiscounts` excluait les promotions
+  « tous modes » (`discount_order_type` NULL, `NULL LIKE '%%'` est faux)
+  alors que le pricing les applique ; `COALESCE(discount_order_type, '')`.
+  Le bandeau promo de la borne les affiche désormais aussi.
+- `kiosk_settings.show_promo_badge` (migration
+  `todo/158_kiosk_settings_show_promo_badge`, `DEFAULT true`) exposé dans
+  `GET /kiosk/settings` et modifiable par le `PUT /settings` admin comme
+  les autres réglages.
+
+## Créneaux des promotions évalués en heure locale du merchant (2026-09-27)
+
+- **Constat** : le back-office enregistre les créneaux `discounts_schedules`
+  tels que saisis (heure locale), mais le pricing (`orders.GetDiscounts`,
+  `GetDiscountProductOptions`) et les listes de promotions ScanNOrder/Kiosk
+  les comparaient à l'horloge UTC de la base (`now() AT TIME ZONE 'UTC'`,
+  jour ISO UTC pour le pricing). Une promo « 12h–14h » était active de 14h à
+  16h en été à Paris (13h–15h en hiver).
+- **Décision (utilisateur)** : même convention que les disponibilités
+  horaires produits — heure de mur du merchant, évaluée dans
+  `merchant.timezone`. Aucune migration : les données sont déjà en heure
+  locale ; aucun changement back-office ni front.
+- **Implémentation** : le pricing compare à `req.Time`/`req.DayOfWeek`
+  (déjà calculés dans le fuseau du merchant par `ComputePricing`, heure
+  extraite par `pricingClock`) ; `scannorder`/`kiosk` `Repository.GetDiscounts`
+  reçoivent l'heure locale (`currentTime`) en plus du jour local qu'ils
+  recevaient déjà, même patron que `scannorder.GetMerchantStatus`.
+- **Portée** : le pricing est partagé — **le POS est aussi corrigé**
+  (remises appliquées à la caisse), comme ScanNOrder et la borne.
+- Les dates de validité (`valid_from`/`valid_to`, stockées en UTC par le
+  back-office) restent comparées à l'horloge UTC : inchangé.
+- `scannorder.Repository.GetDiscounts` excluait aussi les promotions « tous
+  modes » : corrigé dans l'entrée suivante.
+
+## Fiabilisation du calcul des promotions (pricing commun POS/ScanNOrder/Kiosk) (2026-09-27)
+
+Analyse puis corrections validées par l'utilisateur. Aucun changement de
+contrat d'API ni de front ; aucune migration.
+
+1. **Promotion « tous modes » bloquant le pricing** — le back-office écrit
+   `discount_order_type = NULL` quand aucun mode n'est coché (état par
+   défaut du formulaire ; le schéma documente « NULL = all »). Le pricing le
+   scannait dans une `string` : erreur SQL, **tout** `ComputePricing` du
+   merchant échouait tant que la promotion était active. `COALESCE(...,'')` ;
+   la règle existante (`""` = tous modes) s'applique alors. Même traitement
+   pour `min_order_unit` (nullable) ; `min_order_value` (double precision)
+   lu en float64 puis arrondi.
+2. **Promotion supprimée toujours appliquée** — la suppression back-office
+   est logique (`enabled = false`) mais le pricing ne filtrait pas ce champ
+   (les listes ScanNOrder/Kiosk, si). Filtre ajouté (`GetDiscounts`,
+   `GetDiscountProductOptions`) ; créneaux désactivés ignorés.
+3. **Liste ScanNOrder** — promotions « tous modes » incluses
+   (`COALESCE(discount_order_type,'') = '' OR ... LIKE ?`), comme le pricing ;
+   même condition explicite côté Kiosk. Affichage uniquement (bandeau).
+4. **Minimums de commande jamais appliqués** — le back-office écrit
+   `QUANTITY`/`EUR`, le pricing attendait `QTY`/`CURRENCY` (et tombait dans le
+   cas « pas de condition »). `normalizeMinOrderUnit` accepte les deux
+   conventions. **Changement visible** : une promotion avec minimum saisi
+   dans le back-office ne s'applique plus sous ce minimum.
+
+Corrections annexes trouvées en vérifiant le calcul :
+- **NEWPRICE sans prix saisi** (`discounts_products.new_price` NULL) : lu
+  comme 0, le produit devenait **gratuit**. `DiscountProductInfo.NewPrice`
+  devient `*int` ; un tel produit n'est pas éligible (ni remise, ni blocage
+  d'une promotion suivante). Le badge promo borne l'exclut aussi.
+- **Arrondi des pourcentages** : `int(prix * (1 - pct/100))` en flottant
+  perdait un centime sur ~0,7 % des couples prix/pourcentage (ex. -7 % sur
+  10,00 € → 9,29 €). Arithmétique entière (même troncature, sans erreur
+  binaire) ; plafond en pourcentage avec epsilon.
+- **Doublons de créneaux** : une promotion renvoyée N fois par la jointure
+  (plusieurs créneaux correspondants) pouvait s'appliquer N fois si
+  cumulable. Dédoublonnage par `discount_id` ; tri `prefered_order,
+  discount_id` déterministe.
+- **`discounted_quantity = 0` cumulable** : division par zéro (panique) ;
+  ignorée.
+
+Contraintes d'options : corrigées ensuite, voir l'entrée suivante.
+
+Tests : `orders/discounts_pricing_test.go` (28 cas de règles
+`applyDiscounts`, lecture SQL `GetDiscounts` sous sqlmock, `ComputePricing`
+complet de bout en bout), `kiosk`/`scannorder` `discounts_list_test.go`,
+intégration Postgres étendue (promotion NULL, supprimée, créneau dupliqué).
+Chaque correction a été vérifiée par mutation (ancien code réintroduit →
+au moins un test échoue).
+
+## Promotions : contraintes et prix d'options, restriction horaire testée sur Postgres (2026-09-27)
+
+Corrections (pricing commun POS/ScanNOrder/Kiosk) :
+- **Contraintes d'options jamais appliquées** — `GetDiscountProductOptions`
+  scannait `option_id` dans `discountID` (ordre du SELECT) : la map était
+  indexée par option, `applyDiscounts` n'y trouvait jamais rien. Scan
+  corrigé ; requête simplifiée (plus de jointure `discounts_schedules`, qui
+  dupliquait les lignes sans vérifier le jour : la map n'est lue que pour
+  les promotions déjà retenues par `GetDiscounts`).
+- **Option obligatoire contournable** — `optionsMatch` renvoyait « éligible »
+  pour un produit sans configuration ; une option obligatoire est désormais
+  exigée dans tous les cas.
+- **Prix d'options de promotion jamais appliqués** —
+  `discounts_products_options.new_price` (ex. supplément offert) n'était lu
+  que par `applyDiscountedOptionsPrice`, jamais appelée (et sur un autre
+  type). Remplacée par `applyPromoOptionPrices`, appelée sur l'unité remisée ;
+  la configuration est copiée car les unités d'une même ligne partagent le
+  même pointeur `Config`.
+- **Prix d'options officiels jamais appliqués** —
+  `applyConfigurationOptionPrices` écrivait dans une copie
+  (`for _, opt := range`, `ConfigurationOption` est une valeur) : le pricing
+  gardait le prix d'option envoyé par le client (POS, Kiosk ; ScanNOrder
+  réécrivait déjà ses prix en amont). Écriture par index.
+
+Aucun écran ne crée de contraintes d'options aujourd'hui (ni back-office ni
+API) : seules les données existantes de `discounts_products_options` sont
+concernées.
+
+Tests Postgres réels (`orders/discounts_postgres_integration_test.go`,
+Postgres de dev `docker-compose.postgres.yml`) :
+- `TestDiscountTimeRestriction_Postgres` : même promotion avec et sans
+  restriction horaire (même créneau lundi 11:00–14:00 en base), 7 instants
+  (dans le créneau, bornes [début, fin[, avant/après, autre jour, créneaux qui se
+  chevauchent) ; créneau désactivé, promotion supprimée, « tous modes ».
+- `TestComputePricing_TimeLimitedVsPermanent_Postgres` : `ComputePricing`
+  complet à l'heure réelle du merchant (Europe/Paris) — promotion du jour
+  active, promotion d'un autre jour inactive, promotion permanente active
+  malgré un créneau d'un autre jour ; option obligatoire choisie ou non,
+  supplément offert sur la seule unité remisée, prix d'option officiel.
+- Vérifiés par mutation contre la base (7 anciens comportements
+  réintroduits un par un → tous détectés).
+- Lancer : `POSTGRES_URL=postgres://welloresto:dev_local_only@localhost:5433/welloresto_dev
+  go test -tags postgres_integration -run Postgres ./internal/modules/orders/`
+  **sans** exporter `DB_DIALECT` (les tests unitaires sqlmock attendent des
+  `?` ; `pgtest.Open` positionne le dialecte test par test).
+
+## Promotions : dates de validité locales, bornes des créneaux, fuseaux sûrs (2026-09-27)
+
+1. **Dates de validité (« du … au … »)** — le back-office stocke la date
+   choisie à minuit UTC (`toUTCDateString`) ; pricing, listes Kiosk/ScanNOrder
+   et `discounts.GetActiveDiscounts` les comparaient à l'instant présent : à
+   Paris, une promotion « du 1er au 31 octobre » démarrait le 1er à 1–2 h et
+   s'arrêtait le 31 à 1–2 h (dernier jour perdu). Désormais comparées en
+   **dates calendaires** (`dbx.UTCDate`, date UTC de la valeur stockée = date
+   choisie) à la **date locale du merchant**, **fin incluse**. Données
+   historiques avec une heure (ex. `…T11:42:20Z`) : seule la date compte.
+2. **Fuseau invalide** — `helpers.MerchantLocation` remplace les
+   `loc, _ := time.LoadLocation(...)` du pricing et de ScanNOrder : UTC en
+   repli (avec avertissement) au lieu d'un `nil` qui faisait paniquer
+   `time.Now().In(nil)` et échouer toutes les commandes du merchant. Base IANA
+   embarquée (`import _ "time/tzdata"` dans `cmd/api/main.go`) : plus de
+   dépendance aux données de fuseaux de l'hôte. Hors périmètre, non modifié :
+   7 appels du même motif dans `modules/reservation/service.go`.
+3. **Bornes des créneaux alignées** sur `[début, fin[` partout (pricing,
+   listes Kiosk/ScanNOrder, disponibilités produits) : le pricing incluait la
+   seconde de fin, les listes excluaient la seconde de début.
+
+`kiosk`/`scannorder` `Repository.GetDiscounts` reçoivent désormais l'instant
+local du merchant (`localNow time.Time`) et en dérivent date, heure et jour
+(`helpers.ISOWeekday`). Tests Go : fragments SQL et paramètres (date locale
+≠ date UTC à 00:30 heure de Paris), `pricingLocalTime`, `MerchantLocation`
+(fuseaux invalides, jamais nil), `ISOWeekday`. Le test Postgres des créneaux
+a été aligné (fin exclue) mais pas relancé.
+
+## Cohérence saisie back-office ↔ fonctionnement (promotions, disponibilités) (2026-09-27)
+
+Audit du trajet saisie back-office → API → stockage → évaluation →
+réaffichage. Corrigés (API + back-office) :
+
+1. **Dimanche** — le back-office envoyait `day_of_week = 0` (JS), toutes les
+   évaluations attendent l'ISO `7` : promotions du dimanche jamais actives,
+   disponibilités du dimanche refusées (400), et un `7` historique réaffiché
+   en « lundi » (puis réenregistré en lundi). Back-office en ISO (lecture
+   tolérante de 0) ; API : 0 ramené à 7 à l'écriture (`CreateScheduleRequest`,
+   `availabilities.validateSchedules`) ; migration
+   `todo/159_schedules_iso_sunday_time_limited` pour l'existant.
+2. **Restriction horaire des promotions ignorée** — le formulaire ne gère
+   que la liste des créneaux et n'envoyait jamais `is_time_limited` (resté
+   `false`) : les créneaux affichés étaient ignorés par le pricing (11
+   promotions sur la base de dev). `is_time_limited` = présence de créneaux,
+   côté back-office et API (création ; modification quand `schedules` est
+   fourni). Migration 159 pour l'existant — **effet visible** : ces
+   promotions ne s'appliquent plus qu'à leurs créneaux.
+3. **Créneaux non retirables** — retirer tous les créneaux n'envoyait rien et
+   l'API ne remplaçait que si la liste était non vide. `schedules: []`
+   envoyé et appliqué (liste non nil).
+4. **« Sans limite » sans effet** — `no_end_date` n'était pas envoyé et
+   `valid_to: null` était ignoré par l'API (« absent »). Back-office : `null`
+   si « Sans limite » ; API : `null` explicite = retirer la date de fin
+   (`UpdateDiscountRequest.ClearValidTo`).
+5. **Créneau 19:00–00:00** — accepté par le champ horaire mais jamais actif
+   (promotions) ou refusé (disponibilités). Fin à 00:00 = jusqu'à minuit
+   partout (pricing, listes, disponibilités). Tout autre créneau à l'envers
+   est refusé à l'enregistrement (400) ; heure illisible = erreur (elle
+   devenait silencieusement 00:00). Validation identique dans le back-office
+   (`utils/timeSlots.ts`, message sous le créneau, enregistrement bloqué).
+6. **Affichage des dates de validité** — lues comme dates de calendrier
+   (`AAAA-MM-JJ`, `formatCalendarDate`), cohérent avec l'évaluation en dates
+   calendaires ; « depuis toujours » (année 1) non affiché.
+
+Déjà cohérent, vérifié : sélecteur de dates (date locale sans décalage),
+heures de créneaux en heure locale sans conversion, horaires d'ouverture en
+ISO 1–7.
+
+Déploiement : les trois ordres sont sûrs (l'ancienne API accepte déjà 7 et
+`is_time_limited` explicite). Recommandé : API, puis migration 159, puis
+back-office.
+
+Tests Go : `discounts/schedule_request_test.go` (jours, formats, créneaux
+invalides, minuit, `valid_to` null/absent, `schedules` vide/absent),
+disponibilités (minuit, dimanche 0 → 7), fragments SQL (fin à minuit).
+Migration 159 validée à blanc sur la base de dev (transaction annulée).
+
+## Inventaire des conventions de jour de la semaine (2026-09-27)
+
+Audit complet (API, back-office, POS Flutter, ScanNOrder, réservation,
+Kiosk, CDS, vitrine, données). Convention de référence : **ISO, 1 = lundi …
+7 = dimanche** (`helpers.ISOWeekday`).
+
+| Donnée | Convention | Producteurs / consommateurs |
+|---|---|---|
+| `hours_of_operation.day_of_week_from/to` | ISO 1–7 | back-office (horaires, réservations), POS, `openinghours`, ScanNOrder (statut, créneaux : `DAYOFWEEK` MySQL converti, `ISODOW` PG), réservation (`open_days` ISO, converti `% 7` par le front) |
+| `discounts_schedules.day_of_week` | ISO 1–7 | back-office (corrigé : envoyait 0 pour dimanche), pricing, listes Kiosk/ScanNOrder ; 0 historique → migration 159, 0 reçu → 7 |
+| `availabilities_schedules.day_of_week` | ISO 1–7 | back-office (corrigé), filtre Kiosk/ScanNOrder ; idem migration 159 |
+| `planning_week_template_shifts.day_of_week` | **0–6, 0 = dimanche** (voulu) | API planning + back-office, documenté et testé des deux côtés ; domaine isolé, non modifié |
+
+Calculs en Go : tous les `Weekday()` qui alimentent une comparaison de jour
+passent par une conversion ISO (`helpers.ISOWeekday`, `openinghours.isoWeekday`,
+`scannorder.normalizeDayOfWeek`, conversions locales). Les trois calculs bruts
+restants de `scannorder/service.go` (corrigés en aval) sont passés sur
+`helpers.ISOWeekday`. Fronts : ScanNOrder lit 0 et 7 comme dimanche ; POS
+utilise `DateTime.weekday` (ISO natif) ; Uber Eats reçoit des noms de jours.

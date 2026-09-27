@@ -42,9 +42,6 @@ func TestScannorderRepository_Postgres(t *testing.T) {
 		_, _ = db.ExecContext(ctx, `DELETE FROM customer WHERE merchant_id = $1`, mid)
 		_, _ = db.ExecContext(ctx, `DELETE FROM discounts_schedules WHERE discount_id = 'itest-sno-disc'`)
 		_, _ = db.ExecContext(ctx, `DELETE FROM discounts WHERE merchant_id = $1`, mid)
-		_, _ = db.ExecContext(ctx, `DELETE FROM availabilities_schedules WHERE availability_id IN (SELECT availability_id FROM availabilities WHERE merchant_id = $1)`, mid)
-		_, _ = db.ExecContext(ctx, `DELETE FROM availabilities_products WHERE availability_id IN (SELECT availability_id FROM availabilities WHERE merchant_id = $1)`, mid)
-		_, _ = db.ExecContext(ctx, `DELETE FROM availabilities WHERE merchant_id = $1`, mid)
 		_, _ = db.ExecContext(ctx, `DELETE FROM configurable_attribute_options WHERE configurable_attribute_id = 'itest-sno-attr'`)
 		_, _ = db.ExecContext(ctx, `DELETE FROM configurable_attributes WHERE merchant_id = $1`, mid)
 		_, _ = db.ExecContext(ctx, `DELETE FROM products WHERE merchant_Id = $1`, mid)
@@ -174,7 +171,7 @@ func TestScannorderRepository_Postgres(t *testing.T) {
 	mustExec("discount schedule", `
 		INSERT INTO discounts_schedules (discount_id, day_of_week, available_from, available_to, enabled)
 		VALUES ('itest-sno-disc', $1, '00:00:00', '23:59:59', true)`, dow)
-	discounts, err := repo.GetDiscounts(ctx, merchantID, "IN", dow)
+	discounts, err := repo.GetDiscounts(ctx, merchantID, "IN", time.Now().UTC())
 	if err != nil {
 		t.Fatalf("GetDiscounts failed against postgres: %v", err)
 	}
@@ -191,28 +188,12 @@ func TestScannorderRepository_Postgres(t *testing.T) {
 		t.Fatalf("unexpected open hours: %+v", openHours)
 	}
 
-	// --- GetUnavailableProducts ---
+	// --- produit (utilisé par GetProductPricesForSNO plus bas) ---
 	var prodID int64
 	if err := db.QueryRowContext(ctx, `
 		INSERT INTO products (merchant_Id, name, price, category, tva_in_id, tva_take_away_id, tva_delivery_id, is_popular)
 		VALUES ($1, 'itest-sno-prod', 900, 'itest', 0, 0, 0, true) RETURNING product_id`, merchantID).Scan(&prodID); err != nil {
 		t.Fatalf("seed product: %v", err)
-	}
-	const availabilityID = "itest-sno-avail"
-	mustExec("availability", `
-		INSERT INTO availabilities (availability_id, merchant_id, availability_name, unavailable_message, available, enabled)
-		VALUES ($1, $2, 'Petit dej', 'Dispo le matin', true, true)`, availabilityID, merchantID)
-	mustExec("availabilities_products", `
-		INSERT INTO availabilities_products (availability_product_id, availability_id, product_id, enabled) VALUES ('itest-sno-ap', $1, $2, true)`, availabilityID, prodID)
-	mustExec("availabilities_schedules", `
-		INSERT INTO availabilities_schedules (schedule_id, availability_id, day_of_week, available_from, available_to, enabled)
-		VALUES ('itest-sno-as', $1, $2, '06:00:00', '11:00:00', true)`, availabilityID, dow)
-	unavailable, err := repo.GetUnavailableProducts(ctx, merchantID, dow, "14:00:00")
-	if err != nil {
-		t.Fatalf("GetUnavailableProducts failed against postgres: %v", err)
-	}
-	if _, found := unavailable[prodID]; !found {
-		t.Fatalf("expected product %d unavailable at 14:00 (dispo 6h-11h), got %+v", prodID, unavailable)
 	}
 
 	// --- commandes / paiements Stripe / session de livraison ---

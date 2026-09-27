@@ -81,8 +81,9 @@ func TestDiscountsRepository_Postgres(t *testing.T) {
 			created.Products[0].DiscountID, created.Schedules[0].DiscountID, created.DiscountID)
 	}
 
-	// GetActiveDiscounts: enabled = true AND available = true AND valid window (dbx rebind + boolean literals).
-	active, err := repo.GetActiveDiscounts(ctx, merchantID)
+	// GetActiveDiscounts: enabled = true AND available = true AND validité en
+	// dates calendaires (date locale du jour, fin incluse).
+	active, err := repo.GetActiveDiscounts(ctx, merchantID, time.Now().UTC().Format("2006-01-02"))
 	if err != nil {
 		t.Fatalf("GetActiveDiscounts failed against postgres: %v", err)
 	}

@@ -69,6 +69,7 @@ type KioskSettingsRow struct {
 	UpsellEnabled        bool
 	PayAtCounterEnabled  bool
 	CardPaymentEnabled   bool
+	ShowPromoBadge       bool
 	LogoURL              *string
 	IdleImageURL         *string
 	IdleVideoURL         *string
@@ -273,6 +274,7 @@ type KioskSettingsResponse struct {
 	UpsellEnabled        bool    `json:"upsell_enabled"`
 	PayAtCounterEnabled  bool    `json:"pay_at_counter_enabled"`
 	CardPaymentEnabled   bool    `json:"card_payment_enabled"`
+	ShowPromoBadge       bool    `json:"show_promo_badge"` // badge promo des cartes produit, voir KioskDiscountsResponse.PromoProducts
 	LogoURL              *string `json:"logo_url"`
 	IdleImageURL         *string `json:"idle_image_url"`
 	IdleVideoURL         *string `json:"idle_video_url"`
@@ -309,6 +311,7 @@ type UpdateKioskSettingsRequest struct {
 	UpsellEnabled        *bool   `json:"upsell_enabled"`
 	PayAtCounterEnabled  *bool   `json:"pay_at_counter_enabled"`
 	CardPaymentEnabled   *bool   `json:"card_payment_enabled"`
+	ShowPromoBadge       *bool   `json:"show_promo_badge"`
 	PrimaryColor         *string `json:"primary_color"`
 }
 
@@ -467,6 +470,19 @@ type KioskDiscount struct {
 
 type KioskDiscountsResponse struct {
 	Discounts []KioskDiscount `json:"discounts"`
+
+	// PromoProducts — produits visés par une promotion en cours qui
+	// s'applique automatiquement au mode de commande demandé, avec le titre
+	// de la promotion (badge promo des cartes produit). Voir promoProducts
+	// pour les règles.
+	PromoProducts []KioskPromoProduct `json:"promo_products"`
+}
+
+// KioskPromoProduct associe un produit à la promotion affichée sur son badge.
+type KioskPromoProduct struct {
+	ProductID    string `json:"product_id"`
+	DiscountID   string `json:"discount_id"`
+	DiscountName string `json:"discount_name"`
 }
 
 // ---- Paiement carte (Stripe Terminal) ----

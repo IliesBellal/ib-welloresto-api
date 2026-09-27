@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
+	"time"
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
@@ -789,31 +791,60 @@ func (r *OrdersRepository) GetProductsForPricing(ctx context.Context, req *model
 	return out, nil
 }
 
-// scheduleWindowPred retourne le prédicat « le créneau horaire du jour courant
-// (UTC, horloge base) matche la ligne discounts_schedules » selon le dialecte.
-// MySQL : TIME(UTC_TIMESTAMP()) + DAYOFWEEK converti en ISO (1=lundi..7=dimanche).
-// Postgres : cast time du now() UTC + EXTRACT(ISODOW), déjà en convention ISO.
-func scheduleWindowPred() string {
-	if dbx.ActiveDialect() == dbx.Postgres {
-		return `(CAST(now() AT TIME ZONE 'UTC' AS time) BETWEEN ds.available_from AND ds.available_to
-		         AND EXTRACT(ISODOW FROM now() AT TIME ZONE 'UTC') = ds.day_of_week)`
+// pricingLocalTime lit req.Time ("2006-01-02 15:04:05", heure locale du
+// merchant, posée par ComputePricing).
+//
+// Les promotions sont évaluées dans le calendrier et à l'heure de mur du
+// merchant, jamais à l'horloge UTC de la base — même convention que les
+// disponibilités horaires produits (module availabilities) :
+//   - créneaux discounts_schedules (« 12h–14h le lundi », été comme hiver) :
+//     jour et heure locaux, intervalle [début, fin[ ; une fin à 00:00 signifie
+//     « jusqu'à minuit » (ex. 19:00–00:00) ;
+//   - dates de validité (« du 1er au 31 octobre ») : le back-office les stocke
+//     à minuit UTC de la date choisie ; comparées en dates calendaires à la
+//     date locale, fin incluse (avant : comparées à l'instant, la promotion
+//     démarrait à 1–2 h du matin et s'arrêtait à 1–2 h le dernier jour).
+func pricingLocalTime(reqTime string) (time.Time, error) {
+	t, err := time.Parse("2006-01-02 15:04:05", reqTime)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid pricing time %q: %w", reqTime, err)
 	}
-	return `(TIME(UTC_TIMESTAMP()) BETWEEN ds.available_from AND ds.available_to
-	         AND (CASE WHEN DAYOFWEEK(UTC_TIMESTAMP()) = 1 THEN 7 ELSE DAYOFWEEK(UTC_TIMESTAMP()) - 1 END) = ds.day_of_week)`
+	return t, nil
 }
 
+// GetDiscounts charge les promotions actives à l'instant de req (heure locale
+// du merchant), par ordre de priorité (prefered_order).
+//
+//   - discount_order_type NULL = tous les modes (commentaire du schéma, valeur
+//     écrite par le back-office quand aucun mode n'est coché) : lu via
+//     COALESCE, un NULL scanné dans une string faisait échouer tout le
+//     pricing du merchant tant que la promotion était active ;
+//   - min_order_unit, nullable, même traitement ; min_order_value
+//     (double precision) est lu en float64 puis arrondi ;
+//   - enabled = FALSE (promotion supprimée dans le back-office) exclue, comme
+//     les listes ScanNOrder/Kiosk — elle continuait sinon à s'appliquer ;
+//   - créneaux désactivés ignorés, et une promotion n'est renvoyée qu'une
+//     fois même si plusieurs créneaux correspondent (la jointure dupliquait
+//     la ligne, et une promotion cumulable s'appliquait alors plusieurs fois).
 func (r *OrdersRepository) GetDiscounts(ctx context.Context, req *models.PricingRequest) ([]*models.DBDiscount, error) {
+	localTime, err := pricingLocalTime(req.Time)
+	if err != nil {
+		return nil, err
+	}
+	localDate := localTime.Format("2006-01-02")
+	clock := localTime.Format("15:04:05")
+
 	query := fmt.Sprintf(`
 		SELECT
 			d.discount_id,
-			d.discount_order_type,
+			COALESCE(d.discount_order_type, ''),
 			d.discount_code,
 			d.discount_name,
 			d.discount_desc,
 			d.discount_value,
 			d.discount_unit,
 			d.min_order_value,
-			d.min_order_unit,
+			COALESCE(d.min_order_unit, ''),
 			d.max_discount_value,
 			d.max_discount_unit,
 			d.discounted_quantity,
@@ -821,25 +852,29 @@ func (r *OrdersRepository) GetDiscounts(ctx context.Context, req *models.Pricing
 			d.available,
 			d.prefered_order
 		FROM discounts d
-		LEFT JOIN discounts_schedules ds ON ds.discount_id = d.discount_id
+		LEFT JOIN discounts_schedules ds ON ds.discount_id = d.discount_id AND ds.enabled = TRUE
 		WHERE d.merchant_id = ?
-		  AND (d.valid_from < %[1]s AND (d.valid_to > %[1]s OR d.valid_to IS NULL))
-		  AND (%[2]s
+		  AND %[1]s <= ?
+		  AND (d.valid_to IS NULL OR %[2]s >= ?)
+		  AND ((ds.available_from <= ? AND (ds.available_to > ? OR ds.available_to = '00:00:00') AND ds.day_of_week = ?)
 		       OR NOT d.is_time_limited)
 		  AND d.available = TRUE
-		ORDER BY d.prefered_order ASC
-	`, dbx.UTCNow(), scheduleWindowPred())
+		  AND d.enabled = TRUE
+		ORDER BY d.prefered_order ASC, d.discount_id ASC
+	`, dbx.UTCDate("d.valid_from"), dbx.UTCDate("d.valid_to"))
 
-	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query, req.MerchantID)
+	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query, req.MerchantID, localDate, localDate, clock, clock, req.DayOfWeek)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
 	var out []*models.DBDiscount
+	seen := map[string]bool{}
 
 	for rows.Next() {
 		var d models.DBDiscount
+		var minOrderValue float64
 		err := rows.Scan(
 			&d.DiscountID,
 			&d.DiscountOrderType,
@@ -848,7 +883,7 @@ func (r *OrdersRepository) GetDiscounts(ctx context.Context, req *models.Pricing
 			&d.DiscountDesc,
 			&d.DiscountValue,
 			&d.DiscountUnit,
-			&d.MinOrderValue,
+			&minOrderValue,
 			&d.MinOrderUnit,
 			&d.MaxDiscountValue,
 			&d.MaxDiscountUnit,
@@ -860,11 +895,16 @@ func (r *OrdersRepository) GetDiscounts(ctx context.Context, req *models.Pricing
 		if err != nil {
 			return nil, err
 		}
+		if seen[d.DiscountID] {
+			continue
+		}
+		seen[d.DiscountID] = true
+		d.MinOrderValue = int(math.Round(minOrderValue))
 
 		out = append(out, &d)
 	}
 
-	return out, nil
+	return out, rows.Err()
 }
 
 func (r *OrdersRepository) GetDiscountProducts(ctx context.Context, merchantID string) (map[string]map[string]*models.DiscountProductInfo, error) {
@@ -895,10 +935,12 @@ func (r *OrdersRepository) GetDiscountProducts(ctx context.Context, merchantID s
 			out[discountID] = map[string]*models.DiscountProductInfo{}
 		}
 
-		var p int
+		// new_price NULL reste nil (pas de prix saisi), jamais 0 : un produit
+		// d'une promotion NEWPRICE sans prix devenait sinon gratuit.
+		var p *int
 		if newPrice.Valid {
-			v := newPrice.Int64
-			p = int(v)
+			v := int(newPrice.Int64)
+			p = &v
 		}
 
 		out[discountID][productID] = &models.DiscountProductInfo{
@@ -910,27 +952,26 @@ func (r *OrdersRepository) GetDiscountProducts(ctx context.Context, merchantID s
 	return out, nil
 }
 
+// GetDiscountProductOptions charge les contraintes d'options des promotions
+// (discounts_products_options), indexées discount_id → product_id → options.
+//
+// Pas de filtre horaire ici : la map n'est consultée que pour les promotions
+// déjà retenues par GetDiscounts (créneaux, dates, suppression). L'ancienne
+// jointure sur discounts_schedules, sans jour de la semaine, ne faisait que
+// dupliquer les lignes.
+//
+// Bug corrigé : le Scan lisait option_id dans discountID et discount_id dans
+// optionID (ordre du SELECT) — la map était indexée par option, aucune
+// contrainte d'option n'était jamais trouvée par applyDiscounts.
 func (r *OrdersRepository) GetDiscountProductOptions(ctx context.Context, merchantID string) (map[string]map[string][]models.DiscountOptionInfo, error) {
-	// La comparaison MySQL d'origine `available_from < UTC_TIMESTAMP` mêlait
-	// une colonne time à un datetime (coercition MySQL implicite) — Postgres
-	// la refuse ; traduite en comparaison d'heure du jour (UTC, horloge base),
-	// cohérente avec le prédicat de GetDiscounts. Le fragment MySQL est
-	// conservé tel quel sous DB_DIALECT=mysql (comportement prod inchangé).
-	timeWindow := `(available_from < UTC_TIMESTAMP AND available_to > UTC_TIMESTAMP)`
-	if dbx.ActiveDialect() == dbx.Postgres {
-		timeWindow = `(available_from < CAST(now() AT TIME ZONE 'UTC' AS time) AND available_to > CAST(now() AT TIME ZONE 'UTC' AS time))`
-	}
-	query := fmt.Sprintf(`
-		SELECT dpo.option_id, dpo.product_id, dpo.discount_id, dpo.new_price, dpo.is_option_mandatory
-                FROM discounts d
-                INNER JOIN discounts_products dp ON dp.discount_id = d.discount_id
-                INNER JOIN discounts_products_options dpo ON dpo.discount_id = d.discount_id AND dpo.product_id = ` + castChar("dp.product_id") + `
-                LEFT JOIN discounts_schedules ds ON ds.discount_id = d.discount_id
-                WHERE d.merchant_id = ?
-                  AND (valid_from < %[1]s AND (valid_to > %[1]s OR valid_to IS NULL))
-                  AND (%[2]s OR NOT is_time_limited)
-                  AND d.available IS TRUE
-	`, dbx.UTCNow(), timeWindow)
+	query := `
+		SELECT dpo.discount_id, dpo.product_id, dpo.option_id, dpo.new_price, dpo.is_option_mandatory
+		FROM discounts_products_options dpo
+		INNER JOIN discounts d ON d.discount_id = dpo.discount_id
+		WHERE d.merchant_id = ?
+		  AND d.available = TRUE
+		  AND d.enabled = TRUE
+	`
 
 	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query, merchantID)
 	if err != nil {
@@ -966,7 +1007,7 @@ func (r *OrdersRepository) GetDiscountProductOptions(ctx context.Context, mercha
 		})
 	}
 
-	return out, nil
+	return out, rows.Err()
 }
 
 func (r *OrdersRepository) GetRewards(ctx context.Context, req *models.PricingRequest) ([]*models.DBReward, error) {

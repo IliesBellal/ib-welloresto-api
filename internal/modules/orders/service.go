@@ -395,9 +395,9 @@ func (s *OrdersService) ComputePricing(ctx context.Context, req *models.PricingR
 		return nil, err
 	}
 
-	// timezone conversion
+	// timezone conversion (UTC en repli si le fuseau est invalide, jamais nil)
 	now := time.Now().UTC()
-	loc, _ := time.LoadLocation(merchant.Timezone)
+	loc := helpers.MerchantLocation(ctx, merchant.Timezone)
 	merchantTime := now.In(loc)
 
 	// 1 = lundi, ..., 7 = dimanche (1-7 standard)
@@ -600,7 +600,10 @@ func (s *OrdersService) applyConfigurationOptionPrices(ctx context.Context, prod
 		return err
 	}
 
-	// Apply prices to products
+	// Apply prices to products — écriture par index : `for _, opt := range`
+	// modifiait une copie de l'option (ConfigurationOption est une valeur), le
+	// prix officiel lu en base n'était jamais appliqué et le pricing gardait
+	// le prix d'option envoyé par le client.
 	for i := range products {
 		p := &products[i]
 
@@ -608,10 +611,11 @@ func (s *OrdersService) applyConfigurationOptionPrices(ctx context.Context, prod
 			continue
 		}
 
-		for _, attr := range p.Config.Attributes {
-			for _, opt := range attr.Options {
-				if val, ok := priceMap[opt.ID]; ok {
-					opt.ExtraPrice = val
+		for ai := range p.Config.Attributes {
+			options := p.Config.Attributes[ai].Options
+			for oi := range options {
+				if val, ok := priceMap[options[oi].ID]; ok {
+					options[oi].ExtraPrice = val
 				}
 			}
 		}
@@ -670,17 +674,34 @@ func (s *OrdersService) applyDiscounts(req *models.PricingRequest, products []mo
 		if discountAlreadyApplied && !d.IsCumulative {
 			continue
 		}
+		// discounted_quantity <= 0 ne remise aucun article (et ferait
+		// paniquer le modulo par palier des promotions cumulables).
+		if d.DiscountedQuantity <= 0 {
+			continue
+		}
 
 		relatedProducts := dp[d.DiscountID]
 		relatedOptions := do[d.DiscountID]
 
+		// Un produit est éligible s'il est ciblé (ou si la promotion n'en cible
+		// aucun), si ses options satisfont la promotion et, pour NEWPRICE, si un
+		// prix remisé a été saisi pour lui.
+		isEligible := func(sp models.OrderProductPayload) bool {
+			info, targeted := relatedProducts[sp.ProductID]
+			if len(relatedProducts) > 0 && !targeted {
+				return false
+			}
+			if d.DiscountUnit == "NEWPRICE" && (info == nil || info.NewPrice == nil) {
+				return false
+			}
+			return s.optionsMatch(sp, relatedOptions[sp.ProductID])
+		}
+
 		// --- 2. Comptage des produits éligibles (via Index pour éviter la copie) ---
 		countEligible := 0
 		for i := range products {
-			if _, ok := relatedProducts[products[i].ProductID]; ok || len(relatedProducts) == 0 {
-				if s.optionsMatch(products[i], relatedOptions[products[i].ProductID]) {
-					countEligible++
-				}
+			if isEligible(products[i]) {
+				countEligible++
 			}
 		}
 
@@ -690,12 +711,12 @@ func (s *OrdersService) applyDiscounts(req *models.PricingRequest, products []mo
 
 		// --- 3. Vérification des conditions minimales ---
 		testPassed := false
-		switch d.MinOrderUnit {
-		case "QTY":
+		switch normalizeMinOrderUnit(d.MinOrderUnit) {
+		case minOrderUnitQuantity:
 			if countEligible >= d.MinOrderValue {
 				testPassed = true
 			}
-		case "CURRENCY":
+		case minOrderUnitCurrency:
 			if baseTotal >= d.MinOrderValue {
 				testPassed = true
 			}
@@ -723,27 +744,22 @@ func (s *OrdersService) applyDiscounts(req *models.PricingRequest, products []mo
 				sp := &products[i] // Pointeur sur l'élément du slice
 
 				// On vérifie si le produit n'a pas déjà une remise et s'il correspond aux critères
-				if sp.DiscountedPrice == nil && (len(relatedProducts) == 0 || relatedProducts[sp.ProductID] != nil) {
-					if !s.optionsMatch(*sp, relatedOptions[sp.ProductID]) {
-						continue
-					}
-
+				if sp.DiscountedPrice == nil && isEligible(*sp) {
 					var calculatedPrice int
 					switch d.DiscountUnit {
 					case "PERCENTAGE":
-						// Utilisation de float64 pour éviter la division entière (50/100 = 0)
-						ratio := float64(d.DiscountValue) / 100.0
-						calculatedPrice = int(float64(sp.Price) * (1.0 - ratio))
+						// Arithmétique entière (troncature exacte) : l'ancien calcul
+						// flottant int(prix * (1 - pct/100)) perdait un centime sur
+						// ~0,7 % des couples prix/pourcentage (ex. -7 % sur 1000 ->
+						// 929 au lieu de 930), par erreur de représentation binaire.
+						calculatedPrice = sp.Price * (100 - d.DiscountValue) / 100
 
 					case "CURRENCY":
 						calculatedPrice = sp.Price - d.DiscountValue
 
 					case "NEWPRICE":
-						if prodInfo, ok := relatedProducts[sp.ProductID]; ok {
-							calculatedPrice = prodInfo.NewPrice
-						} else {
-							calculatedPrice = sp.Price
-						}
+						// isEligible garantit un prix saisi pour ce produit.
+						calculatedPrice = *relatedProducts[sp.ProductID].NewPrice
 					}
 
 					// Bug fix: plafonner le montant de la remise par MaxDiscountValue/MaxDiscountUnit
@@ -752,7 +768,9 @@ func (s *OrdersService) applyDiscounts(req *models.PricingRequest, products []mo
 						discountAmount := sp.Price - calculatedPrice
 						var maxDiscount int
 						if d.MaxDiscountUnit != nil && *d.MaxDiscountUnit == "PERCENTAGE" {
-							maxDiscount = int(float64(sp.Price) * (*d.MaxDiscountValue) / 100.0)
+							// Epsilon : même erreur binaire que ci-dessus (plafond
+							// sous-estimé d'un centime sans lui).
+							maxDiscount = int(math.Floor(float64(sp.Price)*(*d.MaxDiscountValue)/100.0 + 1e-9))
 						} else {
 							maxDiscount = int(*d.MaxDiscountValue)
 						}
@@ -773,6 +791,7 @@ func (s *OrdersService) applyDiscounts(req *models.PricingRequest, products []mo
 					sp.DiscountedPrice = &finalPrice
 					sp.DiscountID = &finalID
 					sp.DiscountName = finalName
+					applyPromoOptionPrices(sp, relatedOptions[sp.ProductID])
 
 					applied = append(applied, d.DiscountID)
 					discountAlreadyApplied = true
@@ -796,22 +815,47 @@ func (s *OrdersService) applyDiscounts(req *models.PricingRequest, products []mo
 	return applied
 }
 
+const (
+	minOrderUnitQuantity = "QTY"
+	minOrderUnitCurrency = "CURRENCY"
+)
+
+// normalizeMinOrderUnit ramène min_order_unit à la convention du pricing :
+// le back-office écrit "QUANTITY"/"EUR" (discounts.MinOrderUnitQuantity et
+// sélecteur "€"), les données historiques "QTY"/"CURRENCY". Sans cette
+// normalisation, aucun minimum saisi dans le back-office n'était appliqué.
+// Toute autre valeur (vide/NULL) = pas de condition de minimum.
+func normalizeMinOrderUnit(unit string) string {
+	switch strings.ToUpper(strings.TrimSpace(unit)) {
+	case "QTY", "QUANTITY":
+		return minOrderUnitQuantity
+	case "CURRENCY", "EUR":
+		return minOrderUnitCurrency
+	default:
+		return ""
+	}
+}
+
 // optionsMatch vérifie si un produit (sp) satisfait les contraintes d'options d'une promotion.
 // Si `promoOptions` est nil ou vide, on considère que la promotion n'impose rien -> true.
-// Si le produit n'a pas de configuration, on renvoie true (rien à vérifier).
+// Chaque option marquée obligatoire doit être sélectionnée — y compris quand
+// le produit n'a aucune configuration (auparavant « rien à vérifier » : une
+// option obligatoire se contournait en ne choisissant aucune option).
 func (s *OrdersService) optionsMatch(sp models.OrderProductPayload, promoOptions []models.DiscountOptionInfo) bool {
 	// rien à vérifier
-	if len(promoOptions) == 0 || sp.Config == nil || len(sp.Config.Attributes) == 0 {
+	if len(promoOptions) == 0 {
 		return true
 	}
 
 	// construire set des options sélectionnées (quantity > 0 ou Selected)
 	selected := make(map[string]bool)
-	for _, attr := range sp.Config.Attributes {
-		for _, opt := range attr.Options {
-			// on considère sélection si Quantity > 0 ou Selected == true
-			if opt.Quantity > 0 || opt.Selected {
-				selected[opt.ID] = true
+	if sp.Config != nil {
+		for _, attr := range sp.Config.Attributes {
+			for _, opt := range attr.Options {
+				// on considère sélection si Quantity > 0 ou Selected == true
+				if opt.Quantity > 0 || opt.Selected {
+					selected[opt.ID] = true
+				}
 			}
 		}
 	}
@@ -864,80 +908,37 @@ func (s *OrdersService) generateProductKey(p models.OrderProductPayload) string 
 	return raw //hex.EncodeToString(hash[:])
 }
 
-func (s *OrdersService) applyDiscountedOptionsPrice(product *models.SelectedProduct, discount *models.DBDiscount) {
-
-	// aucune configuration
-	if product.Config == nil ||
-		len(product.Config.Attributes) == 0 ||
-		discount.RelatedProductOptions == nil {
+// applyPromoOptionPrices applique à l'unité remisée les prix d'options propres
+// à la promotion (discounts_products_options.new_price, ex. supplément offert).
+// La configuration est copiée avant modification : les unités d'une même
+// ligne partagent le même pointeur Config (buildSelectedProducts), une unité
+// non remisée doit garder le prix d'option normal. Remplace
+// applyDiscountedOptionsPrice/optionsMatchPromotion, jamais appelées.
+func applyPromoOptionPrices(sp *models.OrderProductPayload, promoOptions []models.DiscountOptionInfo) {
+	if sp.Config == nil || len(promoOptions) == 0 {
 		return
 	}
-
-	productID := product.ProductID
-
-	// promo ne concerne pas ce produit
-	optList, ok := discount.RelatedProductOptions[productID]
-	if !ok {
-		return
-	}
-
-	// mapping option_id → new_price
-	priceMap := make(map[string]int)
-
-	for _, opt := range optList {
+	prices := make(map[string]int)
+	for _, opt := range promoOptions {
 		if opt.NewPrice != nil {
-			priceMap[opt.OptionID] = *opt.NewPrice
+			prices[opt.OptionID] = *opt.NewPrice
 		}
 	}
-
-	if len(priceMap) == 0 {
+	if len(prices) == 0 {
 		return
 	}
 
-	// appliquer les prix promo aux options configurées
-	for _, attr := range product.Config.Attributes {
-		for _, opt := range attr.Options {
-			if np, ok := priceMap[opt.ID]; ok {
-				opt.ExtraPrice = np
+	cfg := &models.ProductConfiguration{Attributes: make([]models.ConfigurationAttribute, len(sp.Config.Attributes))}
+	for ai, attr := range sp.Config.Attributes {
+		attr.Options = append([]models.ConfigurationOption(nil), attr.Options...)
+		for oi := range attr.Options {
+			if np, ok := prices[attr.Options[oi].ID]; ok {
+				attr.Options[oi].ExtraPrice = np
 			}
 		}
+		cfg.Attributes[ai] = attr
 	}
-}
-
-func (s *OrdersService) optionsMatchPromotion(product *models.SelectedProduct, promoOptions map[string][]models.DiscountOptionInfo) bool {
-
-	// aucun contrôle à faire
-	if product.Config == nil ||
-		product.Config.Attributes == nil {
-		return true
-	}
-
-	required, ok := promoOptions[product.ProductID]
-	if !ok {
-		return true
-	}
-
-	// extraire les options sélectionnées (quantity > 0)
-	selected := map[string]bool{}
-
-	for _, attr := range product.Config.Attributes {
-		for _, opt := range attr.Options {
-			if opt.Quantity > 0 {
-				selected[opt.ID] = true
-			}
-		}
-	}
-
-	// vérifier les options obligatoires
-	for _, reqOpt := range required {
-		if reqOpt.IsOptionMandatory {
-			if !selected[reqOpt.OptionID] {
-				return false
-			}
-		}
-	}
-
-	return true
+	sp.Config = cfg
 }
 
 func (s *OrdersService) applyRewards(req *models.PricingRequest, products []models.OrderProductPayload, rewards []*models.DBReward) {

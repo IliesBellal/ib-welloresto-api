@@ -506,6 +506,70 @@ func (r *AvailabilitiesRepository) GetAvailabilitiesForProduct(ctx context.Conte
 	return availabilities, nil
 }
 
+// GetActiveProductSchedules retourne, en une requête, tous les couples
+// (produit, créneau) des disponibilités actives du merchant — base du filtre
+// horaire des canaux Kiosk et ScanNOrder (voir UnavailableProductsAt).
+// Une disponibilité désactivée (available = false, toggle « active » du
+// back-office) ou supprimée (enabled = false) ne restreint aucun produit.
+// LEFT JOIN sur les créneaux : une disponibilité active sans créneau actif
+// renvoie une ligne sans créneau (produit jamais ouvert).
+func (r *AvailabilitiesRepository) GetActiveProductSchedules(ctx context.Context, merchantID string) ([]ProductScheduleRow, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	query := `
+		SELECT
+			ap.product_id,
+			COALESCE(p.name, ''),
+			asch.day_of_week,
+			CAST(asch.available_from AS CHAR(8)),
+			CAST(asch.available_to AS CHAR(8))
+		FROM availabilities a
+		INNER JOIN availabilities_products ap ON ap.availability_id = a.availability_id AND ap.enabled = TRUE
+		LEFT JOIN products p ON p.product_id = ap.product_id
+		LEFT JOIN availabilities_schedules asch ON asch.availability_id = a.availability_id AND asch.enabled = TRUE
+		WHERE a.merchant_id = ? AND a.enabled = TRUE AND a.available = TRUE
+	`
+
+	rows, err := db.QueryContext(ctx, query, merchantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query active product schedules: %w", err)
+	}
+	defer rows.Close()
+
+	var result []ProductScheduleRow
+	for rows.Next() {
+		var row ProductScheduleRow
+		var day sql.NullInt64
+		var from, to sql.NullString
+		if err := rows.Scan(&row.ProductID, &row.ProductName, &day, &from, &to); err != nil {
+			return nil, fmt.Errorf("failed to scan active product schedule: %w", err)
+		}
+		if day.Valid && from.Valid && to.Valid {
+			row.HasSchedule = true
+			row.DayOfWeek = int(day.Int64)
+			row.StartTime = from.String
+			row.EndTime = to.String
+		}
+		result = append(result, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows error during active product schedules fetch: %w", err)
+	}
+	return result, nil
+}
+
+// GetMerchantTimezone retourne le fuseau du merchant (merchant.timezone), dans
+// lequel les créneaux sont saisis et évalués.
+func (r *AvailabilitiesRepository) GetMerchantTimezone(ctx context.Context, merchantID string) (string, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	var timeZone string
+	if err := db.QueryRowContext(ctx, `SELECT timezone FROM merchant WHERE id = ?`, merchantID).Scan(&timeZone); err != nil {
+		return "", fmt.Errorf("failed to get merchant timezone: %w", err)
+	}
+	return timeZone, nil
+}
+
 // ============ Helper Methods ============
 
 // getProductIDsByAvailabilityIDs récupère tous les produits pour plusieurs disponibilités en une seule requête

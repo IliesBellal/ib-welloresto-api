@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -127,6 +128,30 @@ func (c *Client) DeleteFile(ctx context.Context, key string) error {
 	}
 
 	return nil
+}
+
+// CopyFile duplique un objet public du bucket sous une nouvelle clé, côté R2
+// (le fichier ne transite pas par l'API), et retourne l'URL publique de la
+// copie. Le Content-Type de la source est conservé.
+func (c *Client) CopyFile(ctx context.Context, srcKey, dstKey string) (string, error) {
+	// CopySource doit être encodé comme un chemin d'URL : on encode chaque
+	// segment de la clé en gardant les "/" qui la structurent.
+	segments := strings.Split(srcKey, "/")
+	for i, segment := range segments {
+		segments[i] = url.PathEscape(segment)
+	}
+
+	_, err := c.s3Client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket:     aws.String(c.bucket),
+		Key:        aws.String(dstKey),
+		CopySource: aws.String(c.bucket + "/" + strings.Join(segments, "/")),
+		ACL:        types.ObjectCannedACLPublicRead,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to copy in R2: %w", err)
+	}
+
+	return c.PublicURL(dstKey), nil
 }
 
 // GetKeyFromURL extrait la clé R2 depuis une URL publique. La query string

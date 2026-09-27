@@ -43,7 +43,7 @@ func newReclaimTestService(t *testing.T) (*Service, sqlmock.Sqlmock) {
 			AccessTokenTTLMinutes:     15,
 			Pepper:                    "test-pepper",
 		},
-		repo, db, nil, nil, nil, nil, nil, nil, nil,
+		repo, db, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	return svc, mock
 }

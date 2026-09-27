@@ -63,6 +63,20 @@ type AvailabilityResponse struct {
 	Schedules          []AvailabilitySchedule `json:"schedules"`
 }
 
+// ProductScheduleRow est une ligne (produit, créneau) d'une disponibilité
+// active (a.enabled, a.available, ap.enabled). HasSchedule est faux quand la
+// disponibilité n'a aucun créneau actif : le produit est alors restreint sans
+// jamais être ouvert. Jour/heures sont en heure locale du merchant, comme
+// stockés en base.
+type ProductScheduleRow struct {
+	ProductID   string
+	ProductName string
+	HasSchedule bool
+	DayOfWeek   int    // 1 = lundi, ..., 7 = dimanche
+	StartTime   string // HH:MM:SS, heure locale
+	EndTime     string // HH:MM:SS, heure locale (> StartTime)
+}
+
 // ProductAvailabilityInfo utilisé pour le contrôle de disponibilité
 type ProductAvailabilityInfo struct {
 	IsAvailable bool     `json:"is_available"`

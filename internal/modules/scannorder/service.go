@@ -10,10 +10,12 @@ import (
 	"strings"
 	"time"
 	"welloresto-api/internal/config"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/infrastructure/redis"
 	stripeclient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/availabilities"
 	"welloresto-api/internal/modules/delivery_sessions"
 	"welloresto-api/internal/modules/deliverytime"
 	"welloresto-api/internal/modules/menu"
@@ -34,10 +36,38 @@ type Service struct {
 	cfg                    config.ScanNOrderConfig
 	redis                  *redis.Client
 	upsellService          *upsell.Service
+	availabilities         ScheduleAvailability
 }
 
-func NewService(config config.ScanNOrderConfig, r *Repository, m *menu.MenuService, o *orders.OrdersService, manager *stripeclient.StripeManager, redis *redis.Client, orderLifeCycleSvc *order_life_cycle.OrdersLifeCycleService, upsellService *upsell.Service, deliverySessionService *delivery_sessions.DeliverySessionsService) *Service {
-	return &Service{cfg: config, repo: r, menu: m, orderingService: o, StripeManager: manager, redis: redis, orderLifeCycleSvc: orderLifeCycleSvc, upsellService: upsellService, deliverySessionService: deliverySessionService}
+// ScheduleAvailability expose les produits masqués par une disponibilité
+// horaire (module availabilities) à un instant donné — implémenté par
+// *availabilities.AvailabilitiesService, interface pour les tests.
+type ScheduleAvailability interface {
+	GetUnavailableProductsAt(ctx context.Context, merchantID string, at time.Time) (map[string]string, error)
+}
+
+func NewService(config config.ScanNOrderConfig, r *Repository, m *menu.MenuService, o *orders.OrdersService, manager *stripeclient.StripeManager, redis *redis.Client, orderLifeCycleSvc *order_life_cycle.OrdersLifeCycleService, upsellService *upsell.Service, deliverySessionService *delivery_sessions.DeliverySessionsService, availabilitiesSvc ScheduleAvailability) *Service {
+	return &Service{cfg: config, repo: r, menu: m, orderingService: o, StripeManager: manager, redis: redis, orderLifeCycleSvc: orderLifeCycleSvc, upsellService: upsellService, deliverySessionService: deliverySessionService, availabilities: availabilitiesSvc}
+}
+
+// unavailableProductsNow retourne les produits du merchant hors créneau
+// horaire à l'instant présent (product_id → nom).
+func (s *Service) unavailableProductsNow(ctx context.Context, merchantID string) (map[string]string, error) {
+	return s.availabilities.GetUnavailableProductsAt(ctx, merchantID, time.Now())
+}
+
+// withoutOutOfScheduleProducts retire d'une liste les produits hors créneau.
+func withoutOutOfScheduleProducts(products []models.ProductEntry, unavailable map[string]string) []models.ProductEntry {
+	if len(unavailable) == 0 {
+		return products
+	}
+	kept := make([]models.ProductEntry, 0, len(products))
+	for _, p := range products {
+		if _, outOfSchedule := unavailable[p.ProductID]; !outOfSchedule {
+			kept = append(kept, p)
+		}
+	}
+	return kept
 }
 
 func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse, error) {
@@ -238,15 +268,24 @@ func (s *Service) GetMenu(ctx context.Context, qr string, deliveryType string) (
 	if err != nil {
 		return nil, err
 	}
+
+	// Produits hors créneau horaire : lus à chaque requête, jamais depuis le
+	// cache — leur empreinte suffixe la clé Redis (voir kiosk.GetMenu).
+	unavailable, err := s.unavailableProductsNow(ctx, merchant.Merchant.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+
 	// Si Redis est absent, direct BDD
 	if s.redis == nil {
-		return s.ComputeGetMenu(ctx, qr, deliveryType)
+		return s.ComputeGetMenu(ctx, qr, deliveryType, unavailable)
 	}
 
 	log := logger.FromContext(ctx)
-	// Clé par merchantID + deliveryType (le menu est identique pour tous les QR
-	// d'un merchant) — invalidable via InvalidateMerchantMenuCaches
-	cacheKey := fmt.Sprintf("%s%s:%s", models.ScannorderMerchantMenu, merchant.Merchant.MerchantID, deliveryType)
+	// Clé par merchantID + deliveryType + empreinte des produits hors créneau
+	// (le menu est identique pour tous les QR d'un merchant) — invalidable via
+	// InvalidateMerchantMenuCaches (motif merchantID:*)
+	cacheKey := fmt.Sprintf("%s%s:%s:%s", models.ScannorderMerchantMenu, merchant.Merchant.MerchantID, deliveryType, availabilities.UnavailabilityFingerprint(unavailable))
 
 	// --- ÉTAPE 1 : Chercher dans Redis ---
 	cached, found := s.redis.Get(ctx, cacheKey)
@@ -262,7 +301,7 @@ func (s *Service) GetMenu(ctx context.Context, qr string, deliveryType string) (
 	log.Info(fmt.Sprintf("🧠🚫 Menu (%s) not found in Redis cache 🚫🧠", deliveryType))
 
 	// --- ÉTAPE 2 : Appel BDD (Calcul lourd) ---
-	menu, err := s.ComputeGetMenu(ctx, qr, deliveryType)
+	menu, err := s.ComputeGetMenu(ctx, qr, deliveryType, unavailable)
 	if err != nil {
 		return nil, err
 	}
@@ -286,19 +325,18 @@ func (s *Service) GetMenu(ctx context.Context, qr string, deliveryType string) (
 	return menu, nil
 }
 
-func (s *Service) ComputeGetMenu(ctx context.Context, qr string, deliveryType string) (*MenuResponse, error) {
+// ComputeGetMenu construit le menu SNO. unavailable (produits hors créneau
+// horaire) est appliqué avec is_available_on_sno, avant le retrait des
+// catégories vides : un produit ou un groupe hors créneau est retiré avec
+// tous ses sous-produits.
+func (s *Service) ComputeGetMenu(ctx context.Context, qr string, deliveryType string, unavailable map[string]string) (*MenuResponse, error) {
 
 	merchantID, tz, err := s.repo.GetMerchantIDAndTZFromQR(ctx, qr)
 	if err != nil || merchantID == "" {
 		return &MenuResponse{Status: "-1", Error: "Merchant not found"}, nil
 	}
 
-	loc, _ := time.LoadLocation(tz)
-	now := time.Now().In(loc)
-	dow := int(now.Weekday())
-	if dow == 0 {
-		dow = 7
-	}
+	now := time.Now().In(helpers.MerchantLocation(ctx, tz))
 
 	rawMenu, err := s.menu.GetMenuFromMerchantIdWithMarketing(ctx, merchantID)
 	if err != nil {
@@ -319,6 +357,9 @@ func (s *Service) ComputeGetMenu(ctx context.Context, qr string, deliveryType st
 
 		// --- ÉTAPE 1 : Sélection et extraction (SANS nettoyage) ---
 		for _, p := range products {
+			if _, outOfSchedule := unavailable[p.ProductID]; outOfSchedule {
+				continue
+			}
 			// On vérifie si le produit principal doit être affiché tel quel
 			isGroup := p.IsProductGroup != nil && *p.IsProductGroup
 			isAvailable := p.IsAvailableOnSNO != nil && *p.IsAvailableOnSNO
@@ -336,6 +377,9 @@ func (s *Service) ComputeGetMenu(ctx context.Context, qr string, deliveryType st
 
 		// On traite les sous-produits extraits
 		for _, sp := range toAdd {
+			if _, outOfSchedule := unavailable[sp.ProductID]; outOfSchedule {
+				continue
+			}
 			// On ne garde le sous-produit que s'il est disponible
 			if sp.IsAvailableOnSNO != nil && *sp.IsAvailableOnSNO {
 				finalProducts = append(finalProducts, sp)
@@ -358,7 +402,7 @@ func (s *Service) ComputeGetMenu(ctx context.Context, qr string, deliveryType st
 
 	menu.ProductTypes = filtered
 	menu.LoyaltyPrograms, _ = s.repo.GetLoyaltyPrograms(ctx, merchantID, deliveryType)
-	menu.Discounts, _ = s.repo.GetDiscounts(ctx, merchantID, deliveryType, dow)
+	menu.Discounts, _ = s.repo.GetDiscounts(ctx, merchantID, deliveryType, now)
 
 	return &MenuResponse{
 		Status: "1",
@@ -374,10 +418,9 @@ func (s *Service) GetMerchantStatus(ctx context.Context, merchantID string) (*Me
 		return nil, err
 	}
 
-	loc, _ := time.LoadLocation(tz)
-	now := time.Now().In(loc)
+	now := time.Now().In(helpers.MerchantLocation(ctx, tz))
 
-	dow := int(now.Weekday())
+	dow := helpers.ISOWeekday(now)
 	currentTime := now.Format("15:04:05")
 
 	return s.repo.GetMerchantStatus(ctx, merchantID, dow, currentTime)
@@ -484,14 +527,31 @@ func (s *Service) GetPricingSNO(ctx context.Context, req *models.PricingRequest)
 		}, nil
 	}
 
+	// 🔹 4bis. Disponibilités horaires : même forme de réponse que le contrôle
+	// de disponibilité de ordersService.ComputePricing (status "success" +
+	// unavailable_products, sans prix) — CreateOrderSNO refuse alors la
+	// commande ("unavailable_products").
+	outOfSchedule, err := s.outOfScheduleCartProducts(ctx, merchant.MerchantID, req.Order)
+	if err != nil {
+		return nil, err
+	}
+	if len(outOfSchedule) > 0 {
+		req.MerchantID = merchant.MerchantID
+		req.IsSNO = true
+		return &models.PricingResponse{
+			Status:             "success",
+			OrderRequest:       req,
+			UnavailableProduct: outOfSchedule,
+		}, nil
+	}
+
 	// 🔹 5. Timezone logic (IDENTIQUE PHP)
-	loc, _ := time.LoadLocation(merchant.Timezone)
-	now := time.Now().In(loc)
+	now := time.Now().In(helpers.MerchantLocation(ctx, merchant.Timezone))
 
 	req.MerchantID = merchant.MerchantID
 	req.IsSNO = true
 	// 1 = lundi, ..., 7 = dimanche (1-7 standard)
-	req.DayOfWeek = int(now.Weekday())
+	req.DayOfWeek = helpers.ISOWeekday(now)
 	req.Time = now.Format("2006-01-02 15:04:05")
 
 	pricing, err := s.orderingService.ComputePricing(ctx, req)
@@ -508,6 +568,35 @@ func (s *Service) GetPricingSNO(ctx context.Context, req *models.PricingRequest)
 
 	// 🔹 6. Appel module ORDERING (prices now sanitized)
 	return pricing, err
+}
+
+// outOfScheduleCartProducts liste les produits du panier hors créneau horaire,
+// au format UnavailableProductInfo du pricing (status "out_of_schedule").
+func (s *Service) outOfScheduleCartProducts(ctx context.Context, merchantID string, order *models.OrderRequest) ([]models.UnavailableProductInfo, error) {
+	if order == nil || len(order.Products) == 0 {
+		return nil, nil
+	}
+	unavailable, err := s.unavailableProductsNow(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []models.UnavailableProductInfo
+	seen := make(map[string]bool)
+	for _, p := range order.Products {
+		name, outOfSchedule := unavailable[p.ProductID]
+		if !outOfSchedule || seen[p.ProductID] {
+			continue
+		}
+		seen[p.ProductID] = true
+		productID, _ := strconv.ParseInt(p.ProductID, 10, 64)
+		result = append(result, models.UnavailableProductInfo{
+			ProductID: productID,
+			Name:      name,
+			Status:    models.UnavailableStatusOutOfSchedule,
+		})
+	}
+	return result, nil
 }
 
 // validateAndCleanPricingPayload ensures all prices come from the database
@@ -840,13 +929,9 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest
 
 	// 2️⃣ Vérif POS ouvert (sauf IN)
 	if order.EstimatedReady == "" && orderType != "IN" {
-		tz, _ := time.LoadLocation(merchant.Timezone)
-		now := time.Now().In(tz)
+		now := time.Now().In(helpers.MerchantLocation(ctx, merchant.Timezone))
 
-		req.DayOfWeek = int(now.Weekday())
-		if req.DayOfWeek == 0 {
-			req.DayOfWeek = 7
-		}
+		req.DayOfWeek = helpers.ISOWeekday(now)
 		// 1 = lundi, ..., 7 = dimanche (1-7 standard)
 		req.Time = now.Format("2006-01-02 15:04:05")
 
@@ -1163,17 +1248,13 @@ func (s *Service) GetDiscounts(ctx context.Context, qrCode string, deliveryType 
 	}
 
 	// 3️⃣ Get current day of week in merchant's timezone
-	loc, _ := time.LoadLocation(tz)
-	now := time.Now().In(loc)
-	dow := int(now.Weekday())
-	if dow == 0 {
-		dow = 7
-	}
+	now := time.Now().In(helpers.MerchantLocation(ctx, tz))
+	dow := helpers.ISOWeekday(now)
 
 	log.Debug("Retrieving discounts", zap.String("merchant_id", merchantID), zap.String("delivery_type", deliveryType), zap.Int("day_of_week", dow))
 
 	// 4️⃣ Retrieve discounts from repository
-	discounts, err := s.repo.GetDiscounts(ctx, merchantID, deliveryType, dow)
+	discounts, err := s.repo.GetDiscounts(ctx, merchantID, deliveryType, now)
 	if err != nil {
 		log.Error("GetDiscounts repo error", zap.Error(err))
 		return nil, err
@@ -1204,6 +1285,26 @@ func (s *Service) GetUpsell(ctx context.Context, qr string) (*UpsellResponse, er
 		log.Warn("GetUpsell: merchant not found for QR code", zap.String("qr_code", qr), zap.Error(err))
 		return &UpsellResponse{Products: []models.ProductEntry{}}, nil
 	}
+
+	upsell, err := s.getCachedUpsell(ctx, merchantID)
+	if err != nil || upsell == nil {
+		return upsell, err
+	}
+
+	// Filtre horaire appliqué après le cache (clé par merchant, sans
+	// empreinte) : la réponse en cache reste la liste complète.
+	unavailable, err := s.unavailableProductsNow(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	upsell.Products = withoutOutOfScheduleProducts(upsell.Products, unavailable)
+	return upsell, nil
+}
+
+// getCachedUpsell lit la réponse upsell du merchant depuis Redis, ou la
+// calcule et la met en cache.
+func (s *Service) getCachedUpsell(ctx context.Context, merchantID string) (*UpsellResponse, error) {
+	log := logger.FromContext(ctx)
 
 	// Si Redis n'est pas configuré, on court direct à la BDD
 	if s.redis == nil {
@@ -1324,11 +1425,22 @@ func (s *Service) PostUpsell(ctx context.Context, req *models.PricingRequest) (*
 		return &UpsellResponse{Products: []models.ProductEntry{}}, nil
 	}
 
+	// Filtre horaire propre aux canaux SNO/Kiosk : appliqué ici plutôt que
+	// dans upsell.Service, partagé avec le POS qui n'en tient pas compte.
+	unavailable, err := s.unavailableProductsNow(ctx, merchantID)
+	if err != nil {
+		log.Error("PostUpsell: schedule availability lookup failed", zap.Error(err))
+		return &UpsellResponse{Products: []models.ProductEntry{}}, nil
+	}
+
 	products := make([]models.ProductEntry, 0, len(result.Suggestions))
 	for _, sg := range result.Suggestions {
 		if sg.Product == nil {
 			// Best-effort enrichment failed upstream for this suggestion — skip it
 			// rather than returning a product without configuration to the SNO client.
+			continue
+		}
+		if _, outOfSchedule := unavailable[sg.ProductID]; outOfSchedule {
 			continue
 		}
 		product := *sg.Product
@@ -1411,6 +1523,17 @@ func (s *Service) GetProduct(ctx context.Context, qr string, productID string, d
 	// 3️⃣ Vérifier is_available_on_sno
 	if product.IsAvailableOnSNO == nil || !*product.IsAvailableOnSNO {
 		log.Warn("GetProduct: Product not available on SNO", zap.String("merchant_id", merchantID), zap.String("product_id", productID))
+		return nil, fmt.Errorf("product_not_available_on_sno")
+	}
+
+	// 3️⃣bis Vérifier les disponibilités horaires — même erreur que ci-dessus
+	// pour un traitement front identique.
+	unavailable, err := s.unavailableProductsNow(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	if _, outOfSchedule := unavailable[productID]; outOfSchedule {
+		log.Warn("GetProduct: Product out of schedule", zap.String("merchant_id", merchantID), zap.String("product_id", productID))
 		return nil, fmt.Errorf("product_not_available_on_sno")
 	}
 

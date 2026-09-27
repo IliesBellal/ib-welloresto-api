@@ -382,7 +382,10 @@ type DBDiscount struct {
 
 type DiscountProductInfo struct {
 	ProductID string `json:"product_id"`
-	NewPrice  int    `json:"new_price,omitempty"`
+	// NewPrice — prix remisé (centimes) d'une promotion NEWPRICE ; nil si non
+	// saisi (discounts_products.new_price NULL) : le produit n'a alors pas de
+	// remise définie, jamais un prix à 0.
+	NewPrice *int `json:"new_price,omitempty"`
 }
 
 type DiscountOptionInfo struct {
@@ -469,9 +472,14 @@ type UnavailableProductInfo struct {
 	// Status est textuel : GetUnavailableProducts retourne soit products.status
 	// brut ('not_available', '0', ...), soit 'out_of_stock' dérivé quand un
 	// composant de recette est épuisé. L'ancien type int faisait échouer le
-	// rows.Scan dès qu'un statut non numérique remontait.
+	// rows.Scan dès qu'un statut non numérique remontait. Les canaux
+	// ScanNOrder/Kiosk y ajoutent UnavailableStatusOutOfSchedule.
 	Status string `json:"status"`
 }
+
+// UnavailableStatusOutOfSchedule marque un produit hors créneau horaire
+// (module availabilities) dans UnavailableProductInfo.Status.
+const UnavailableStatusOutOfSchedule = "out_of_schedule"
 
 type SelectedProduct struct {
 	ProductID       string                   `json:"product_id"`

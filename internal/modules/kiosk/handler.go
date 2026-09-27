@@ -287,7 +287,14 @@ func (h *Handler) GetKioskDiscounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.service.GetDiscounts(ctx, authenticatedKiosk.MerchantID)
+	// fulfillment_type ("IN"/"TAKE_AWAY") — optionnel, ne filtre que
+	// promo_products ; valeur inconnue traitée comme absente.
+	orderType := r.URL.Query().Get("fulfillment_type")
+	if orderType != models.OrderTypeIn && orderType != models.OrderTypeTakeAway {
+		orderType = ""
+	}
+
+	resp, err := h.service.GetDiscounts(ctx, authenticatedKiosk.MerchantID, orderType)
 	if err != nil {
 		log.Error("kiosk get discounts failed", zap.Error(err))
 		models.SendErrorJSON(w, "kiosk", "get_discounts", err)

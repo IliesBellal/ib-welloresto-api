@@ -47,6 +47,36 @@ func menuNumericID(id string) bool {
 	return err == nil
 }
 
+// sortSubProducts ordonne les sous-produits de chaque groupe par display_order
+// (absent = 0), puis par nom pour départager. Sans ça, leur ordre suivait le
+// parcours de la map subProducts, que Go rend volontairement aléatoire : il
+// changeait d'un chargement à l'autre sur toutes les apps (caisse, borne, SNO,
+// back-office). Même règle que le tri côté caisse et back-office.
+func sortSubProducts(products map[string]*models.ProductEntry) {
+	orderOf := func(p models.ProductEntry) int {
+		if p.DisplayOrder == nil {
+			return 0
+		}
+		return *p.DisplayOrder
+	}
+	for _, parent := range products {
+		if parent == nil || len(parent.SubProducts) < 2 {
+			continue
+		}
+		subs := parent.SubProducts
+		sort.SliceStable(subs, func(i, j int) bool {
+			oi, oj := orderOf(subs[i]), orderOf(subs[j])
+			if oi != oj {
+				return oi < oj
+			}
+			if subs[i].Name != subs[j].Name {
+				return subs[i].Name < subs[j].Name
+			}
+			return subs[i].ProductID < subs[j].ProductID
+		})
+	}
+}
+
 // capitalizeFirst met la première lettre en majuscule en raisonnant sur la
 // première *rune*, pas sur le premier octet. L'ancienne forme
 // `strings.ToUpper(string(name[0])) + name[1:]` corrompait tout nom commençant
@@ -1441,6 +1471,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			}
 		}
 	}
+	sortSubProducts(products)
 
 	// --- build categories -> products (respect categ_order + productOrder) ---
 	productTypes := []models.ProductCategory{}
@@ -2005,6 +2036,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			}
 		}
 	}
+	sortSubProducts(products)
 
 	// --- build categories -> products ---
 	productTypes := []models.ProductCategory{}

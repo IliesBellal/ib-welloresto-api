@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ import (
 	stripeclient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/availabilities"
 	"welloresto-api/internal/modules/menu"
 	"welloresto-api/internal/modules/notification"
 	"welloresto-api/internal/modules/onboarding"
@@ -46,6 +48,14 @@ type Service struct {
 	notificationSvc    *notification.NotificationService
 	terminal           TerminalGateway
 	onboarding         *onboarding.Service
+	availabilities     ScheduleAvailability
+}
+
+// ScheduleAvailability expose les produits masqués par une disponibilité
+// horaire (module availabilities) à un instant donné — implémenté par
+// *availabilities.AvailabilitiesService, interface pour les tests.
+type ScheduleAvailability interface {
+	GetUnavailableProductsAt(ctx context.Context, merchantID string, at time.Time) (map[string]string, error)
 }
 
 // SetOnboardingService wires LOT A Semaine 3, Chantier 13's automatic
@@ -66,6 +76,7 @@ func NewService(
 	upsellService *upsell.Service,
 	notificationSvc *notification.NotificationService,
 	terminal TerminalGateway,
+	availabilitiesSvc ScheduleAvailability,
 ) *Service {
 	return &Service{
 		cfg:                cfg,
@@ -78,6 +89,7 @@ func NewService(
 		upsellService:      upsellService,
 		notificationSvc:    notificationSvc,
 		terminal:           terminal,
+		availabilities:     availabilitiesSvc,
 	}
 }
 
@@ -960,6 +972,7 @@ func (s *Service) GetSettings(ctx context.Context, merchantID string) (*KioskSet
 		UpsellEnabled:        row.UpsellEnabled,
 		PayAtCounterEnabled:  row.PayAtCounterEnabled,
 		CardPaymentEnabled:   row.CardPaymentEnabled,
+		ShowPromoBadge:       row.ShowPromoBadge,
 		LogoURL:              row.LogoURL,
 		IdleImageURL:         row.IdleImageURL,
 		IdleVideoURL:         row.IdleVideoURL,
@@ -971,28 +984,18 @@ func (s *Service) GetSettings(ctx context.Context, merchantID string) (*KioskSet
 }
 
 // GetDiscounts liste les promotions actives du merchant, valides à l'instant
-// présent. Contrairement à scannorder.Service.GetDiscounts (qui reçoit
-// ?order_type= en query et filtre dessus), GET /kiosk/discounts n'a pas de
-// fulfillment_type connu au moment de l'appel (écran d'accueil, avant tout
-// choix client) — orderType est donc "%" (aucun filtre par type de commande,
-// seulement validité temporelle + jour de la semaine).
-func (s *Service) GetDiscounts(ctx context.Context, merchantID string) (*KioskDiscountsResponse, error) {
+// présent. La liste Discounts (bandeau promo) n'est pas filtrée par type de
+// commande : GET /kiosk/discounts est aussi appelé depuis l'écran d'accueil,
+// avant tout choix client. orderType ("IN"/"TAKE_AWAY", "" si inconnu) ne
+// sert qu'au calcul de PromoProducts (badge promo des cartes produit).
+func (s *Service) GetDiscounts(ctx context.Context, merchantID, orderType string) (*KioskDiscountsResponse, error) {
 	tz, err := s.repo.GetMerchantTimezone(ctx, merchantID)
 	if err != nil {
 		return nil, err
 	}
+	now := time.Now().In(helpers.MerchantLocation(ctx, tz))
 
-	loc, err := time.LoadLocation(tz)
-	if err != nil {
-		loc = time.UTC
-	}
-	now := time.Now().In(loc)
-	dow := int(now.Weekday())
-	if dow == 0 {
-		dow = 7
-	}
-
-	discounts, err := s.repo.GetDiscounts(ctx, merchantID, "", dow)
+	discounts, err := s.repo.GetDiscounts(ctx, merchantID, "", now)
 	if err != nil {
 		return nil, err
 	}
@@ -1000,7 +1003,59 @@ func (s *Service) GetDiscounts(ctx context.Context, merchantID string) (*KioskDi
 		discounts = []KioskDiscount{}
 	}
 
-	return &KioskDiscountsResponse{Discounts: discounts}, nil
+	discountIDs := make([]string, 0, len(discounts))
+	for _, d := range discounts {
+		discountIDs = append(discountIDs, d.DiscountID)
+	}
+	productsByDiscount, err := s.repo.GetDiscountProductIDs(ctx, discountIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	return &KioskDiscountsResponse{
+		Discounts:     discounts,
+		PromoProducts: promoProducts(discounts, productsByDiscount, orderType),
+	}, nil
+}
+
+// promoProducts retourne les produits à badger avec le titre de leur
+// promotion, selon les mêmes règles d'éligibilité que orders.applyDiscounts :
+//   - promotion automatique uniquement (discount_code NULL) : une remise sur
+//     code ne s'applique pas sans saisie, le prix affiché ne baisse pas ;
+//   - type de commande compatible (discount_order_type vide = tous) ;
+//   - promotion ciblant des produits (discounts_products) : une remise sur
+//     tout le panier concernerait tous les produits, le bandeau promo s'en
+//     charge déjà.
+//
+// Un produit visé par plusieurs promotions porte la première dans l'ordre de
+// discounts (prefered_order, priorité du pricing).
+//
+// Le badge signale une promotion en cours sur le produit, pas une remise
+// garantie (minimum de commande, quantité, options) : le prix final reste
+// celui calculé par le serveur au pricing.
+func promoProducts(discounts []KioskDiscount, productsByDiscount map[string][]string, orderType string) []KioskPromoProduct {
+	seen := make(map[string]bool)
+	result := []KioskPromoProduct{}
+	for _, d := range discounts {
+		if !d.Available || d.DiscountCode != nil {
+			continue
+		}
+		if orderType != "" && d.DiscountOrderType != "" && !strings.Contains(d.DiscountOrderType, orderType) {
+			continue
+		}
+		for _, productID := range productsByDiscount[d.DiscountID] {
+			if !seen[productID] {
+				seen[productID] = true
+				result = append(result, KioskPromoProduct{
+					ProductID:    productID,
+					DiscountID:   d.DiscountID,
+					DiscountName: d.DiscountName,
+				})
+			}
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ProductID < result[j].ProductID })
+	return result
 }
 
 // UpdateSettings applique un patch partiel sur les paramètres Kiosk du
@@ -1037,6 +1092,9 @@ func (s *Service) UpdateSettings(ctx context.Context, merchantID string, req Upd
 	}
 	if req.CardPaymentEnabled != nil {
 		current.CardPaymentEnabled = *req.CardPaymentEnabled
+	}
+	if req.ShowPromoBadge != nil {
+		current.ShowPromoBadge = *req.ShowPromoBadge
 	}
 	if req.PrimaryColor != nil {
 		if err := validatePrimaryColor(req.PrimaryColor); err != nil {
@@ -1143,14 +1201,25 @@ func (s *Service) ClearIdleVideoURL(ctx context.Context, merchantID string) (*Ki
 // pattern que scannorder.GetMenu. Invalidation active à chaque mutation du
 // menu via redis.Client.InvalidateMerchantMenuCaches, TTL en filet de
 // sécurité.
+//
+// Les produits hors créneau (disponibilités horaires) sont lus à chaque
+// requête, jamais depuis le cache : leur empreinte suffixe la clé Redis, de
+// sorte qu'un changement de créneau (ou d'une disponibilité dans le
+// back-office) produit immédiatement un autre menu et un autre ETag, sans
+// attendre le TTL.
 func (s *Service) GetMenu(ctx context.Context, merchantID, orderType string) (*KioskMenuResponse, error) {
+	unavailable, err := s.unavailableProductsNow(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+
 	// Si Redis est absent, direct BDD
 	if s.redis == nil {
-		return s.computeGetMenu(ctx, merchantID, orderType)
+		return s.computeGetMenu(ctx, merchantID, orderType, unavailable)
 	}
 
 	log := logger.FromContext(ctx)
-	cacheKey := fmt.Sprintf("%s%s:%s", models.KioskMerchantMenu, merchantID, orderType)
+	cacheKey := fmt.Sprintf("%s%s:%s:%s", models.KioskMerchantMenu, merchantID, orderType, availabilities.UnavailabilityFingerprint(unavailable))
 
 	// --- ÉTAPE 1 : Chercher dans Redis ---
 	if cached, found := s.redis.Get(ctx, cacheKey); found {
@@ -1164,7 +1233,7 @@ func (s *Service) GetMenu(ctx context.Context, merchantID, orderType string) (*K
 	log.Info(fmt.Sprintf("🧠🚫 Kiosk menu (%s) not found in Redis cache 🚫🧠", orderType))
 
 	// --- ÉTAPE 2 : Appel BDD (calcul lourd) ---
-	menu, err := s.computeGetMenu(ctx, merchantID, orderType)
+	menu, err := s.computeGetMenu(ctx, merchantID, orderType, unavailable)
 	if err != nil {
 		return nil, err
 	}
@@ -1181,7 +1250,7 @@ func (s *Service) GetMenu(ctx context.Context, merchantID, orderType string) (*K
 	return menu, nil
 }
 
-func (s *Service) computeGetMenu(ctx context.Context, merchantID, orderType string) (*KioskMenuResponse, error) {
+func (s *Service) computeGetMenu(ctx context.Context, merchantID, orderType string, unavailable map[string]string) (*KioskMenuResponse, error) {
 	rawMenu, err := s.menuService.GetMenuFromMerchantIdWithMarketing(ctx, merchantID)
 	if err != nil {
 		return nil, err
@@ -1195,7 +1264,10 @@ func (s *Service) computeGetMenu(ctx context.Context, merchantID, orderType stri
 	categories := make([]KioskCategory, 0, len(rawMenu.ProductsTypes))
 	for _, pt := range rawMenu.ProductsTypes {
 
-		products := flattenKioskProducts(pt.Products, availability, orderType)
+		// Filtre is_available_on_kiosk + disponibilités horaires AVANT le
+		// retrait des catégories vides : une catégorie dont tous les produits
+		// sont hors créneau disparaît du menu.
+		products := flattenKioskProducts(pt.Products, availability, unavailable, orderType)
 		if len(products) == 0 {
 			continue
 		}
@@ -1238,11 +1310,17 @@ func (s *Service) computeGetMenu(ctx context.Context, merchantID, orderType stri
 // (table products, colonne dédiée — migration 038) au lieu de
 // is_available_on_sno. Implémenté ici plutôt que dans menuService pour ne
 // jamais modifier ce module existant (voir docs/KIOSK_DECISIONS.md).
-func flattenKioskProducts(products []models.ProductEntry, availability map[string]bool, orderType string) []KioskProduct {
+//
+// unavailable (produits hors créneau horaire) est appliqué en plus : un
+// produit ou un groupe hors créneau est retiré avec tous ses sous-produits.
+func flattenKioskProducts(products []models.ProductEntry, availability map[string]bool, unavailable map[string]string, orderType string) []KioskProduct {
 	out := make([]KioskProduct, 0, len(products))
 
 	var toAdd []models.ProductEntry
 	for _, p := range products {
+		if _, outOfSchedule := unavailable[p.ProductID]; outOfSchedule {
+			continue
+		}
 		isGroup := p.IsProductGroup != nil && *p.IsProductGroup
 		if !isGroup && availability[p.ProductID] {
 			out = append(out, mapProductEntryToKioskProduct(&p, orderType))
@@ -1254,12 +1332,21 @@ func flattenKioskProducts(products []models.ProductEntry, availability map[strin
 	}
 
 	for _, sp := range toAdd {
+		if _, outOfSchedule := unavailable[sp.ProductID]; outOfSchedule {
+			continue
+		}
 		if availability[sp.ProductID] {
 			out = append(out, mapProductEntryToKioskProduct(&sp, orderType))
 		}
 	}
 
 	return out
+}
+
+// unavailableProductsNow retourne les produits du merchant hors créneau
+// horaire à l'instant présent (product_id → nom).
+func (s *Service) unavailableProductsNow(ctx context.Context, merchantID string) (map[string]string, error) {
+	return s.availabilities.GetUnavailableProductsAt(ctx, merchantID, time.Now())
 }
 
 // cleanProductPricesForKiosk adapte le prix affiché au mode de commande Kiosk,
@@ -1364,8 +1451,8 @@ func mapProductEntryToKioskProduct(p *models.ProductEntry, orderType string) Kio
 }
 
 // GetProduct retourne le détail d'un produit, en rejetant explicitement les
-// produits désactivés sur la borne (is_available_on_kiosk = FALSE), même
-// s'ils existent et sont visibles sur d'autres canaux. orderType (IN/
+// produits désactivés sur la borne (is_available_on_kiosk = FALSE) ou hors
+// créneau horaire, même s'ils existent et sont visibles sur d'autres canaux. orderType (IN/
 // TAKE_AWAY) suit la même convention que GetMenu — voir son commentaire pour
 // le détail (équivalent du paramètre order_type de scannorder.GetProduct).
 func (s *Service) GetProduct(ctx context.Context, merchantID, productID, orderType string) (*KioskProduct, error) {
@@ -1374,6 +1461,13 @@ func (s *Service) GetProduct(ctx context.Context, merchantID, productID, orderTy
 		return nil, err
 	}
 	if !available[productID] {
+		return nil, models.ErrKioskProductUnavailable
+	}
+	unavailable, err := s.unavailableProductsNow(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	if _, outOfSchedule := unavailable[productID]; outOfSchedule {
 		return nil, models.ErrKioskProductUnavailable
 	}
 
@@ -1391,8 +1485,8 @@ func (s *Service) GetProduct(ctx context.Context, merchantID, productID, orderTy
 
 // GetUpsellSuggestions délègue au service Apriori existant (upsell.Service,
 // même moteur que orders.GetUpsell/scannorder.PostUpsell) puis filtre
-// is_available_on_kiosk et l'appartenance au panier en cours, avant de
-// plafonner à 3 suggestions. Réponse alignée sur /orders/upsell (POS) :
+// is_available_on_kiosk, les disponibilités horaires et l'appartenance au
+// panier en cours, avant de plafonner à 3 suggestions. Réponse alignée sur /orders/upsell (POS) :
 // *upsell.UpsellResult sérialisé directement, suggestions comprises — plus
 // de DTO Kiosk dédié (voir docs/KIOSK_DECISIONS.md, homogénéisation upsell).
 // fulfillmentType (IN/TAKE_AWAY) n'est pas encore transmis par
@@ -1427,11 +1521,18 @@ func (s *Service) GetUpsellSuggestions(ctx context.Context, merchantID string, c
 	if err != nil {
 		return nil, err
 	}
+	unavailable, err := s.unavailableProductsNow(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
 
 	suggestions := make([]KioskUpsellSuggestion, 0, 3)
 	for _, sugg := range result.Suggestions {
 		if len(suggestions) >= 3 {
 			break
+		}
+		if _, outOfSchedule := unavailable[sugg.ProductID]; outOfSchedule {
+			continue
 		}
 		if inCart[sugg.ProductID] || !available[sugg.ProductID] || sugg.Product == nil {
 			continue
@@ -1494,10 +1595,12 @@ func checkFulfillmentEnabled(settings *KioskSettingsRow, orderType string) error
 }
 
 // validateKioskProductAvailability vérifie que chaque produit du panier a
-// is_available_on_kiosk = TRUE. C'est une règle métier propre au canal Kiosk
-// (un produit peut être vendable en salle/POS mais désactivé sur la borne),
-// distincte du calcul de prix : on ne fait que filtrer, jamais recalculer un
-// prix ou une TVA (laissé entièrement à ordersService.ComputePricing).
+// is_available_on_kiosk = TRUE et n'est pas hors créneau horaire. C'est une
+// règle métier propre au canal Kiosk (un produit peut être vendable en
+// salle/POS mais désactivé sur la borne), distincte du calcul de prix : on ne
+// fait que filtrer, jamais recalculer un prix ou une TVA (laissé entièrement
+// à ordersService.ComputePricing). Couvre aussi le panier composé juste avant
+// la fin d'un créneau et validé juste après.
 func (s *Service) validateKioskProductAvailability(ctx context.Context, merchantID string, products []models.OrderProductPayload) error {
 	if len(products) == 0 {
 		return models.ErrCartEmpty
@@ -1515,8 +1618,12 @@ func (s *Service) validateKioskProductAvailability(ctx context.Context, merchant
 	if err != nil {
 		return err
 	}
+	unavailable, err := s.unavailableProductsNow(ctx, merchantID)
+	if err != nil {
+		return err
+	}
 	for _, id := range productIDs {
-		if !available[id] {
+		if _, outOfSchedule := unavailable[id]; outOfSchedule || !available[id] {
 			return models.ErrKioskProductUnavailable
 		}
 	}
@@ -1527,7 +1634,8 @@ func (s *Service) validateKioskProductAvailability(ctx context.Context, merchant
 // validation), sans créer de commande. Délègue entièrement à
 // ordersService.ComputePricing — même contrat (models.PricingRequest /
 // models.PricingResponse) que scannorder.GetPricingSNO. Seul ajout
-// kiosk-spécifique : le filtre is_available_on_kiosk.
+// kiosk-spécifique : le filtre is_available_on_kiosk + disponibilités
+// horaires (validateKioskProductAvailability).
 func (s *Service) ComputePricing(ctx context.Context, req *models.PricingRequest) (*models.PricingResponse, error) {
 	if req.Order == nil {
 		return nil, models.ErrInvalidInput
