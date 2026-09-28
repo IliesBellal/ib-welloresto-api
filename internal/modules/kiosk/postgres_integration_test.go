@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"welloresto-api/internal/database/dbx/pgtest"
+	"welloresto-api/internal/models"
 )
 
 func TestKioskRepository_Postgres(t *testing.T) {
@@ -241,13 +242,28 @@ func TestKioskRepository_Postgres(t *testing.T) {
 		t.Fatalf("seed product hidden: %v", err)
 	}
 	prodOKStr := strconv.FormatInt(prodOK, 10)
-	available, err := repo.GetAvailableKioskProductIDs(ctx, merchantID, []string{prodOKStr, strconv.FormatInt(prodHidden, 10)})
+	available, err := repo.GetAvailableKioskProductIDs(ctx, merchantID, models.OrderTypeTakeAway, []string{prodOKStr, strconv.FormatInt(prodHidden, 10)})
 	if err != nil || !available[prodOKStr] || available[strconv.FormatInt(prodHidden, 10)] {
 		t.Fatalf("GetAvailableKioskProductIDs = (%+v, %v)", available, err)
 	}
 	availMap, err := repo.GetKioskProductAvailabilityMap(ctx, merchantID)
 	if err != nil || len(availMap) != 2 || !availMap[prodOKStr] {
 		t.Fatalf("GetKioskProductAvailabilityMap = (%+v, %v)", availMap, err)
+	}
+
+	// Disponibilité par mode : sur place uniquement → exclu en TAKE_AWAY.
+	var prodInOnly int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO products (merchant_Id, name, price, category, tva_in_id, tva_take_away_id, tva_delivery_id, is_available_on_kiosk, available_in, available_take_away)
+		VALUES ($1, 'itest-kiosk-in-only', 700, 'itest', 0, 0, 0, true, true, false) RETURNING product_id`, merchantID).Scan(&prodInOnly); err != nil {
+		t.Fatalf("seed product in-only: %v", err)
+	}
+	prodInOnlyStr := strconv.FormatInt(prodInOnly, 10)
+	if got, err := repo.GetAvailableKioskProductIDs(ctx, merchantID, models.OrderTypeTakeAway, []string{prodInOnlyStr}); err != nil || got[prodInOnlyStr] {
+		t.Fatalf("GetAvailableKioskProductIDs(TAKE_AWAY, in-only) = (%+v, %v), want excluded", got, err)
+	}
+	if got, err := repo.GetAvailableKioskProductIDs(ctx, merchantID, models.OrderTypeIn, []string{prodInOnlyStr}); err != nil || !got[prodInOnlyStr] {
+		t.Fatalf("GetAvailableKioskProductIDs(IN, in-only) = (%+v, %v), want included", got, err)
 	}
 
 	if _, err := db.ExecContext(ctx, `

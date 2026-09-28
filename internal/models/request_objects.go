@@ -481,6 +481,11 @@ type UnavailableProductInfo struct {
 // (module availabilities) dans UnavailableProductInfo.Status.
 const UnavailableStatusOutOfSchedule = "out_of_schedule"
 
+// UnavailableStatusNotAvailableForOrderType marque un produit indisponible
+// pour le mode de la commande (available_in / available_take_away /
+// available_delivery à FALSE) dans UnavailableProductInfo.Status.
+const UnavailableStatusNotAvailableForOrderType = "not_available_for_order_type"
+
 type SelectedProduct struct {
 	ProductID       string                   `json:"product_id"`
 	ProductName     string                   `json:"product_name"`

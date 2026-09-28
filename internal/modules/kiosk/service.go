@@ -1192,9 +1192,11 @@ func (s *Service) ClearIdleVideoURL(ctx context.Context, merchantID string) (*Ki
 // directement depuis la query string sans traduction intermédiaire (à la
 // différence de Pricing/CreateOrder qui restent sur le vocabulaire
 // IN/TAKE_AWAY propre au Kiosk, traduit via kioskFulfillmentToOrderType).
-// Comme scannorder, une valeur absente ou inconnue ne fait pas échouer la
-// requête : seul "TAKE_AWAY" dévie du prix de base (voir
-// cleanProductPricesForKiosk) ; le menu Kiosk n'a pas de notion de DELIVERY.
+// Une valeur absente ou inconnue ne fait pas échouer la requête : elle est
+// normalisée en TAKE_AWAY (normalizeKioskOrderType, avant la clé de cache et
+// l'ETag) ; le menu Kiosk n'a pas de notion de DELIVERY. orderType filtre
+// aussi les produits indisponibles pour le mode (available_in /
+// available_take_away) — docs/ORDER_TYPE_AVAILABILITY.md.
 //
 // La réponse est cachée dans Redis par merchantID + orderType (ETag inclus —
 // le flux 304/If-None-Match du handler reste fonctionnel sur un hit), même
@@ -1208,6 +1210,7 @@ func (s *Service) ClearIdleVideoURL(ctx context.Context, merchantID string) (*Ki
 // back-office) produit immédiatement un autre menu et un autre ETag, sans
 // attendre le TTL.
 func (s *Service) GetMenu(ctx context.Context, merchantID, orderType string) (*KioskMenuResponse, error) {
+	orderType = normalizeKioskOrderType(orderType)
 	unavailable, err := s.unavailableProductsNow(ctx, merchantID)
 	if err != nil {
 		return nil, err
@@ -1313,6 +1316,8 @@ func (s *Service) computeGetMenu(ctx context.Context, merchantID, orderType stri
 //
 // unavailable (produits hors créneau horaire) est appliqué en plus : un
 // produit ou un groupe hors créneau est retiré avec tous ses sous-produits.
+// La disponibilité du mode orderType (déjà normalisé) est combinée à
+// is_available_on_kiosk, comme dans scannorder.ComputeGetMenu.
 func flattenKioskProducts(products []models.ProductEntry, availability map[string]bool, unavailable map[string]string, orderType string) []KioskProduct {
 	out := make([]KioskProduct, 0, len(products))
 
@@ -1322,7 +1327,7 @@ func flattenKioskProducts(products []models.ProductEntry, availability map[strin
 			continue
 		}
 		isGroup := p.IsProductGroup != nil && *p.IsProductGroup
-		if !isGroup && availability[p.ProductID] {
+		if !isGroup && availability[p.ProductID] && p.IsAvailableForOrderType(orderType) {
 			out = append(out, mapProductEntryToKioskProduct(&p, orderType))
 			continue
 		}
@@ -1335,12 +1340,23 @@ func flattenKioskProducts(products []models.ProductEntry, availability map[strin
 		if _, outOfSchedule := unavailable[sp.ProductID]; outOfSchedule {
 			continue
 		}
-		if availability[sp.ProductID] {
+		if availability[sp.ProductID] && sp.IsAvailableForOrderType(orderType) {
 			out = append(out, mapProductEntryToKioskProduct(&sp, orderType))
 		}
 	}
 
 	return out
+}
+
+// normalizeKioskOrderType ramène le mode Kiosk à IN ou TAKE_AWAY. DINE_IN
+// (vocabulaire fulfillment_type du pricing) vaut IN ; absent, inconnu ou
+// DELIVERY (inexistant sur borne) → TAKE_AWAY, pour que les anciennes
+// versions de l'app qui n'envoient pas le mode continuent de fonctionner.
+func normalizeKioskOrderType(orderType string) string {
+	if strings.EqualFold(strings.TrimSpace(orderType), "DINE_IN") {
+		return models.OrderTypeIn
+	}
+	return models.NormalizeOrderType(orderType, models.OrderTypeIn, models.OrderTypeTakeAway)
 }
 
 // unavailableProductsNow retourne les produits du merchant hors créneau
@@ -1451,12 +1467,13 @@ func mapProductEntryToKioskProduct(p *models.ProductEntry, orderType string) Kio
 }
 
 // GetProduct retourne le détail d'un produit, en rejetant explicitement les
-// produits désactivés sur la borne (is_available_on_kiosk = FALSE) ou hors
-// créneau horaire, même s'ils existent et sont visibles sur d'autres canaux. orderType (IN/
+// produits désactivés sur la borne (is_available_on_kiosk = FALSE), hors
+// créneau horaire ou indisponibles pour le mode, même s'ils existent et sont visibles sur d'autres canaux. orderType (IN/
 // TAKE_AWAY) suit la même convention que GetMenu — voir son commentaire pour
 // le détail (équivalent du paramètre order_type de scannorder.GetProduct).
 func (s *Service) GetProduct(ctx context.Context, merchantID, productID, orderType string) (*KioskProduct, error) {
-	available, err := s.repo.GetAvailableKioskProductIDs(ctx, merchantID, []string{productID})
+	orderType = normalizeKioskOrderType(orderType)
+	available, err := s.repo.GetAvailableKioskProductIDs(ctx, merchantID, orderType, []string{productID})
 	if err != nil {
 		return nil, err
 	}
@@ -1489,10 +1506,11 @@ func (s *Service) GetProduct(ctx context.Context, merchantID, productID, orderTy
 // panier en cours, avant de plafonner à 3 suggestions. Réponse alignée sur /orders/upsell (POS) :
 // *upsell.UpsellResult sérialisé directement, suggestions comprises — plus
 // de DTO Kiosk dédié (voir docs/KIOSK_DECISIONS.md, homogénéisation upsell).
-// fulfillmentType (IN/TAKE_AWAY) n'est pas encore transmis par
-// KioskUpsellRequest côté HTTP (dette documentée) : "" tombe sur le prix de
-// base (IN), sans erreur.
+// fulfillmentType (IN/TAKE_AWAY) vient de KioskUpsellRequest.OrderType ;
+// absent chez les anciennes versions de l'app → TAKE_AWAY (prix et filtre de
+// disponibilité du mode), sans erreur.
 func (s *Service) GetUpsellSuggestions(ctx context.Context, merchantID string, cartProductIDs []string, fulfillmentType string) (*KioskUpsellResult, error) {
+	fulfillmentType = normalizeKioskOrderType(fulfillmentType)
 	if len(cartProductIDs) == 0 {
 		return &KioskUpsellResult{Suggestions: []KioskUpsellSuggestion{}, Source: upsell.SourceDisabled}, nil
 	}
@@ -1517,7 +1535,7 @@ func (s *Service) GetUpsellSuggestions(ctx context.Context, merchantID string, c
 		}
 	}
 
-	available, err := s.repo.GetAvailableKioskProductIDs(ctx, merchantID, candidateIDs)
+	available, err := s.repo.GetAvailableKioskProductIDs(ctx, merchantID, fulfillmentType, candidateIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -1597,13 +1615,15 @@ func checkFulfillmentEnabled(settings *KioskSettingsRow, orderType string) error
 }
 
 // validateKioskProductAvailability vérifie que chaque produit du panier a
-// is_available_on_kiosk = TRUE et n'est pas hors créneau horaire. C'est une
+// is_available_on_kiosk = TRUE, est disponible pour le mode orderType
+// (available_in / available_take_away, TAKE_AWAY si absent) et n'est pas hors
+// créneau horaire. C'est une
 // règle métier propre au canal Kiosk (un produit peut être vendable en
 // salle/POS mais désactivé sur la borne), distincte du calcul de prix : on ne
 // fait que filtrer, jamais recalculer un prix ou une TVA (laissé entièrement
 // à ordersService.ComputePricing). Couvre aussi le panier composé juste avant
 // la fin d'un créneau et validé juste après.
-func (s *Service) validateKioskProductAvailability(ctx context.Context, merchantID string, products []models.OrderProductPayload) error {
+func (s *Service) validateKioskProductAvailability(ctx context.Context, merchantID, orderType string, products []models.OrderProductPayload) error {
 	if len(products) == 0 {
 		return models.ErrCartEmpty
 	}
@@ -1616,7 +1636,7 @@ func (s *Service) validateKioskProductAvailability(ctx context.Context, merchant
 		productIDs = append(productIDs, p.ProductID)
 	}
 
-	available, err := s.repo.GetAvailableKioskProductIDs(ctx, merchantID, productIDs)
+	available, err := s.repo.GetAvailableKioskProductIDs(ctx, merchantID, normalizeKioskOrderType(orderType), productIDs)
 	if err != nil {
 		return err
 	}
@@ -1642,7 +1662,7 @@ func (s *Service) ComputePricing(ctx context.Context, req *models.PricingRequest
 	if req.Order == nil {
 		return nil, models.ErrInvalidInput
 	}
-	if err := s.validateKioskProductAvailability(ctx, req.MerchantID, req.Order.Products); err != nil {
+	if err := s.validateKioskProductAvailability(ctx, req.MerchantID, req.Order.OrderType, req.Order.Products); err != nil {
 		return nil, err
 	}
 
@@ -1771,7 +1791,7 @@ func (s *Service) CreateOrder(ctx context.Context, req *models.RequestObject, ki
 	}
 
 	req.MerchantID = kiosk.MerchantID
-	if err := s.validateKioskProductAvailability(ctx, kiosk.MerchantID, req.Order.Products); err != nil {
+	if err := s.validateKioskProductAvailability(ctx, kiosk.MerchantID, req.Order.OrderType, req.Order.Products); err != nil {
 		return nil, err
 	}
 

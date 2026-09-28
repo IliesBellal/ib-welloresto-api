@@ -86,7 +86,7 @@ func TestValidateKioskProductAvailability_RejectsOutOfScheduleProduct(t *testing
 				WillReturnRows(sqlmock.NewRows([]string{"product_id"}).AddRow("1").AddRow("2"))
 
 			svc := &Service{repo: NewRepository(db), availabilities: fakeScheduleAvailability{unavailable: tc.unavailable}}
-			err = svc.validateKioskProductAvailability(context.Background(), "42", []models.OrderProductPayload{
+			err = svc.validateKioskProductAvailability(context.Background(), "42", models.OrderTypeIn, []models.OrderProductPayload{
 				{ProductID: "1", Quantity: 1},
 				{ProductID: "2", Quantity: 2},
 			})

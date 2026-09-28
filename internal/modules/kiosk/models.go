@@ -424,6 +424,9 @@ type KioskModifierOption struct {
 
 type KioskUpsellRequest struct {
 	CartProductIDs []string `json:"cart_product_ids"`
+	// OrderType ("IN"/"TAKE_AWAY") — optionnel : absent chez les anciennes
+	// versions de l'app, normalisé en TAKE_AWAY (normalizeKioskOrderType).
+	OrderType string `json:"order_type,omitempty"`
 }
 
 type CounterPaymentResponse struct {

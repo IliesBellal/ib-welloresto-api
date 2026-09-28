@@ -993,6 +993,57 @@ func (r *Repository) GetUpsellProducts(ctx context.Context, merchantID string) (
 	return productIDs, nil
 }
 
+// GetProductsNotAvailableForOrderType retourne, parmi productIDs, les produits
+// explicitement indisponibles pour orderType (colonne available_* à FALSE ;
+// NULL vaut disponible), sous forme product_id → nom. orderType doit être
+// normalisé (models.NormalizeOrderType).
+func (r *Repository) GetProductsNotAvailableForOrderType(ctx context.Context, merchantID, orderType string, productIDs []string) (map[string]string, error) {
+	result := make(map[string]string)
+	if len(productIDs) == 0 {
+		return result, nil
+	}
+
+	db := dbx.GetDB(ctx, r.database)
+
+	placeholders := ""
+	args := []interface{}{merchantID}
+	for i, id := range productIDs {
+		if i > 0 {
+			placeholders += ","
+		}
+		placeholders += "?"
+		args = append(args, id)
+	}
+
+	// Nom de colonne issu d'une liste fixe (OrderTypeAvailabilityColumn) :
+	// interpolation sûre.
+	query := fmt.Sprintf(`
+		SELECT p.product_id, p.name
+		FROM products p
+		WHERE p.merchant_id = ?
+		AND p.product_id IN (%s)
+		AND COALESCE(p.%s, TRUE) = FALSE
+	`, placeholders, models.OrderTypeAvailabilityColumn(orderType))
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query order type availability: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var productID, name string
+		if err := rows.Scan(&productID, &name); err != nil {
+			return nil, fmt.Errorf("failed to scan order type availability: %w", err)
+		}
+		result[productID] = name
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows error during order type availability fetch: %w", err)
+	}
+	return result, nil
+}
+
 // GetProductPricesForSNO retrieves official product prices for SNO from database
 // Returns a map of productID -> {price, price_delivery, price_take_away}
 // This ensures backend is the single source of truth for pricing

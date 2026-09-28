@@ -8,6 +8,7 @@ import (
 
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/models"
 )
 
 type Repository struct {
@@ -816,7 +817,10 @@ func (r *Repository) getMerchantSlug(ctx context.Context, merchantID string) (*s
 // absent du résultat doit être traité comme invalide par l'appelant (qu'il
 // n'existe pas ou qu'il soit simplement masqué sur la borne ne change rien
 // côté sécurité : dans les deux cas, la commande ne doit pas être acceptée).
-func (r *Repository) GetAvailableKioskProductIDs(ctx context.Context, merchantID string, productIDs []string) (map[string]bool, error) {
+// orderType (déjà normalisé, voir normalizeKioskOrderType) exclut aussi les
+// produits dont la disponibilité du mode (available_in/available_take_away)
+// est à FALSE ; NULL vaut disponible.
+func (r *Repository) GetAvailableKioskProductIDs(ctx context.Context, merchantID, orderType string, productIDs []string) (map[string]bool, error) {
 	result := make(map[string]bool)
 	if len(productIDs) == 0 {
 		return result, nil
@@ -834,9 +838,12 @@ func (r *Repository) GetAvailableKioskProductIDs(ctx context.Context, merchantID
 		args = append(args, id)
 	}
 
+	// Colonne issue d'une liste fixe (OrderTypeAvailabilityColumn) :
+	// interpolation sûre.
 	query := fmt.Sprintf(`
 	SELECT product_id FROM products
-	WHERE merchant_id = ? AND is_available_on_kiosk = TRUE AND product_id IN (%s)`, placeholders)
+	WHERE merchant_id = ? AND is_available_on_kiosk = TRUE AND COALESCE(%s, TRUE) = TRUE AND product_id IN (%s)`,
+		models.OrderTypeAvailabilityColumn(orderType), placeholders)
 
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {

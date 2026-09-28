@@ -203,12 +203,9 @@ func (h *Handler) GetKioskMenu(w http.ResponseWriter, r *http.Request) {
 
 	// order_type ("IN"/"TAKE_AWAY") suit le même vocabulaire que scannorder
 	// (GET /{merchant_slug}/menu?order_type=...) — optionnel : un kiosk qui n'a
-	// pas encore demandé le mode au client (écran d'accueil) reçoit le menu au
-	// prix "IN" par défaut.
+	// pas encore demandé le mode au client (écran d'accueil) reçoit le menu
+	// TAKE_AWAY par défaut (normalisé par le service).
 	orderType := r.URL.Query().Get("order_type")
-	if orderType == "" {
-		orderType = models.OrderTypeIn
-	}
 
 	resp, err := h.service.GetMenu(ctx, authenticatedKiosk.MerchantID, orderType)
 	if err != nil {
@@ -242,10 +239,8 @@ func (h *Handler) GetKioskProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// order_type optionnel : absent → TAKE_AWAY (normalisé par le service).
 	orderType := r.URL.Query().Get("order_type")
-	if orderType == "" {
-		orderType = models.OrderTypeIn
-	}
 
 	resp, err := h.service.GetProduct(ctx, authenticatedKiosk.MerchantID, productID, orderType)
 	if err != nil {
@@ -320,10 +315,9 @@ func (h *Handler) GetKioskUpsell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// fulfillmentType : KioskUpsellRequest ne transporte pas encore ce champ
-	// (dette documentée, voir docs/KIOSK_DECISIONS.md) — "" retombe sur le
-	// prix de base (IN) côté cleanProductForKiosk, sans erreur.
-	resp, err := h.service.GetUpsellSuggestions(ctx, authenticatedKiosk.MerchantID, req.CartProductIDs, "")
+	// order_type optionnel dans le body : absent chez les anciennes versions
+	// de l'app → TAKE_AWAY côté service (prix + filtre de disponibilité).
+	resp, err := h.service.GetUpsellSuggestions(ctx, authenticatedKiosk.MerchantID, req.CartProductIDs, req.OrderType)
 	if err != nil {
 		log.Warn("kiosk get upsell failed", zap.Error(err))
 		models.SendErrorJSON(w, "kiosk", "get_upsell", err)

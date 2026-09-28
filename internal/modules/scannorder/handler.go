@@ -248,8 +248,10 @@ func (h *Handler) GetUpsell(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	qr := chi.URLParam(r, "merchant_slug")
+	// order_type optionnel : absent (anciennes versions) → TAKE_AWAY côté service.
+	orderType := r.URL.Query().Get("order_type")
 
-	resp, err := h.service.GetUpsell(ctx, qr)
+	resp, err := h.service.GetUpsell(ctx, qr, orderType)
 	if err != nil {
 		models.SendErrorJSON(w, "scannorder", "get_upsell", err)
 		return

@@ -121,7 +121,8 @@ func (c *Client) InvalidateMerchantMenuCaches(ctx context.Context, merchantID st
 
 	patterns := []string{
 		models.ScannorderMerchantMenu + merchantID + ":*",
-		models.ScannorderMerchantUpsell + merchantID,
+		models.ScannorderMerchantUpsell + merchantID,        // ancienne clé sans mode (TTL résiduel)
+		models.ScannorderMerchantUpsell + merchantID + ":*", // clés par mode (order_type)
 		models.KioskMerchantMenu + merchantID + ":*",
 	}
 	for _, pattern := range patterns {

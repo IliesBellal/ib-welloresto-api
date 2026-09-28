@@ -898,65 +898,42 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			r.Get("/", analyticsH.GetAccessibleMerchants)
 		})
 
+		// One single /analytics subrouter, permission set per route. The
+		// nominative sub-routes (cancellations/by-staff, clients/top,
+		// upsell/by-staff) must NOT be mounted as separate
+		// r.Route("/analytics/cancellations", ...) blocks: chi's Mount also
+		// claims the exact "/analytics/cancellations" path for the sub-router,
+		// which only knows "/by-staff" -> POST /analytics/cancellations (and
+		// /clients, /upsell) answered "404 page not found".
 		r.Route("/analytics", func(r chi.Router) {
 			r.Use(authMiddleware)
 			r.Use(notSuspendedMiddleware)
-			r.Use(middleware.RequirePermission(permission.ReportsSalesRead))
 
-			r.Post("/revenue", analyticsH.GetRevenue)
-			r.Post("/orders", analyticsH.GetOrders)
-			r.Post("/payments", analyticsH.GetPayments)
-			r.Post("/vat", analyticsH.GetVAT)
-			r.Post("/cancellations", analyticsH.GetCancellations)
-			r.Post("/products", analyticsH.GetProducts)
-			r.Post("/options", analyticsH.GetOptions)
-			r.Post("/clients", analyticsH.GetClients)
-			r.Post("/upsell", analyticsH.GetUpsell)
-			r.Post("/discounts", analyticsH.GetDiscounts)
-		})
+			salesRead := middleware.RequirePermission(permission.ReportsSalesRead)
+			r.With(salesRead).Post("/revenue", analyticsH.GetRevenue)
+			r.With(salesRead).Post("/orders", analyticsH.GetOrders)
+			r.With(salesRead).Post("/payments", analyticsH.GetPayments)
+			r.With(salesRead).Post("/vat", analyticsH.GetVAT)
+			r.With(salesRead).Post("/cancellations", analyticsH.GetCancellations)
+			r.With(salesRead).Post("/products", analyticsH.GetProducts)
+			r.With(salesRead).Post("/options", analyticsH.GetOptions)
+			r.With(salesRead).Post("/clients", analyticsH.GetClients)
+			r.With(salesRead).Post("/upsell", analyticsH.GetUpsell)
+			r.With(salesRead).Post("/discounts", analyticsH.GetDiscounts)
 
-		// PROMPT 10 (Annulations tab): the nominative per-server ranking sits
-		// outside the /analytics group above on purpose. RequirePermission
-		// takes exactly one permission.Key — stacking a second r.Use inside
-		// the same group would require BOTH reports.sales.read AND
-		// reports.staff_performance.read for this one route, when the intent
-		// is reports.staff_performance.read alone (see docs/analytics/DROITS.md
-		// §6, wello-back-office repo, and permission.ReportsStaffPerformanceRead's
-		// doc comment). A 403 here must hide the block on the frontend, never
-		// break the rest of the Annulations tab.
-		r.Route("/analytics/cancellations", func(r chi.Router) {
-			r.Use(authMiddleware)
-			r.Use(notSuspendedMiddleware)
-			r.Use(middleware.RequirePermission(permission.ReportsStaffPerformanceRead))
-
-			r.Post("/by-staff", analyticsH.GetCancellationsByStaff)
-		})
-
-		// PROMPT 18 (Clients tab): same split as Annulations above — the
-		// nominative Top Clients ranking (name, valeur vie, dernière visite,
-		// panier moyen) needs permission.CustomersManage, already the existing
-		// key for the customers module's own CRUD/import routes and is_sensitive
-		// in the catalog, not a new key. A 403 here must hide the block on the
-		// frontend, never break the rest of the Clients tab.
-		r.Route("/analytics/clients", func(r chi.Router) {
-			r.Use(authMiddleware)
-			r.Use(notSuspendedMiddleware)
-			r.Use(middleware.RequirePermission(permission.CustomersManage))
-
-			r.Post("/top", analyticsH.GetClientsTop)
-		})
-
-		// PROMPT 19 (Vente additionnelle tab): same split as Annulations/
-		// Clients above — the nominative per-server ranking (CA upsell par
-		// serveur) needs reports.staff_performance.read, not
-		// reports.sales.read. A 403 here must hide the block on the
-		// frontend, never break the rest of the tab.
-		r.Route("/analytics/upsell", func(r chi.Router) {
-			r.Use(authMiddleware)
-			r.Use(notSuspendedMiddleware)
-			r.Use(middleware.RequirePermission(permission.ReportsStaffPerformanceRead))
-
-			r.Post("/by-staff", analyticsH.GetUpsellByStaff)
+			// PROMPT 10 / 18 / 19: nominative rankings are gated by their own
+			// key ALONE, not reports.sales.read + that key (hence per-route
+			// .With rather than a group-level r.Use). See
+			// docs/analytics/DROITS.md §6, wello-back-office repo. A 403 on any
+			// of them must hide the block on the frontend, never break the tab.
+			// - Annulations / Vente additionnelle: per-server ranking ->
+			//   reports.staff_performance.read.
+			// - Clients: Top Clients (name, valeur vie, dernière visite, panier
+			//   moyen) -> customers.manage, the existing is_sensitive key of the
+			//   customers module, not a new key.
+			r.With(middleware.RequirePermission(permission.ReportsStaffPerformanceRead)).Post("/cancellations/by-staff", analyticsH.GetCancellationsByStaff)
+			r.With(middleware.RequirePermission(permission.CustomersManage)).Post("/clients/top", analyticsH.GetClientsTop)
+			r.With(middleware.RequirePermission(permission.ReportsStaffPerformanceRead)).Post("/upsell/by-staff", analyticsH.GetUpsellByStaff)
 		})
 	}
 

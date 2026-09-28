@@ -269,6 +269,10 @@ func (s *Service) GetMenu(ctx context.Context, qr string, deliveryType string) (
 		return nil, err
 	}
 
+	// Type absent/inconnu → TAKE_AWAY, normalisé avant la clé de cache
+	// (docs/ORDER_TYPE_AVAILABILITY.md).
+	deliveryType = models.NormalizeOrderType(deliveryType)
+
 	// Produits hors créneau horaire : lus à chaque requête, jamais depuis le
 	// cache — leur empreinte suffixe la clé Redis (voir kiosk.GetMenu).
 	unavailable, err := s.unavailableProductsNow(ctx, merchant.Merchant.MerchantID)
@@ -328,7 +332,9 @@ func (s *Service) GetMenu(ctx context.Context, qr string, deliveryType string) (
 // ComputeGetMenu construit le menu SNO. unavailable (produits hors créneau
 // horaire) est appliqué avec is_available_on_sno, avant le retrait des
 // catégories vides : un produit ou un groupe hors créneau est retiré avec
-// tous ses sous-produits.
+// tous ses sous-produits. La disponibilité du mode deliveryType (available_in/
+// take_away/delivery) est combinée à is_available_on_sno : un parent
+// indisponible pour le mode laisse ses sous-produits être évalués un à un.
 func (s *Service) ComputeGetMenu(ctx context.Context, qr string, deliveryType string, unavailable map[string]string) (*MenuResponse, error) {
 
 	merchantID, tz, err := s.repo.GetMerchantIDAndTZFromQR(ctx, qr)
@@ -362,7 +368,7 @@ func (s *Service) ComputeGetMenu(ctx context.Context, qr string, deliveryType st
 			}
 			// On vérifie si le produit principal doit être affiché tel quel
 			isGroup := p.IsProductGroup != nil && *p.IsProductGroup
-			isAvailable := p.IsAvailableOnSNO != nil && *p.IsAvailableOnSNO
+			isAvailable := p.IsAvailableOnSNO != nil && *p.IsAvailableOnSNO && p.IsAvailableForOrderType(deliveryType)
 
 			if !isGroup && isAvailable {
 				finalProducts = append(finalProducts, p)
@@ -380,8 +386,8 @@ func (s *Service) ComputeGetMenu(ctx context.Context, qr string, deliveryType st
 			if _, outOfSchedule := unavailable[sp.ProductID]; outOfSchedule {
 				continue
 			}
-			// On ne garde le sous-produit que s'il est disponible
-			if sp.IsAvailableOnSNO != nil && *sp.IsAvailableOnSNO {
+			// On ne garde le sous-produit que s'il est disponible (canal + mode)
+			if sp.IsAvailableOnSNO != nil && *sp.IsAvailableOnSNO && sp.IsAvailableForOrderType(deliveryType) {
 				finalProducts = append(finalProducts, sp)
 			}
 		}
@@ -527,21 +533,26 @@ func (s *Service) GetPricingSNO(ctx context.Context, req *models.PricingRequest)
 		}, nil
 	}
 
-	// 🔹 4bis. Disponibilités horaires : même forme de réponse que le contrôle
-	// de disponibilité de ordersService.ComputePricing (status "success" +
-	// unavailable_products, sans prix) — CreateOrderSNO refuse alors la
-	// commande ("unavailable_products").
+	// 🔹 4bis. Disponibilités horaires + disponibilité du mode de commande :
+	// même forme de réponse que le contrôle de disponibilité de
+	// ordersService.ComputePricing (status "success" + unavailable_products,
+	// sans prix) — CreateOrderSNO refuse alors la commande
+	// ("unavailable_products").
 	outOfSchedule, err := s.outOfScheduleCartProducts(ctx, merchant.MerchantID, req.Order)
 	if err != nil {
 		return nil, err
 	}
-	if len(outOfSchedule) > 0 {
+	notForOrderType, err := s.orderTypeUnavailableCartProducts(ctx, merchant.MerchantID, req.Order, outOfSchedule)
+	if err != nil {
+		return nil, err
+	}
+	if unavailable := append(outOfSchedule, notForOrderType...); len(unavailable) > 0 {
 		req.MerchantID = merchant.MerchantID
 		req.IsSNO = true
 		return &models.PricingResponse{
 			Status:             "success",
 			OrderRequest:       req,
-			UnavailableProduct: outOfSchedule,
+			UnavailableProduct: unavailable,
 		}, nil
 	}
 
@@ -594,6 +605,49 @@ func (s *Service) outOfScheduleCartProducts(ctx context.Context, merchantID stri
 			ProductID: productID,
 			Name:      name,
 			Status:    models.UnavailableStatusOutOfSchedule,
+		})
+	}
+	return result, nil
+}
+
+// orderTypeUnavailableCartProducts liste les produits du panier indisponibles
+// pour le mode de la commande (available_in/take_away/delivery à FALSE), au
+// format UnavailableProductInfo (status "not_available_for_order_type"). Le
+// mode vide/inconnu retombe sur TAKE_AWAY. Les produits déjà signalés
+// (alreadyReported, ex. hors créneau) ne sont pas répétés.
+func (s *Service) orderTypeUnavailableCartProducts(ctx context.Context, merchantID string, order *models.OrderRequest, alreadyReported []models.UnavailableProductInfo) ([]models.UnavailableProductInfo, error) {
+	if order == nil || len(order.Products) == 0 {
+		return nil, nil
+	}
+
+	seen := make(map[string]bool, len(alreadyReported))
+	for _, p := range alreadyReported {
+		seen[strconv.FormatInt(p.ProductID, 10)] = true
+	}
+	productIDs := make([]string, 0, len(order.Products))
+	for _, p := range order.Products {
+		if !seen[p.ProductID] {
+			productIDs = append(productIDs, p.ProductID)
+		}
+	}
+
+	notAvailable, err := s.repo.GetProductsNotAvailableForOrderType(ctx, merchantID, models.NormalizeOrderType(order.OrderType), productIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []models.UnavailableProductInfo
+	for _, id := range productIDs {
+		name, ko := notAvailable[id]
+		if !ko || seen[id] {
+			continue
+		}
+		seen[id] = true
+		productID, _ := strconv.ParseInt(id, 10, 64)
+		result = append(result, models.UnavailableProductInfo{
+			ProductID: productID,
+			Name:      name,
+			Status:    models.UnavailableStatusNotAvailableForOrderType,
 		})
 	}
 	return result, nil
@@ -1274,8 +1328,11 @@ func (s *Service) GetDiscounts(ctx context.Context, qrCode string, deliveryType 
 
 // GetUpsell retrieves famous (upsell) products for the QR code's merchant, fully configured
 // (attributes, options) so the frontend can open the product configuration modal directly.
-func (s *Service) GetUpsell(ctx context.Context, qr string) (*UpsellResponse, error) {
+// orderType (optionnel, TAKE_AWAY par défaut) filtre les produits indisponibles pour
+// le mode et fixe le prix affiché.
+func (s *Service) GetUpsell(ctx context.Context, qr, orderType string) (*UpsellResponse, error) {
 	log := logger.FromContext(ctx)
+	orderType = models.NormalizeOrderType(orderType)
 
 	// Résolution QR → merchantID en amont : la clé de cache est indexée par
 	// merchant (le contenu upsell est identique pour tous les QR du merchant),
@@ -1286,13 +1343,13 @@ func (s *Service) GetUpsell(ctx context.Context, qr string) (*UpsellResponse, er
 		return &UpsellResponse{Products: []models.ProductEntry{}}, nil
 	}
 
-	upsell, err := s.getCachedUpsell(ctx, merchantID)
+	upsell, err := s.getCachedUpsell(ctx, merchantID, orderType)
 	if err != nil || upsell == nil {
 		return upsell, err
 	}
 
-	// Filtre horaire appliqué après le cache (clé par merchant, sans
-	// empreinte) : la réponse en cache reste la liste complète.
+	// Filtre horaire appliqué après le cache (clé par merchant + mode, sans
+	// empreinte) : la réponse en cache reste la liste complète du mode.
 	unavailable, err := s.unavailableProductsNow(ctx, merchantID)
 	if err != nil {
 		return nil, err
@@ -1301,17 +1358,19 @@ func (s *Service) GetUpsell(ctx context.Context, qr string) (*UpsellResponse, er
 	return upsell, nil
 }
 
-// getCachedUpsell lit la réponse upsell du merchant depuis Redis, ou la
-// calcule et la met en cache.
-func (s *Service) getCachedUpsell(ctx context.Context, merchantID string) (*UpsellResponse, error) {
+// getCachedUpsell lit la réponse upsell du merchant pour le mode orderType
+// depuis Redis, ou la calcule et la met en cache.
+func (s *Service) getCachedUpsell(ctx context.Context, merchantID, orderType string) (*UpsellResponse, error) {
 	log := logger.FromContext(ctx)
 
 	// Si Redis n'est pas configuré, on court direct à la BDD
 	if s.redis == nil {
-		return s.computeGetUpsell(ctx, merchantID)
+		return s.computeGetUpsell(ctx, merchantID, orderType)
 	}
 
-	cacheKey := models.ScannorderMerchantUpsell + merchantID
+	// Suffixe ":<mode>" : prix et filtrage dépendent du mode. Invalidé par
+	// InvalidateMerchantMenuCaches (motif merchantID:*).
+	cacheKey := models.ScannorderMerchantUpsell + merchantID + ":" + orderType
 
 	// --- ÉTAPE 1 : Chercher dans Redis ---
 	cached, found := s.redis.Get(ctx, cacheKey)
@@ -1327,7 +1386,7 @@ func (s *Service) getCachedUpsell(ctx context.Context, merchantID string) (*Upse
 	log.Info("🧠🚫 Upsell not found in Redis cache 🚫🧠")
 
 	// --- ÉTAPE 2 : Appel BDD (calcul lourd : 1 GetProduct par produit populaire) ---
-	upsell, err := s.computeGetUpsell(ctx, merchantID)
+	upsell, err := s.computeGetUpsell(ctx, merchantID, orderType)
 	if err != nil {
 		return nil, err
 	}
@@ -1352,9 +1411,11 @@ func (s *Service) getCachedUpsell(ctx context.Context, merchantID string) (*Upse
 	return upsell, nil
 }
 
-// computeGetUpsell calcule la réponse upsell pour un merchant — la résolution
-// QR → merchantID est faite en amont par GetUpsell (clé de cache par merchant).
-func (s *Service) computeGetUpsell(ctx context.Context, merchantID string) (*UpsellResponse, error) {
+// computeGetUpsell calcule la réponse upsell pour un merchant et un mode — la
+// résolution QR → merchantID est faite en amont par GetUpsell (clé de cache
+// par merchant + mode). Le filtre de mode passe avant cleanProductForSNO, qui
+// efface les flags available_*.
+func (s *Service) computeGetUpsell(ctx context.Context, merchantID, orderType string) (*UpsellResponse, error) {
 	log := logger.FromContext(ctx)
 
 	log.Debug("Retrieving upsell product IDs", zap.String("merchant_id", merchantID))
@@ -1375,11 +1436,11 @@ func (s *Service) computeGetUpsell(ctx context.Context, merchantID string) (*Ups
 			log.Warn("GetUpsell: failed to load product, skipping", zap.String("product_id", productID), zap.Error(err))
 			continue
 		}
-		if product == nil {
+		if product == nil || !product.IsAvailableForOrderType(orderType) {
 			continue
 		}
 
-		s.cleanProductForSNO(product, "")
+		s.cleanProductForSNO(product, orderType)
 		products = append(products, *product)
 	}
 
@@ -1425,8 +1486,10 @@ func (s *Service) PostUpsell(ctx context.Context, req *models.PricingRequest) (*
 		return &UpsellResponse{Products: []models.ProductEntry{}}, nil
 	}
 
-	// Filtre horaire propre aux canaux SNO/Kiosk : appliqué ici plutôt que
-	// dans upsell.Service, partagé avec le POS qui n'en tient pas compte.
+	// Filtres horaire et mode de commande propres aux canaux SNO/Kiosk :
+	// appliqués ici plutôt que dans upsell.Service, partagé avec le POS qui
+	// n'en tient pas compte. Mode absent (anciennes versions) → TAKE_AWAY.
+	orderType := models.NormalizeOrderType(req.Order.OrderType)
 	unavailable, err := s.unavailableProductsNow(ctx, merchantID)
 	if err != nil {
 		log.Error("PostUpsell: schedule availability lookup failed", zap.Error(err))
@@ -1443,8 +1506,11 @@ func (s *Service) PostUpsell(ctx context.Context, req *models.PricingRequest) (*
 		if _, outOfSchedule := unavailable[sg.ProductID]; outOfSchedule {
 			continue
 		}
+		if !sg.Product.IsAvailableForOrderType(orderType) {
+			continue
+		}
 		product := *sg.Product
-		s.cleanProductForSNO(&product, req.Order.OrderType)
+		s.cleanProductForSNO(&product, orderType)
 		products = append(products, product)
 	}
 
@@ -1453,12 +1519,20 @@ func (s *Service) PostUpsell(ctx context.Context, req *models.PricingRequest) (*
 	return &UpsellResponse{Products: products, SuggestionID: result.SuggestionID}, nil
 }
 
+// cleanProductPricesForSNO adapte le prix au mode. Prix du mode NULL en base →
+// prix de base conservé (même repli que COALESCE(price_x, price) du pricing),
+// plutôt qu'un déréférencement nil — TAKE_AWAY étant désormais le mode par
+// défaut, un ancien client sans order_type passe par cette branche.
 func (s *Service) cleanProductPricesForSNO(product *models.ProductEntry, deliveryType string) {
 	switch deliveryType {
 	case "DELIVERY":
-		product.Price = *product.PriceDelivery
+		if product.PriceDelivery != nil {
+			product.Price = *product.PriceDelivery
+		}
 	case "TAKE_AWAY":
-		product.Price = *product.PriceTakeAway
+		if product.PriceTakeAway != nil {
+			product.Price = *product.PriceTakeAway
+		}
 	}
 
 	product.PriceDelivery = nil
@@ -1534,6 +1608,14 @@ func (s *Service) GetProduct(ctx context.Context, qr string, productID string, d
 	}
 	if _, outOfSchedule := unavailable[productID]; outOfSchedule {
 		log.Warn("GetProduct: Product out of schedule", zap.String("merchant_id", merchantID), zap.String("product_id", productID))
+		return nil, fmt.Errorf("product_not_available_on_sno")
+	}
+
+	// 3️⃣ter Disponibilité du mode de commande (TAKE_AWAY si absent) — même
+	// erreur, traitement front identique.
+	deliveryType = models.NormalizeOrderType(deliveryType)
+	if !product.IsAvailableForOrderType(deliveryType) {
+		log.Warn("GetProduct: Product not available for order type", zap.String("merchant_id", merchantID), zap.String("product_id", productID), zap.String("delivery_type", deliveryType))
 		return nil, fmt.Errorf("product_not_available_on_sno")
 	}
 
