@@ -218,7 +218,7 @@ func (r *Repository) DeleteOldSuggestions(ctx context.Context, olderThanMonths i
 
 // ListFeaturedProducts returns up to limit products marked as popular for a merchant
 // and orderable on channel (SNO and Kiosk have their own availability flag, the POS
-// has none). Each result is shaped into a SuggestedItem with a default title
+// has none). Product groups are never returned (docs/UPSELL_COMPLETION.md, D13). Each result is shaped into a SuggestedItem with a default title
 // template and score 0.5.
 func (r *Repository) ListFeaturedProducts(ctx context.Context, merchantID string, channel string, limit int) ([]SuggestedItem, error) {
 	db := dbx.GetDB(ctx, r.database)
@@ -237,6 +237,7 @@ func (r *Repository) ListFeaturedProducts(ctx context.Context, merchantID string
 		FROM products
 		WHERE merchant_id = ?
 		  AND is_popular  = TRUE
+		  AND COALESCE(is_product_group, FALSE) = FALSE
 		  AND available   = TRUE
 		  AND enabled     = TRUE
 		  AND status      IN ('available', '1')

@@ -194,12 +194,22 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 	}
 
 	// Index candidates (not in cart, sellable on the channel now) by product_id.
+	// Product groups are never candidates (the listing leaves them out, D13);
+	// a variant is left out along with its group: when a variant is already
+	// in the cart, its siblings are the same product, and a schedule set on
+	// the group applies to its variants.
 	candidateMap := make(map[string]menu.AvailableProduct, len(available))
 	for _, ap := range available {
 		if _, inCart := cart.excluded[ap.ProductID]; inCart {
 			continue
 		}
+		if _, groupInCart := cart.excluded[ap.GroupID]; groupInCart && ap.GroupID != "" {
+			continue
+		}
 		if _, outOfSchedule := unavailable[ap.ProductID]; outOfSchedule {
+			continue
+		}
+		if _, groupOutOfSchedule := unavailable[ap.GroupID]; groupOutOfSchedule && ap.GroupID != "" {
 			continue
 		}
 		if !availableOnChannel(ap, channel) {
@@ -226,7 +236,11 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 		}
 		patternLists = append(patternLists, entries)
 	}
-	aggregated := aggregatePatterns(patternLists, candidateMap, cartCategories(cartProducts, cart.groupOf, available))
+	// Nightly low-price best sellers: completion step 4.5, and sales figures
+	// used to pick a group's variant.
+	lowPriceList := s.lowPriceEntries(ctx, merchantID)
+	variantOf := cheapestVariants(candidateMap, lowPriceOrders(lowPriceList))
+	aggregated := aggregatePatterns(patternLists, candidateMap, variantOf, cartCategories(cartProducts, cart.groupOf, available))
 
 	// Patterns are kept even when there are fewer than maxItems of them; the
 	// remaining slots are completed by low-price best sellers, then by the LLM
@@ -235,7 +249,7 @@ func (s *Service) generateUpsellSafe(ctx context.Context, merchantID string, car
 
 	// ── 4.5 Low-price best sellers ───────────────────────────────────────────
 	if remaining := maxItems - len(suggestions); remaining > 0 {
-		lowPrice := s.lowPriceSuggestions(ctx, merchantID, withoutSuggested(candidateMap, suggestions), remaining)
+		lowPrice := lowPriceFromEntries(lowPriceList, withoutSuggested(candidateMap, suggestions), remaining)
 		suggestions = appendUnique(suggestions, lowPrice, maxItems)
 	}
 
@@ -375,11 +389,10 @@ func (s *Service) llmSuggestions(
 	}, &providerName
 }
 
-// lowPriceSuggestions returns at most limit products of the merchant's
-// low-price best sellers list (computed nightly, see
-// tasks.RecomputeUpsellPatterns) that are still candidates. A missing or
-// unreadable list yields no item.
-func (s *Service) lowPriceSuggestions(ctx context.Context, merchantID string, candidates map[string]menu.AvailableProduct, limit int) []SuggestedItem {
+// lowPriceEntries reads the merchant's low-price best sellers list (computed
+// nightly, see tasks.RecomputeUpsellPatterns). A missing or unreadable list
+// yields none.
+func (s *Service) lowPriceEntries(ctx context.Context, merchantID string) []LowPriceEntry {
 	raw, hit, _ := s.aiCache.Get(ctx, fmt.Sprintf(cacheKeyLowPriceFmt, merchantID))
 	if !hit || raw == "" {
 		return nil
@@ -392,7 +405,17 @@ func (s *Service) lowPriceSuggestions(ctx context.Context, merchantID string, ca
 		)
 		return nil
 	}
-	return lowPriceFromEntries(entries, candidates, limit)
+	return entries
+}
+
+// lowPriceOrders maps each product of the low-price list to its number of
+// orders over the analysis window.
+func lowPriceOrders(entries []LowPriceEntry) map[string]int {
+	orders := make(map[string]int, len(entries))
+	for _, e := range entries {
+		orders[e.ProductID] = e.Orders
+	}
+	return orders
 }
 
 // featuredSuggestions returns at most limit featured (is_popular) products that
@@ -707,24 +730,63 @@ func cartCategories(cartProducts []models.ProductEntry, groupOf map[string]strin
 	return categories
 }
 
+// cheapestVariants maps each product group to its cheapest candidate variant.
+// Patterns are computed per group (D1) but a group is never suggested (D13):
+// the suggestion is this variant, the smallest add-on. Among variants at the
+// same price (Coca Cola, Cherry and Zero, all 33 cl), the best seller wins
+// (orders, known for low-price products), then the name, then the id.
+func cheapestVariants(candidates map[string]menu.AvailableProduct, orders map[string]int) map[string]string {
+	better := func(a, b menu.AvailableProduct) bool {
+		if a.Price != b.Price {
+			return a.Price < b.Price
+		}
+		if orders[a.ProductID] != orders[b.ProductID] {
+			return orders[a.ProductID] > orders[b.ProductID]
+		}
+		if a.Name != b.Name {
+			return a.Name < b.Name
+		}
+		return a.ProductID < b.ProductID
+	}
+	best := make(map[string]menu.AvailableProduct)
+	for _, ap := range candidates {
+		if ap.GroupID == "" {
+			continue
+		}
+		if current, ok := best[ap.GroupID]; !ok || better(ap, current) {
+			best[ap.GroupID] = ap
+		}
+	}
+	variantOf := make(map[string]string, len(best))
+	for groupID, ap := range best {
+		variantOf[groupID] = ap.ProductID
+	}
+	return variantOf
+}
+
 // aggregatePatterns scores each candidate suggested by the cart's patterns
 // with the best confidence among the cart products that point to it (a
-// maximum, not a sum: two weak links do not make a strong one). Candidates
-// whose category is already in the cart are left out: patterns are meant to
-// add something of another kind, not a second pizza (D12).
-func aggregatePatterns(patternLists [][]PatternEntry, candidates map[string]menu.AvailableProduct, cartCategories map[string]struct{}) map[string]float64 {
+// maximum, not a sum: two weak links do not make a strong one). A pattern
+// pointing to a product group scores the group's variant from variantOf.
+// Candidates whose category is already in the cart are left out: patterns
+// are meant to add something of another kind, not a second pizza (D12).
+func aggregatePatterns(patternLists [][]PatternEntry, candidates map[string]menu.AvailableProduct, variantOf map[string]string, cartCategories map[string]struct{}) map[string]float64 {
 	aggregated := make(map[string]float64)
 	for _, entries := range patternLists {
 		for _, e := range entries {
-			ap, isCandidate := candidates[e.ProductID]
+			target := e.ProductID
+			if variant, isGroup := variantOf[target]; isGroup {
+				target = variant
+			}
+			ap, isCandidate := candidates[target]
 			if !isCandidate {
 				continue
 			}
 			if _, sameKind := cartCategories[ap.CategoryID]; sameKind {
 				continue
 			}
-			if e.Confidence > aggregated[e.ProductID] {
-				aggregated[e.ProductID] = e.Confidence
+			if e.Confidence > aggregated[target] {
+				aggregated[target] = e.Confidence
 			}
 		}
 	}

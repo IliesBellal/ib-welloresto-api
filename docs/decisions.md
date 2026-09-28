@@ -5910,3 +5910,14 @@ Objectif : des associations de meilleure qualité. Les règles ont été compar�
 - Correction au passage : les associations d'un produit n'étaient pas triées quand il en avait 10 ou moins.
 
 Aucune migration. Après déploiement, lancer `POST /admin/upsell/recompute-patterns`. Statut : non commité, non déployé.
+
+### Upsell — Plus jamais de produit groupe, ses variantes à la place (2026-09-28)
+
+Constat : SNO (212) proposait « Coca Cola » (584) et « Cristalline » (2332), des **produits groupe** : prix 0, rien à configurer, alors que le catalogue SNO ne les affiche jamais (il les remplace par leurs sous-produits). Détail : [UPSELL_COMPLETION.md](UPSELL_COMPLETION.md), §9 (D13). Corrige aussi une mauvaise interprétation de la consigne d'Ilies en D12.
+
+- **Jamais de groupe** dans les candidats, les associations, les petits prix ni le secours `is_popular`. Ses **variantes** sont proposées à la place (« Coca Cola (33cl) »), si le groupe lui-même est disponible ; une variante sans catégorie ou sans image prend celles de son groupe.
+- **Associations** : toujours calculées par groupe (statistiques plus solides) ; une association vers un groupe propose sa variante la moins chère. À prix égal, la plus vendue l'emporte, puis l'ordre alphabétique (sinon le Coca Zero l'aurait emporté sur le classique chez 212).
+- **Panier** : une variante du panier exclut toutes les variantes de son groupe ; les horaires posés sur un groupe s'appliquent à ses variantes.
+- **Petits prix** : catalogue sans groupes, chaque variante avec son prix et ses ventes propres (requête dédiée, non rattachée aux groupes).
+
+Aucune migration, rien à changer côté clients. Après déploiement, lancer `POST /admin/upsell/recompute-patterns`. Statut : non commité, non déployé.

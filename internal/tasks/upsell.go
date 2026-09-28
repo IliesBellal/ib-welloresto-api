@@ -79,11 +79,11 @@ func (tm *TasksManager) RecomputeUpsellPatterns() {
 
 // upsellBasketLinesSQL lists the distinct (order, product) lines of a
 // merchant's closed orders in the analysis window.
-// A variant (products.by_product_of) is counted under its product group: only
-// groups can be suggested (menu.ListAvailableProductsForUpsell excludes
-// variants), so a pattern pointing to a variant would never be usable, and
-// pooling the variants of a group strengthens its statistics. A line whose
-// product no longer exists keeps its own id.
+// A variant (products.by_product_of) is counted under its product group:
+// pooling the variants of a group strengthens its statistics. At suggestion
+// time a pattern pointing to a group is turned into one of its variants, as a
+// group itself is never suggested (D13). A line whose product no longer
+// exists keeps its own id.
 // Placeholders: merchant_id, window in days. See docs/UPSELL_COMPLETION.md (D1).
 func upsellBasketLinesSQL() string {
 	return `
@@ -138,7 +138,7 @@ func (tm *TasksManager) processUpsellPatternsForMerchant(ctx context.Context, me
 	// ── Step 2b: Low-price best sellers ─────────────────────────────────────
 	// Independent from the patterns: a failure is logged and the patterns are
 	// still computed.
-	lowPrice, lowPriceMedian, lpErr := tm.computeUpsellLowPriceList(ctx, merchantID, productCount)
+	lowPrice, lowPriceMedian, lpErr := tm.computeUpsellLowPriceList(ctx, merchantID)
 	if lpErr != nil {
 		tm.logWarn("[CRON] RecomputeUpsellPatterns: liste petits prix en échec",
 			zap.String("merchant_id", merchantID), zap.Error(lpErr))
@@ -267,40 +267,40 @@ func sortUpsellPatterns(entries []upsellModule.PatternEntry, limit int) []upsell
 	return entries
 }
 
-// upsellCatalogProduct is an orderable root product with its effective price:
-// the cheapest available variant for a product group (whose own price is 0).
+// upsellCatalogProduct is a product that can be suggested as such, with its
+// own price: a standalone product or a variant, never a product group.
 type upsellCatalogProduct struct {
 	ProductID string
 	Price     int64
 }
 
-// computeUpsellLowPriceList loads the merchant's orderable catalogue and returns
-// its low-price best sellers (see selectUpsellLowPrice) along with the median
-// catalogue price it was computed from. sales maps a product (variants rolled up
-// to their group) to its number of orders in the analysis window.
-func (tm *TasksManager) computeUpsellLowPriceList(ctx context.Context, merchantID string, sales map[string]int) ([]upsellModule.LowPriceEntry, float64, error) {
+// computeUpsellLowPriceList returns the merchant's low-price best sellers (see
+// selectUpsellLowPrice) along with the median catalogue price it was computed
+// from. Unlike the patterns, sales are counted per product and not per group:
+// the list holds variants, which are what gets suggested (D13).
+func (tm *TasksManager) computeUpsellLowPriceList(ctx context.Context, merchantID string) ([]upsellModule.LowPriceEntry, float64, error) {
 	db := dbx.GetDB(ctx, tm.DB)
 
 	// Same filters as menu.ListAvailableProductsForUpsell, so that the list
 	// only holds products the suggestion step can offer.
 	rows, err := db.QueryContext(ctx, `
-		SELECT p.product_id,
-		       CASE WHEN p.is_product_group = TRUE
-		            THEN COALESCE((
-		                SELECT MIN(v.price) FROM products v
-		                WHERE v.by_product_of = p.product_id
-		                  AND v.available = TRUE
-		                  AND v.enabled   = TRUE
-		                  AND v.status    IN ('available', '1')
-		            ), 0)
-		            ELSE COALESCE(p.price, 0)
-		       END AS effective_price
+		SELECT p.product_id, COALESCE(p.price, 0)
 		FROM products p
+		LEFT JOIN products g
+			ON g.product_id = p.by_product_of
+			AND g.merchant_id = p.merchant_id
 		WHERE p.merchant_id = ?
 		  AND p.available   = TRUE
 		  AND p.enabled     = TRUE
 		  AND p.status      IN ('available', '1')
-		  AND (p.by_product_of IS NULL OR p.by_product_of = 0)
+		  AND COALESCE(p.is_product_group, FALSE) = FALSE
+		  AND (
+		        p.by_product_of IS NULL OR p.by_product_of = 0
+		        OR (g.is_product_group = TRUE
+		            AND g.available = TRUE
+		            AND g.enabled   = TRUE
+		            AND g.status    IN ('available', '1'))
+		  )
 	`, merchantID)
 	if err != nil {
 		return nil, 0, err
@@ -316,6 +316,33 @@ func (tm *TasksManager) computeUpsellLowPriceList(ctx context.Context, merchantI
 		catalog = append(catalog, cp)
 	}
 	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	salesRows, err := db.QueryContext(ctx, `
+		SELECT oi.product_id, COUNT(DISTINCT oi.order_id)
+		FROM orderitems oi
+		INNER JOIN orders o ON o.order_id = oi.order_id
+		WHERE o.merchant_id   = ?
+		  AND o.state         = 'CLOSED'
+		  AND o.creation_date >= `+tskNowMinusDays()+`
+		GROUP BY oi.product_id
+	`, merchantID, upsellPatternWindow)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer salesRows.Close()
+
+	sales := make(map[string]int)
+	for salesRows.Next() {
+		var pid string
+		var orders int
+		if err := salesRows.Scan(&pid, &orders); err != nil {
+			return nil, 0, err
+		}
+		sales[pid] = orders
+	}
+	if err := salesRows.Err(); err != nil {
 		return nil, 0, err
 	}
 

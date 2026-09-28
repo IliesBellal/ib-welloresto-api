@@ -347,10 +347,57 @@ func TestAggregatePatterns_BestConfidenceAndOtherCategoriesOnly(t *testing.T) {
 		{{ProductID: "orangina", Confidence: 0.12}, {ProductID: "tiramisu", Confidence: 0.15}, {ProductID: "sauce", Confidence: 0.11}},
 	}
 
-	got := aggregatePatterns(lists, candidates, map[string]struct{}{"pizzas": {}})
+	got := aggregatePatterns(lists, candidates, nil, map[string]struct{}{"pizzas": {}})
 
 	want := map[string]float64{"orangina": 0.20, "tiramisu": 0.15, "sauce": 0.11}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("aggregatePatterns = %v, want %v (max not sum, no second pizza)", got, want)
+	}
+}
+
+func TestCheapestVariants(t *testing.T) {
+	// Ids as in merchant 212: compared as text, "2340" (Zero) would come
+	// before "556" (classic).
+	candidates := map[string]menu.AvailableProduct{
+		"556":       {ProductID: "556", Name: "Coca Cola (33cl)", GroupID: "coca", Price: 190},
+		"2340":      {ProductID: "2340", Name: "Coca Cola Zero (33cl)", GroupID: "coca", Price: 190},
+		"554":       {ProductID: "554", Name: "Coca Cola Chery (33cl)", GroupID: "coca", Price: 190},
+		"557":       {ProductID: "557", Name: "Coca Cola (1.25L)", GroupID: "coca", Price: 400},
+		"fromage-c": {ProductID: "fromage-c", Name: "Pizza Fromage Crème", GroupID: "fromage", Price: 870},
+		"fromage-t": {ProductID: "fromage-t", Name: "Pizza Fromage Tomate", GroupID: "fromage", Price: 870},
+		"orangina":  {ProductID: "orangina", Name: "Orangina", Price: 190},
+	}
+
+	// Best seller among the cheapest variants.
+	got := cheapestVariants(candidates, map[string]int{"556": 120, "554": 30, "2340": 45})
+	want := map[string]string{"coca": "556", "fromage": "fromage-c"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("cheapestVariants = %v, want %v (cheapest, then best seller, then name)", got, want)
+	}
+
+	// Without sales figures: by name, the classic comes first.
+	got = cheapestVariants(candidates, nil)
+	if got["coca"] != "556" {
+		t.Fatalf("cheapestVariants without sales = %v, want coca → 556 (by name)", got)
+	}
+}
+
+func TestAggregatePatterns_GroupTargetBecomesItsVariant(t *testing.T) {
+	// The pattern points to the group "coca" (patterns are computed per
+	// group), which is never a candidate itself.
+	candidates := map[string]menu.AvailableProduct{
+		"coca-33": {ProductID: "coca-33", GroupID: "coca", CategoryID: "boissons"},
+	}
+	lists := [][]PatternEntry{{{ProductID: "coca", Confidence: 0.25}}}
+
+	got := aggregatePatterns(lists, candidates, map[string]string{"coca": "coca-33"}, nil)
+	if want := map[string]float64{"coca-33": 0.25}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("aggregatePatterns = %v, want %v", got, want)
+	}
+
+	// Drinks already in the cart: the variant is left out like any drink.
+	got = aggregatePatterns(lists, candidates, map[string]string{"coca": "coca-33"}, map[string]struct{}{"boissons": {}})
+	if len(got) != 0 {
+		t.Fatalf("aggregatePatterns = %v, want nothing (category already in the cart)", got)
 	}
 }

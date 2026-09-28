@@ -108,15 +108,23 @@ type AvailableProduct struct {
 	// catalogues).
 	IsAvailableOnSNO   bool
 	IsAvailableOnKiosk bool
+	// GroupID is the product group a variant belongs to (by_product_of), ""
+	// for a standalone product.
+	GroupID string
 }
 
-// ListAvailableProductsForUpsell returns all orderable products for a merchant.
-// Filters applied:
-//   - p.available = 1 AND p.enabled = 1
-//   - p.status IN ('available', '1')    (consistent with scannorder)
-//   - root products only (no sub-products: by_product_of IS NULL)
+// ListAvailableProductsForUpsell returns the products that can be suggested
+// as such, i.e. added to a cart without choosing anything first:
+//   - p.available = 1 AND p.enabled = 1 AND p.status IN ('available', '1')
+//     (consistent with scannorder);
+//   - never a product group (is_product_group): it is only a container, with
+//     a price of 0, that the SNO and Kiosk catalogues replace by its
+//     variants;
+//   - standalone products, and the variants of an available product group.
+//     A variant without its own category or image takes its group's.
 //
-// Ordered by category then name for deterministic slicing.
+// See docs/UPSELL_COMPLETION.md, D13. Ordered by category then name for
+// deterministic slicing.
 func (r *MenuRepository) ListAvailableProductsForUpsell(ctx context.Context, merchantID string) ([]AvailableProduct, error) {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
@@ -126,21 +134,32 @@ func (r *MenuRepository) ListAvailableProductsForUpsell(ctx context.Context, mer
 			p.product_id,
 			p.name,
 			p.price,
-			COALESCE(p.category, '')   AS category_id,
+			COALESCE(NULLIF(p.category, ''), g.category, '') AS category_id,
 			COALESCE(pc.categ_name, '') AS category_name,
-			p.image_url,
+			COALESCE(p.image_url, g.image_url) AS image_url,
 			COALESCE(p.is_popular, FALSE)  AS is_popular,
 			COALESCE(p.is_available_on_sno, FALSE)   AS is_available_on_sno,
-			COALESCE(p.is_available_on_kiosk, FALSE) AS is_available_on_kiosk
+			COALESCE(p.is_available_on_kiosk, FALSE) AS is_available_on_kiosk,
+			g.product_id AS group_id
 		FROM products p
+		LEFT JOIN products g
+			ON g.product_id = p.by_product_of
+			AND g.merchant_id = p.merchant_id
 		LEFT JOIN productcateg pc
-			ON pc.merchant_categ_id = p.category
+			ON pc.merchant_categ_id = COALESCE(NULLIF(p.category, ''), g.category)
 			AND pc.merchant_id = p.merchant_id
 		WHERE p.merchant_id = ?
 		  AND p.available = TRUE
 		  AND p.enabled   = TRUE
 		  AND p.status    IN ('available', '1')
-		  AND (p.by_product_of IS NULL OR p.by_product_of = 0)
+		  AND COALESCE(p.is_product_group, FALSE) = FALSE
+		  AND (
+		        p.by_product_of IS NULL OR p.by_product_of = 0
+		        OR (g.is_product_group = TRUE
+		            AND g.available = TRUE
+		            AND g.enabled   = TRUE
+		            AND g.status    IN ('available', '1'))
+		  )
 		ORDER BY category_id, p.name ASC
 	`, merchantID)
 	if err != nil {
@@ -154,6 +173,7 @@ func (r *MenuRepository) ListAvailableProductsForUpsell(ctx context.Context, mer
 		var ap AvailableProduct
 		var imageURL sql.NullString
 		var isPopular sql.NullBool
+		var groupID sql.NullString
 		if err := rows.Scan(
 			&ap.ProductID,
 			&ap.Name,
@@ -164,9 +184,13 @@ func (r *MenuRepository) ListAvailableProductsForUpsell(ctx context.Context, mer
 			&isPopular,
 			&ap.IsAvailableOnSNO,
 			&ap.IsAvailableOnKiosk,
+			&groupID,
 		); err != nil {
 			log.Error("upsell: ListAvailableProductsForUpsell scan failed: " + err.Error())
 			return nil, err
+		}
+		if groupID.Valid {
+			ap.GroupID = groupID.String
 		}
 		if imageURL.Valid {
 			ap.ImageURL = &imageURL.String

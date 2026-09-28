@@ -458,15 +458,15 @@ func TestProcessUpsellPatternsForMerchant_VariantsRolledUp_Postgres(t *testing.T
 	}
 }
 
-// Liste « petits prix » (docs/UPSELL_COMPLETION.md, D10) : prix effectif d'un
-// groupe = sa variante disponible la moins chère, produits à 0 € et
-// indisponibles écartés, seuil = médiane / 3.
+// Liste « petits prix » (docs/UPSELL_COMPLETION.md, D10 et D13) : jamais de
+// produit groupe, mais ses variantes, chacune avec son prix et ses ventes ;
+// produits à 0 € et indisponibles écartés ; seuil = médiane / 3.
 func TestComputeUpsellLowPriceList_Postgres(t *testing.T) {
 	rawDB := pgtest.Open(t)
 	ctx := context.Background()
 	merchantID := seedTaskMerchant(t, rawDB, ctx, 1)
 
-	seed := func(name string, price int, isGroup bool, groupID any, available bool) string {
+	seed := func(name string, price int, isGroup bool, groupID any, available bool) int64 {
 		var id int64
 		if err := rawDB.QueryRowContext(ctx, `
 			INSERT INTO products (merchant_id, name, price, category, is_product_group, by_product_of, available, enabled, status)
@@ -474,35 +474,40 @@ func TestComputeUpsellLowPriceList_Postgres(t *testing.T) {
 			RETURNING product_id`, merchantID, name, price, isGroup, groupID, available).Scan(&id); err != nil {
 			t.Fatalf("seed product %s: %v", name, err)
 		}
-		return strconv.FormatInt(id, 10)
+		return id
 	}
 	coca := seed("itest Coca", 0, true, nil, true)
-	cocaID, _ := strconv.ParseInt(coca, 10, 64)
-	seed("itest Coca 33cl", 190, false, cocaID, true)
-	seed("itest Coca 1.25L", 400, false, cocaID, true)
-	seed("itest Coca 50cl hors vente", 150, false, cocaID, false)
+	coca33 := seed("itest Coca 33cl", 190, false, coca, true)
+	coca125 := seed("itest Coca 1.25L", 400, false, coca, true)
 	eau := seed("itest Eau", 140, false, nil, true)
 	sauce := seed("itest Sauce", 0, false, nil, true)
 	retired := seed("itest Tiramisu retiré", 300, false, nil, false)
-	var mains []string
+	var mains []int64
 	for i := 0; i < 5; i++ {
 		mains = append(mains, seed("itest Pizza "+strconv.Itoa(i), 990, false, nil, true))
 	}
 
-	sales := map[string]int{coca: 50, eau: 80, sauce: 40, retired: 30, mains[0]: 300}
+	// Ventes : Eau 3, Coca 33cl 2, Coca 1.25L 1 (au-dessus du seuil), sauce et
+	// tiramisu retiré 1 chacun, une pizza 1.
+	baskets := [][]int64{
+		{eau, mains[0]}, {eau, coca33}, {eau, sauce}, {coca33}, {coca125}, {retired},
+	}
+	seedUpsellBaskets(t, rawDB, ctx, merchantID, 500, baskets)
 
 	tm := &TasksManager{DB: rawDB}
-	entries, median, err := tm.computeUpsellLowPriceList(ctx, merchantID, sales)
+	entries, median, err := tm.computeUpsellLowPriceList(ctx, merchantID)
 	if err != nil {
 		t.Fatalf("computeUpsellLowPriceList failed against postgres: %v", err)
 	}
-	// Prix > 0 des produits proposables : 140, 190 (groupe Coca), 990 ×5 →
-	// médiane 990, seuil 330.
+	// Prix > 0 des produits proposables (le groupe n'en fait pas partie) :
+	// 140, 190, 400, 990 ×5 → médiane 990, seuil 330.
 	if median != 990 {
 		t.Fatalf("median = %v, want 990", median)
 	}
-	if len(entries) != 2 || entries[0].ProductID != eau || entries[1].ProductID != coca || entries[1].Price != 190 {
-		t.Fatalf("entries = %+v, want [Eau 140, Coca 190 (variante disponible la moins chère)]", entries)
+	want := []string{strconv.FormatInt(eau, 10), strconv.FormatInt(coca33, 10)}
+	if len(entries) != 2 || entries[0].ProductID != want[0] || entries[1].ProductID != want[1] ||
+		entries[0].Orders != 3 || entries[1].Orders != 2 || entries[1].Price != 190 {
+		t.Fatalf("entries = %+v, want [Eau (3 ventes), Coca 33cl (2 ventes, 190)] et jamais le groupe %d", entries, coca)
 	}
 }
 

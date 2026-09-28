@@ -105,6 +105,16 @@ func TestUpsellRepository_Postgres(t *testing.T) {
 	if len(items) != 1 || items[0].Name != "ITest Burger" || items[0].Price != 950 {
 		t.Fatalf("unexpected featured products: %+v", items)
 	}
+	// Un produit groupe n'est jamais proposé, même marqué is_popular (D13).
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO products (merchant_id, name, price, category, is_popular, is_product_group, available, enabled, status)
+		VALUES ($1, 'ITest Groupe Coca', 0, 'itest', TRUE, TRUE, TRUE, TRUE, 'available')`, merchantID); err != nil {
+		t.Fatalf("seed popular group: %v", err)
+	}
+	if items, err = repo.ListFeaturedProducts(ctx, merchantID, ChannelPOS, 5); err != nil || len(items) != 1 || items[0].Name != "ITest Burger" {
+		t.Fatalf("ListFeaturedProducts with a popular group = (%+v, %v), want only the burger", items, err)
+	}
+
 	// Retiré de SNO et de la borne (les deux drapeaux valent TRUE par défaut) :
 	// il ne reste proposable que sur le POS.
 	if _, err := db.ExecContext(ctx, `

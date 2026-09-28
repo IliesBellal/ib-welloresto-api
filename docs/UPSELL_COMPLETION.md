@@ -4,25 +4,33 @@ Démarré le 2026-09-27. Document tenu au fil du chantier : les décisions sont
 consignées au moment où elles sont prises, y compris celles reportées ou
 écartées. Résumé dans [decisions.md](decisions.md) (entrée du 2026-09-27).
 
-**Statut (2026-09-28) : D1, D2 et D5 à D12 implémentés et testés, non
-commités, non déployés.**
+**Statut (2026-09-28) : D1, D2 et D5 à D13 implémentés et testés. D13 non
+commité, non déployé.**
 
 ## En bref : comment l'upsell choisit ses produits après ce chantier
 
 Pour un panier donné, sur un canal donné (POS, SNO, borne) :
 
-1. **Candidats** : produits disponibles, hors panier. Les variantes du panier
-   excluent aussi leur groupe. Sur SNO et la borne, on retire aussi les
-   produits non vendus sur le canal et ceux hors horaires (D1, D9).
+1. **Candidats** : produits disponibles, hors panier. **Jamais de produit
+   groupe** (« Coca Cola », prix 0 en base) : ce sont ses variantes qui sont
+   proposées (« Coca Cola (33cl) »), comme dans les catalogues SNO et borne.
+   Une variante du panier exclut toutes les variantes de son groupe. Sur SNO
+   et la borne, on retire aussi les produits non vendus sur le canal et ceux
+   hors horaires (D1, D9, D13).
 2. **Associations** (« achetés ensemble », calculées chaque nuit) : au
    moins 8 commandes ensemble, un lien plus fréquent que le hasard (lift
    ≥ 1,2) et au moins 10 % des acheteurs du produit du panier qui ajoutent la
    suggestion (part lissée). Classement par cette part. Une suggestion d'une
    catégorie déjà présente dans le panier est écartée : pas de deuxième pizza
-   (D12). On garde tout ce qui est trouvé, même moins que le maximum (D2).
+   (D12). Les associations sont calculées par groupe ; une association vers
+   un groupe propose sa variante la moins chère (à prix égal, la plus
+   vendue, D13). On garde tout ce qui est trouvé, même moins que le maximum
+   (D2).
 3. **Petits prix à succès** : les produits vendus sur 90 jours et dont le
    prix vaut au plus le tiers du prix médian de la carte, meilleures ventes
-   d'abord. Produits à 0 € exclus. Liste calculée chaque nuit (D10).
+   d'abord. Variantes comprises, avec leur propre prix et leurs propres
+   ventes ; jamais de groupe. Produits à 0 € exclus. Liste calculée chaque
+   nuit (D10, D13).
 4. **LLM** pour les places restantes, s'il est activé (désactivé en prod
    actuellement).
 5. **Arrêt** : pas de produits plus chers pour compléter. La liste peut donc
@@ -103,6 +111,11 @@ Même rattachement au moment de la suggestion, pour les produits du panier :
 
 *Pourquoi* : c'est une correction, pas un réglage. Elle ne dépend pas des
 données de prod.
+
+> **Révisé par D13 (2026-09-28)** : le rattachement reste pour les
+> statistiques et pour le panier, mais le groupe n'est plus jamais suggéré.
+> Ce sont ses variantes qui le sont, et toutes sont exclues quand l'une
+> d'elles est dans le panier.
 
 ### D2 — Toujours viser `upsell_max_items` (2026-09-27, validé)
 
@@ -499,21 +512,21 @@ la prod par Ilies le 2026-09-27. Périmètre : 8 établissements ayant au moins
 - **Quand** : chaque nuit, dans le cron de 3h (`RecomputeUpsellPatterns`),
   pour les mêmes établissements. Le résultat est stocké dans Redis
   (`upsell:lowprice:<merchant>`, durée de vie 36 h, comme les patterns).
-- **Comment** :
-  1. médiane des prix effectifs des produits disponibles (pour un groupe, sa
-     variante la moins chère ; produits à 0 € exclus) ;
-  2. ventes sur 90 jours par produit, avec les variantes rattachées à leur
-     groupe. On réutilise le comptage déjà fait pour les associations, donc
-     sans agrégation supplémentaire ;
+- **Comment** (révisé par D13, voir §9) :
+  1. médiane des prix des produits proposables : produits simples et
+     variantes, jamais les groupes ; produits à 0 € exclus ;
+  2. ventes sur 90 jours **par produit**, variantes non rattachées (une
+     requête dédiée : le comptage des associations, lui, est fait par
+     groupe) ;
   3. on garde les produits avec 0 < prix ≤ médiane / 3 et au moins une
      vente, triés par ventes décroissantes puis prix croissant ; au plus
      30 produits.
 - **Au moment de la suggestion** : une lecture Redis de plus, puis un filtrage
   en mémoire (disponibilité en direct, canal, horaires, panier, articles
   déjà choisis). Aucune requête SQL supplémentaire.
-- **Coût** : une seule requête de plus par établissement et par nuit (la
-  lecture du catalogue), bien plus légère que la jointure des paires que le
-  cron fait déjà.
+- **Coût** : deux requêtes de plus par établissement et par nuit (le
+  catalogue et les ventes par produit), bien plus légères que la jointure
+  des paires que le cron fait déjà.
 - **Fraîcheur** : un changement de prix ou un nouveau produit est pris en
   compte la nuit suivante ; une rupture ou un produit hors horaires le sont
   immédiatement.
@@ -765,12 +778,12 @@ Arbitrages d'Ilies sur la proposition révisée :
    concernés de retirer les frais de livraison de la borne et de SNO ; le
    filtre par canal (D9) les écartera alors. Sur le **POS**, qui n'a pas de
    drapeau de canal, ils peuvent encore être suggérés (235 : « Zone 1/2 »).
-   Risque connu et accepté. Les produits groupe (à 0 € en base) ne sont
-   jamais traités comme gratuits : leur prix est celui de leurs variantes
-   (déjà le cas pour les petits prix, D10) et les variantes restent
-   rattachées au groupe (D1). *Interprétation de la consigne « hors groupes
-   de produit qu'il faut exclure mais garder les sous-produits », à faire
-   confirmer par Ilies.*
+   Risque connu et accepté. ~~Les produits groupe (à 0 € en base) ne sont
+   jamais traités comme gratuits : leur prix est celui de leurs variantes et
+   les variantes restent rattachées au groupe.~~ **Interprétation erronée,
+   corrigée par D13** : la consigne « hors groupes de produit qu'il faut
+   exclure mais garder les sous-produits » voulait dire que les groupes ne
+   doivent jamais être proposés, et leurs sous-produits si.
 3. Catégories déjà dans le panier : **validé**.
 
 ### Implémentation (D12)
@@ -830,7 +843,83 @@ service les lit sans erreur, avec le maximum et le filtre de catégorie.
 
 ---
 
-## 9. Journal
+## 9. D13 — Plus jamais de produit groupe, ses variantes à la place (2026-09-28)
+
+### Constat
+
+Réponse SNO transmise par Ilies (212) : le moteur propose « Coca Cola »
+(584) et « Cristalline » (2332), deux **produits groupe**. Un groupe n'est
+qu'un conteneur : prix 0, aucune configuration, et dans cette réponse aucun
+sous-produit à choisir. Le catalogue SNO ne les affiche d'ailleurs jamais :
+il les remplace par leurs sous-produits (`scannorder/service.go`, mise à
+plat des groupes). C'était aussi le sens de la consigne mal lue en D12.
+
+### Décision (Ilies)
+
+Un produit groupe ne doit **jamais** être proposé, ni par les associations
+ni par le complément. Ses sous-produits (variantes) peuvent l'être.
+
+### Choix d'implémentation
+
+- **Candidats** (`menu.ListAvailableProductsForUpsell`) :
+  - groupes exclus (`is_product_group`) ;
+  - variantes incluses si leur groupe est lui-même disponible, actif et au
+    bon statut (s'il est retiré de la carte, ses variantes aussi) ;
+  - une variante sans catégorie ou sans image prend celles de son groupe ;
+  - nouveau champ `GroupID`.
+
+  Vérifié en lecture seule sur staging : 584 et 2332 ne sont plus candidats ;
+  212 compte 271 candidats dont 18 variantes, avec leur catégorie.
+- **Panier** : une variante du panier exclut toutes les variantes de son
+  groupe (Coca 33cl dans le panier : pas de Coca 1.25L ni de Coca Zero). Des
+  horaires posés sur le groupe s'appliquent à ses variantes.
+- **Associations** : toujours calculées par groupe (D1, statistiques plus
+  solides). Une association vers un groupe propose **sa variante la moins
+  chère** parmi les candidats (`cheapestVariants`) : c'est le plus petit
+  ajout, dans l'esprit de l'upsell. À prix égal (chez 212, Coca Cola,
+  Cherry et Zero sont tous en 33 cl à 1,90 €), la plus vendue l'emporte
+  (ventes connues grâce à la liste petits prix), puis l'ordre alphabétique.
+  Sans ce départage, un tri par id en texte aurait choisi le Coca Zero
+  (« 2340 » < « 556 »).
+- **Petits prix** (`computeUpsellLowPriceList`) : le catalogue suit les
+  mêmes règles que les candidats. Chaque produit y garde son prix et ses
+  ventes, comptées **sans** rattachement aux groupes, par une requête dédiée.
+  Les listes calculées avant ce changement peuvent contenir des groupes :
+  ils ne sont plus candidats, donc simplement ignorés.
+- **Secours `is_popular`** : `ListFeaturedProducts` exclut les groupes.
+- Rien ne change côté clients : SNO, la borne et le POS reçoivent déjà des
+  variantes comme produits ordinaires (même forme que dans leur catalogue).
+
+### Tests (D13)
+
+| Test | Ce qu'il vérifie | Exécuté |
+|---|---|---|
+| `TestCheapestVariants` | variante la moins chère ; à prix égal la plus vendue, puis le nom (le Coca classique, pas le Zero) ; produits simples ignorés | ✅ |
+| `TestAggregatePatterns_GroupTargetBecomesItsVariant` | une association vers un groupe score sa variante ; catégorie du panier appliquée à la variante | ✅ |
+| `TestComputeUpsellLowPriceList_Postgres` (réécrit) | le groupe n'apparaît jamais ; ventes par variante tirées des commandes ; 0 €, indisponible et au-dessus du seuil écartés | ✅ sur staging |
+| `TestUpsellRepository_Postgres` (complété) | un groupe marqué `is_popular` n'est pas renvoyé par le secours | ✅ sur staging |
+| Vérification ponctuelle, test temporaire supprimé | candidats réels de 212 sur staging : ni 584 ni 2332, variantes présentes avec leur catégorie | ✅ |
+
+Les 4 paquets en échec habituels (`planning/employees`, `planning/leave`,
+`planning/swaps`, `ubereats`) ne bougent pas. Aucune ligne `itest` restante
+sur staging.
+
+Non testé : le filtre des candidats dans `generateUpsellSafe` (variantes
+sœurs, horaires du groupe) est écrit en ligne dans le service, qui n'a pas
+de test de bout en bout (pas de Redis de test).
+
+### Déploiement (D13)
+
+- Aucune migration.
+- Lancer `POST /admin/upsell/recompute-patterns` après le déploiement : la
+  liste petits prix est recalculée par variante. En attendant, l'ancienne
+  liste reste lue sans erreur ; ses groupes sont ignorés.
+- Les résultats en cache (30 min) peuvent encore contenir un groupe
+  jusqu'à expiration.
+
+---
+
+## 10. Journal
 
 - **2026-09-27** : état des lieux du code et analyse des données staging
   en lecture seule (outil `go run` jetable, hors dépôt). Décisions D1 à D4.
@@ -859,4 +948,10 @@ service les lit sans erreur, avec le maximum et le filtre de catégorie.
   révisée : 10 % au lieu de 15 %, catégories du panier, produits à 0 €.
   Arbitrages d'Ilies → D12 (0 € non exclus). Implémentation, tests unitaires
   et d'intégration au vert sur staging. Rien n'est commité ni déployé.
+- **2026-09-28** : Ilies signale des produits groupe proposés sur SNO (584
+  Coca Cola, 2332 Cristalline). Mon interprétation de sa consigne en D12
+  était fausse. Décision D13 : jamais de groupe, ses variantes à la place
+  (§9). Implémentation, tests unitaires et d'intégration au vert sur
+  staging, vérification en lecture seule des candidats réels de 212. Non
+  commité, non déployé.
 
