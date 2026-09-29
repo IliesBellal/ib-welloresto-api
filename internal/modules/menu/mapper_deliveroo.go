@@ -94,7 +94,7 @@ func ToDeliverooFormat(internal *models.MenuResponse) (*DeliverooMenu, error) {
 
 		var itemIDs []string
 
-		for _, product := range cat.Products {
+		for _, product := range platformProducts(cat.Products) {
 			if product.ProductID == "" {
 				continue
 			}

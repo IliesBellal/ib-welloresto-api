@@ -125,7 +125,7 @@ func ToUberEatsFormat(internal *models.MenuResponse) (*UberEatsMenu, error) {
 			Entities: []UberEatsCategoryEntity{},
 		}
 
-		for _, product := range cat.Products {
+		for _, product := range platformProducts(cat.Products) {
 			// 1. VÉRIFICATION : Le produit doit être marqué pour la synchro Uber Eats
 			if product.SyncUberEats == nil || !*product.SyncUberEats {
 				continue
