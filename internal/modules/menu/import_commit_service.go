@@ -111,5 +111,9 @@ func (s *ImportService) CommitImport(ctx context.Context, req *ImportCommitReque
 	// mais autant ne pas y arriver.
 	s.store.Delete(ctx, key)
 
+	if snapshot.DraftID != "" && s.OnDraftCommitted != nil {
+		s.OnDraftCommitted(ctx, user.MerchantID, snapshot.DraftID)
+	}
+
 	return newImportCommitResponse(snapshot.Provider, outcome), nil
 }

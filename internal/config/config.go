@@ -19,6 +19,7 @@ type AppConfig struct {
 	Brevo       BrevoConfig
 	R2          R2Config
 	AI          ai.AIConfig
+	ImportAI    ImportAIConfig
 	Kiosk       KioskConfig
 	CDS         CDSConfig
 	Planning    PlanningConfig
@@ -72,6 +73,7 @@ func Load() *AppConfig {
 		Brevo:       loadBrevoConfig(),
 		R2:          loadR2Config(),
 		AI:          loadAIConfig(),
+		ImportAI:    loadImportAIConfig(),
 		Kiosk:       loadKioskConfig(),
 		CDS:         loadCDSConfig(),
 		Planning:    loadPlanningConfig(),

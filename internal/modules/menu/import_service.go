@@ -66,6 +66,11 @@ type ImportService struct {
 	catalogReader merchantCatalogReader
 
 	previewTTL time.Duration
+
+	// OnDraftCommitted est appelé après le commit d'une preview issue d'un
+	// brouillon d'import photo (PreviewSnapshot.DraftID). Posé par
+	// NewAIImportService ; nil sans porte IA.
+	OnDraftCommitted func(ctx context.Context, merchantID, draftID string)
 }
 
 // NewImportService câble la preview et le commit. reader et writer sont la même
@@ -150,6 +155,13 @@ func (s *ImportService) PreviewImportManual(ctx context.Context, req *ImportPrev
 // buildAndStore est le tronc commun des deux portes : charger l'existant,
 // calculer, déposer. Aucune écriture en base à aucun moment.
 func (s *ImportService) buildAndStore(ctx context.Context, imp *importer.IntermediateImport) (*importer.PreviewResult, error) {
+	return s.buildAndStoreForDraft(ctx, imp, "")
+}
+
+// buildAndStoreForDraft est buildAndStore pour une preview issue d'un
+// brouillon d'import photo : draftID est gardé dans le snapshot, pour que le
+// commit marque le brouillon importé (voir OnDraftCommitted).
+func (s *ImportService) buildAndStoreForDraft(ctx context.Context, imp *importer.IntermediateImport, draftID string) (*importer.PreviewResult, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -175,6 +187,7 @@ func (s *ImportService) buildAndStore(ctx context.Context, imp *importer.Interme
 		CreatedAt:  createdAt,
 		Import:     imp,
 		Decisions:  result.Decisions,
+		DraftID:    draftID,
 	}
 
 	payload, err := snapshot.Encode()

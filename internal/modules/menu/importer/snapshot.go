@@ -24,6 +24,10 @@ type PreviewSnapshot struct {
 
 	Import    *IntermediateImport `json:"import"`
 	Decisions ImportDecisions     `json:"decisions"`
+
+	// DraftID relie la preview au brouillon d'import photo (porte IA) dont
+	// elle est issue, pour le marquer importé après le commit. Vide ailleurs.
+	DraftID string `json:"draft_id,omitempty"`
 }
 
 // Encode sérialise le snapshot pour Redis.

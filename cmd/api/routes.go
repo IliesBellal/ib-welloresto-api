@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"net/http"
 	"os"
@@ -635,12 +636,29 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// &authRepo (porte "autre établissement" uniquement) : vérifie que
 	// l'utilisateur a bien des droits actifs sur le marchand source avant toute
 	// lecture cross-marchand — voir menu.ImportService.PreviewImportFromMerchant.
-	menuImportH := menuModule.NewImportHandler(
-		menuModule.NewImportService(
-			menuRepoLegacy, menuRepoLegacy, importerModule.DefaultRegistry(), redisClient, tagsRepo, menuChanges,
-			&authRepo, menuRepoLegacy,
-		),
+	menuImportService := menuModule.NewImportService(
+		menuRepoLegacy, menuRepoLegacy, importerModule.DefaultRegistry(), redisClient, tagsRepo, menuChanges,
+		&authRepo, menuRepoLegacy,
 	)
+	menuImportH := menuModule.NewImportHandler(menuImportService)
+
+	// Import de carte par photo (porte IA) : photos dans le bucket R2 privé,
+	// lecture par la tâche IA menu_ocr (fermée par défaut). Nil explicites :
+	// un pointeur nil dans une interface ne serait pas détecté comme absent.
+	var menuAIPhotos menuModule.AIPhotoStore
+	if r2PrivateClient != nil {
+		menuAIPhotos = r2PrivateClient
+	}
+	var menuAIRegistry menuModule.AITaskRegistry
+	if aiRegistry != nil {
+		menuAIRegistry = aiRegistry
+	}
+	menuAIImportService := menuModule.NewAIImportService(
+		menuModule.NewAIDraftRepository(selectedDB), menuAIPhotos, menuAIRegistry, menuImportService,
+		log.Named("menu_import_ai"), cfg.ImportAI.DefaultCredits,
+	)
+	menuAIImportService.StartMaintenance(context.Background())
+	menuAIImportH := menuModule.NewAIImportHandler(menuAIImportService)
 	allergensH := allergensModule.NewHandler(allergensService)
 	tagsH := tagsModule.NewHandler(tagsService)
 	printersH := printersModule.NewHandler(printersService)
@@ -1098,6 +1116,18 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		// import_merchant_service.go.
 		r.With(middleware.RequirePermission(permission.CatalogManage)).
 			Post("/import/preview-from-merchant", menuImportH.PreviewImportFromMerchant)
+		// Porte IA : lecture de carte par photo. La preview (GET /import/ai/{id},
+		// une fois les photos lues) se valide par POST /import/commit ci-dessus.
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Post("/import/ai", menuAIImportH.StartAIImport)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Get("/import/ai/{id}", menuAIImportH.GetAIDraft)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Post("/import/ai/{id}/retry", menuAIImportH.RetryAIDraft)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Get("/import/drafts", menuAIImportH.ListAIDrafts)
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Delete("/import/drafts/{id}", menuAIImportH.AbandonAIDraft)
 
 		r.Get("/components", menuH.GetAllComponents)            // used by: back-office
 		r.Get("/components/{component_id}", menuH.GetComponent) // used by: back-office
@@ -1616,6 +1646,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		// geste manuel réservé au staff interne, jamais en self-service.
 		r.Post("/merchants/{id}/billing-customer/attach-to/{other_merchant_id}", billingHandler.AttachBillingCustomer)
 		r.Post("/merchants/{id}/billing-customer/detach", billingHandler.DetachBillingCustomer)
+
+		// Crédits d'import de carte par photo d'un marchand (défaut :
+		// AI_MENU_OCR_DEFAULT_CREDITS) — recharge par le staff interne.
+		r.Put("/merchants/{id}/menu-ocr-credits", menuAIImportH.SetMerchantAICredits)
 	})
 
 	// --- SUBSCRIPTIONS (LOT B B1e) --- client-facing preview/apply.
