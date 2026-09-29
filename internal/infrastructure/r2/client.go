@@ -117,6 +117,19 @@ func (c *Client) GenerateSignedURL(ctx context.Context, key string, ttl time.Dur
 	return resp.URL, nil
 }
 
+// GetFile lit le contenu d'un objet du bucket (public ou privé selon le client).
+func (c *Client) GetFile(ctx context.Context, key string) ([]byte, error) {
+	out, err := c.s3Client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(c.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to read from R2: %w", err)
+	}
+	defer out.Body.Close()
+	return io.ReadAll(out.Body)
+}
+
 // DeleteFile supprime un fichier de R2
 func (c *Client) DeleteFile(ctx context.Context, key string) error {
 	_, err := c.s3Client.DeleteObject(ctx, &s3.DeleteObjectInput{
