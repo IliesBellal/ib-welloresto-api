@@ -98,6 +98,11 @@ func ToDeliverooFormat(internal *models.MenuResponse) (*DeliverooMenu, error) {
 			if product.ProductID == "" {
 				continue
 			}
+			// Le produit doit être marqué pour la synchro Deliveroo, comme
+			// sync_uber_eats côté Uber Eats (case « Deliveroo » du back-office).
+			if product.SyncDeliveroo == nil || !*product.SyncDeliveroo {
+				continue
+			}
 			if product.Name == "" {
 				return nil, fmt.Errorf("deliveroo mapper: product %q has no name", product.ProductID)
 			}
@@ -167,7 +172,7 @@ func ToDeliverooFormat(internal *models.MenuResponse) (*DeliverooMenu, error) {
 	}
 
 	if len(items) == 0 {
-		return nil, fmt.Errorf("deliveroo mapper: no valid products found to sync")
+		return nil, fmt.Errorf("deliveroo mapper: no valid products found to sync (none marked for Deliveroo sync?)")
 	}
 
 	entry := DeliverooMenuEntry{
