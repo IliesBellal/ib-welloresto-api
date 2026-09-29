@@ -466,3 +466,103 @@ func TestImportCommit_Postgres_RollsBackEntireBatchOnError(t *testing.T) {
 		}
 	}
 }
+
+// Porte IA (lecture de carte par photo) : groupe de produits et rattachement
+// des déclinaisons (is_product_group / by_product_of), options rattachées,
+// confirmation de TVA exigée, puis rendu par GetMenu.
+func TestImportCommit_Postgres_AIPhotoGroups(t *testing.T) {
+	db := pgtest.Open(t)
+	merchantID, _ := itestImportMerchant(t, db, "ai")
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(context.Background(),
+			`DELETE FROM product_configurable_attribute WHERE configurable_attribute_id IN (SELECT id FROM configurable_attributes WHERE merchant_id = $1)`,
+			merchantID)
+	})
+
+	ctx := itestImportContext(merchantID)
+	service := itestImportService(db, newFakePreviewStore())
+
+	cat, grp := "c1", "g1"
+	price := func(v int) *int { return &v }
+	imp, err := importer.BuildAIMenuImport([]importer.AIMenuPage{{
+		Categories:    []importer.AICategory{{Ref: cat, Name: "Boissons itest"}},
+		ProductGroups: []importer.AIProductGroup{{Ref: grp, CategoryRef: &cat, Name: "Coca-Cola itest"}},
+		Products: []importer.AIProduct{
+			{Ref: "p1", CategoryRef: &cat, GroupRef: &grp, Name: "Coca-Cola Zero itest", PriceCents: price(350), Kind: "soft_drink_sealed", Confidence: "high"},
+			{Ref: "p2", CategoryRef: &cat, GroupRef: &grp, Name: "Coca-Cola Cherry itest", PriceCents: price(380), Kind: "soft_drink_sealed", Confidence: "high"},
+			{Ref: "p3", CategoryRef: &cat, Name: "Limonade itest", PriceCents: price(400), OptionGroupRefs: []string{"o1"}, Kind: "soft_drink_served", Confidence: "high"},
+		},
+		OptionGroups: []importer.AIOptionGroup{{Ref: "o1", Name: "Glaçons itest", Max: 1, Options: []importer.AIOption{{Title: "Avec"}, {Title: "Sans"}}}},
+	}})
+	if err != nil {
+		t.Fatalf("BuildAIMenuImport: %v", err)
+	}
+
+	preview, err := service.buildAndStore(ctx, imp)
+	if err != nil {
+		t.Fatalf("buildAndStore: %v", err)
+	}
+
+	// Sans confirmation de la TVA, le lot est refusé et rien n'est écrit.
+	if _, err := service.CommitImport(ctx, &ImportCommitRequest{Token: preview.Token}); err == nil {
+		t.Fatal("CommitImport a accepté un import photo sans confirmation de TVA")
+	}
+	if got := itestCount(t, db, `SELECT count(*) FROM products WHERE merchant_Id = $1`, merchantID); got != 0 {
+		t.Fatalf("produits écrits malgré le refus = %d, want 0", got)
+	}
+
+	decisions := preview.Decisions
+	decisions.TvaConfirmed = true
+	resp, err := service.CommitImport(ctx, &ImportCommitRequest{Token: preview.Token, Decisions: &decisions})
+	if err != nil {
+		t.Fatalf("CommitImport: %v", err)
+	}
+	if resp.Summary.Products.Created != 4 {
+		t.Fatalf("produits créés = %d, want 4 (groupe + 3)", resp.Summary.Products.Created)
+	}
+
+	var groupID string
+	var isGroup bool
+	var groupStatus string
+	var groupPrice int
+	if err := db.QueryRowContext(context.Background(),
+		`SELECT product_id::text, is_product_group, status, price FROM products WHERE merchant_Id = $1 AND name = 'Coca-Cola itest'`,
+		merchantID).Scan(&groupID, &isGroup, &groupStatus, &groupPrice); err != nil {
+		t.Fatalf("lecture du groupe: %v", err)
+	}
+	if !isGroup || groupStatus != importer.ProductStatusAvailable || groupPrice != 0 {
+		t.Fatalf("groupe = is_group %v statut %q prix %d, want true / available / 0", isGroup, groupStatus, groupPrice)
+	}
+	if got := itestCount(t, db,
+		`SELECT count(*) FROM products WHERE merchant_Id = $1 AND by_product_of::text = $2`, merchantID, groupID); got != 2 {
+		t.Fatalf("déclinaisons rattachées au groupe = %d, want 2", got)
+	}
+	if got := itestCount(t, db,
+		`SELECT count(*) FROM products WHERE merchant_Id = $1 AND name = 'Limonade itest' AND by_product_of IS NULL`, merchantID); got != 1 {
+		t.Fatalf("Limonade doit rester à la racine")
+	}
+	if got := itestCount(t, db,
+		`SELECT count(*) FROM product_configurable_attribute pca JOIN products p ON p.product_id::text = pca.product_id::text
+		 WHERE p.merchant_Id = $1 AND p.name = 'Limonade itest'`, merchantID); got != 1 {
+		t.Fatalf("groupe d'options rattaché à Limonade = %d, want 1", got)
+	}
+
+	menu, err := NewMenuRepository(db, nil).GetMenu(context.Background(), merchantID, nil)
+	if err != nil {
+		t.Fatalf("GetMenu: %v", err)
+	}
+	found := false
+	for _, category := range menu.ProductsTypes {
+		for _, p := range category.Products {
+			if p.ProductID == groupID {
+				found = true
+				if len(p.SubProducts) != 2 {
+					t.Fatalf("GetMenu : le groupe porte %d sous-produits, want 2", len(p.SubProducts))
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("GetMenu : groupe absent de la carte")
+	}
+}

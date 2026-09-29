@@ -570,6 +570,10 @@ func (r *MenuRepository) materializeProductsTx(
 	state *importCommitState,
 	outcome *ImportCommitOutcome,
 ) error {
+	// Porte IA : product_id des groupes créés, pour rattacher leurs
+	// déclinaisons. Le plan place chaque groupe avant ses enfants.
+	productIDByExternal := make(map[string]string)
+
 	for _, product := range plan.Products {
 		if !product.Materializable() {
 			outcome.Products = append(outcome.Products, ImportCommitEntity{
@@ -650,11 +654,27 @@ func (r *MenuRepository) materializeProductsTx(
 			Tags:              tagIDs,
 			Configuration:     attributeIDs,
 			Components:        components,
+			IsProductGroup:    product.IsGroup,
 		}
 
 		productID, err := r.insertProductTx(ctx, payload)
 		if err != nil {
 			return fmt.Errorf("import: création du produit %q: %w", product.Name, err)
+		}
+		productIDByExternal[product.ExternalID] = productID
+
+		if product.ParentExternalID != "" {
+			parentID, ok := productIDByExternal[product.ParentExternalID]
+			if !ok {
+				return fmt.Errorf("import: groupe %q non créé avant sa déclinaison %q",
+					product.ParentExternalID, product.Name)
+			}
+			if _, err := dbx.GetDB(ctx, r.database).ExecContext(ctx,
+				`UPDATE products SET by_product_of = ? WHERE product_id = ? AND merchant_id = ?`,
+				parentID, productID, merchantID,
+			); err != nil {
+				return fmt.Errorf("import: rattachement de %q à son groupe: %w", product.Name, err)
+			}
 		}
 
 		welloID, err := strconv.Atoi(productID)
