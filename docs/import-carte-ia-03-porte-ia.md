@@ -2,7 +2,7 @@
 
 Troisième étape du découpage de [cadrage-import-carte-photo-ia.md](cadrage-import-carte-photo-ia.md) (§ 5 et § 9) : la lecture de photos devient une quatrième porte de l'import produits. Elle s'appuie sur l'étape 2 ([couche IA](import-carte-ia-02-couche-ia.md)).
 
-**Statut :** implémenté et commité le 2026-09-29, non déployé. La migration 161 n'est appliquée nulle part, et aucun appel réel à l'API Anthropic n'a encore été fait (§ 7).
+**Statut :** implémenté et commité le 2026-09-29, non déployé. La migration 161 est appliquée sur staging (pas en production). Aucun appel réel à l'API Anthropic n'a encore été fait (§ 7).
 
 ---
 
@@ -194,13 +194,14 @@ Confiance (`high` / `medium` / `low`, toute autre valeur devient `low`), problè
 | Chaque commit de l'étape, isolément (worktree propre) | build + vet + tests `menu`, `importer`, `config`, `migrations` : OK |
 | Suite unitaire complète | Mêmes échecs préexistants qu'avant ce chantier (`planning`, `ubereats`), aucun nouveau |
 | Détecteur de concurrence (`-race`) | **Non exécuté** : il demande cgo, absent sur ce poste |
-| **Repository des brouillons contre Postgres** | **Non testé** : la migration 161 n'est appliquée sur aucune base, et l'appliquer sur staging (base partagée) demande l'accord d'Ilies |
+| **Migration 161 sur staging** | **Appliquée le 2026-09-29** avec l'accord d'Ilies : 2 tables, 13 colonnes et 3 index pour `menu_import_drafts`. **Non enregistrée dans `schema_migrations`** : cette table (migration 123) n'existe pas sur staging, cas prévu par `WarnUnrecordedMigrations`. En production, l'enregistrer après application si la table y existe |
+| [import_ai_postgres_integration_test.go](../internal/modules/menu/import_ai_postgres_integration_test.go), exécuté **sur staging** | OK. `TestAIDraftRepository_Postgres` couvre : création ; cloisonnement par marchand ; index « une extraction en cours » (création et relance) ; réclamation unique ; pages jsonb relues à l'identique ; clôture ; décompte des crédits (un échec ne compte pas) ; surcharge posée puis mise à jour ; brouillons ouverts ; abandon ; import ; purge ; reprise des lectures interrompues ; expiration. `TestAIImport_Postgres_EndToEnd` : lecture de deux photos (faux modèle), preview sur les données réelles, commit, brouillon marqué importé, crédit décompté, déclinaisons rattachées. Aucune ligne de test restante après exécution (vérifié) |
 | **Appel réel à l'API Anthropic** | **Non fait** (pas de clé en local) |
 
 **Incident évité pendant le commit :** en ne commitant que mes blocs de `routes.go`, un patch sans contexte a placé la route admin des crédits dans le groupe `/subscriptions`. Je l'ai vu en contrôlant l'index avant de commiter, puis reconstruit l'index à partir du fichier moins les lignes locales en cours d'Ilies. Le commit est correct.
 
 ### Pour tester sur staging
-1. Appliquer [161_menu_import_drafts.up.sql](../migrations/todo/161_menu_import_drafts.up.sql) sur staging.
+1. ~~Appliquer la migration 161 sur staging~~ : fait le 2026-09-29.
 2. Sur staging, définir `AI_TASK_MENU_OCR_ENABLED=true` et vérifier `ANTHROPIC_API_KEY` et le bucket R2 privé. Au démarrage, la ligne `tâche IA` des journaux doit montrer `menu_ocr` active sur `claude-opus-5-5`.
 3. Sans le back-office (étape 4), on peut tester à la main :
    ```bash
