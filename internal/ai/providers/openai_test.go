@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,35 @@ import (
 
 	"welloresto-api/internal/ai"
 )
+
+func openAIReplyServer(t *testing.T, finishReason string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"model":"gpt","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"` + finishReason + `"}],"usage":{}}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestOpenAIComplete_FinishReasonNormalised(t *testing.T) {
+	cases := map[string]string{"stop": "end_turn", "length": ai.StopReasonMaxTokens}
+	for finish, want := range cases {
+		p := NewOpenAIProvider(ai.ProviderConfig{BaseURL: openAIReplyServer(t, finish).URL}, "")
+		resp, err := p.Complete(context.Background(), ai.CompletionRequest{UserPrompt: "x"})
+		if err != nil {
+			t.Fatalf("finish_reason %q: Complete: %v", finish, err)
+		}
+		if resp.StopReason != want {
+			t.Errorf("finish_reason %q: StopReason = %q, want %q", finish, resp.StopReason, want)
+		}
+	}
+
+	p := NewOpenAIProvider(ai.ProviderConfig{BaseURL: openAIReplyServer(t, "content_filter").URL}, "")
+	if _, err := p.Complete(context.Background(), ai.CompletionRequest{UserPrompt: "x"}); !errors.Is(err, ai.ErrRefused) {
+		t.Errorf("content_filter: err = %v, want ai.ErrRefused", err)
+	}
+}
 
 func TestOpenAIComplete_RequestModelOverridesDefault(t *testing.T) {
 	var lastModel string

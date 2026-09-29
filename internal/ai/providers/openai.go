@@ -149,8 +149,18 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req ai.CompletionRequest)
 		return nil, fmt.Errorf("openai: empty choices in response")
 	}
 
+	// finish_reason normalised to the Anthropic vocabulary used by callers.
+	stopReason := "end_turn"
+	switch apiResp.Choices[0].FinishReason {
+	case "length":
+		stopReason = ai.StopReasonMaxTokens
+	case "content_filter":
+		return nil, fmt.Errorf("openai: %w (content_filter)", ai.ErrRefused)
+	}
+
 	return &ai.CompletionResponse{
 		Content:      apiResp.Choices[0].Message.Content,
+		StopReason:   stopReason,
 		InputTokens:  apiResp.Usage.PromptTokens,
 		OutputTokens: apiResp.Usage.CompletionTokens,
 		Model:        apiResp.Model,
@@ -182,7 +192,8 @@ type openAIResponse struct {
 	Model string `json:"model"`
 
 	Choices []struct {
-		Message openAIMessage `json:"message"`
+		Message      openAIMessage `json:"message"`
+		FinishReason string        `json:"finish_reason"`
 	} `json:"choices"`
 
 	Usage struct {

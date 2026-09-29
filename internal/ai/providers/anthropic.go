@@ -148,12 +148,26 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req ai.CompletionReque
 		return nil, fmt.Errorf("anthropic: failed to parse response: %w", err)
 	}
 
-	if len(apiResp.Content) == 0 {
-		return nil, fmt.Errorf("anthropic: empty content block in response")
+	if apiResp.StopReason == "refusal" {
+		return nil, fmt.Errorf("anthropic: %w (category %q: %s)",
+			ai.ErrRefused, apiResp.StopDetails.Category, apiResp.StopDetails.Explanation)
+	}
+
+	// Current models (thinking always on) put thinking blocks before the
+	// answer: keep only the text blocks, in order.
+	var text strings.Builder
+	for _, block := range apiResp.Content {
+		if block.Type == "text" {
+			text.WriteString(block.Text)
+		}
+	}
+	if text.Len() == 0 {
+		return nil, fmt.Errorf("anthropic: no text content in response (stop_reason %q)", apiResp.StopReason)
 	}
 
 	return &ai.CompletionResponse{
-		Content:      stripMarkdownFences(apiResp.Content[0].Text),
+		Content:      stripMarkdownFences(text.String()),
+		StopReason:   apiResp.StopReason,
 		InputTokens:  apiResp.Usage.InputTokens,
 		OutputTokens: apiResp.Usage.OutputTokens,
 		Model:        apiResp.Model,
@@ -207,6 +221,12 @@ type anthropicResponse struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
+
+	StopReason  string `json:"stop_reason"`
+	StopDetails struct {
+		Category    string `json:"category"`
+		Explanation string `json:"explanation"`
+	} `json:"stop_details"`
 
 	Usage struct {
 		InputTokens  int `json:"input_tokens"`

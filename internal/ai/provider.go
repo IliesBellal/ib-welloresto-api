@@ -2,8 +2,19 @@ package ai
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrRefused is returned (wrapped) by a provider when the model declined the
+// request (Anthropic stop_reason "refusal", OpenAI finish_reason
+// "content_filter"). Callers can tell it apart from a technical failure with
+// errors.Is.
+var ErrRefused = errors.New("ai: the model declined the request")
+
+// StopReasonMaxTokens is CompletionResponse.StopReason when the output hit
+// MaxTokens: Content is then truncated (and a JSON payload likely invalid).
+const StopReasonMaxTokens = "max_tokens"
 
 // LLMProvider is the interface every LLM backend must implement.
 // Add new providers (OpenAI, Mistral, …) by creating a new struct in
@@ -55,6 +66,11 @@ type CompletionRequest struct {
 // CompletionResponse holds the result of a successful LLM call.
 type CompletionResponse struct {
 	Content string
+
+	// StopReason is why generation stopped, normalised across providers:
+	// "end_turn" on a normal finish, StopReasonMaxTokens when truncated.
+	// A refusal is never a response: the provider returns ErrRefused.
+	StopReason string
 
 	InputTokens  int
 	OutputTokens int

@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -73,6 +74,58 @@ func TestAnthropicComplete_EffortAndTemperatureOnlyWhenSet(t *testing.T) {
 	cfg, _ := (*body)["output_config"].(map[string]any)
 	if cfg["effort"] != "medium" {
 		t.Errorf("output_config = %v, want effort medium", (*body)["output_config"])
+	}
+}
+
+func TestAnthropicComplete_KeepsOnlyTextBlocks(t *testing.T) {
+	// Réponse d'un modèle à réflexion toujours active : bloc de réflexion
+	// (texte vide par défaut) avant la réponse.
+	srv, _ := anthropicTestServer(t, `{"model":"claude-opus-5-5","stop_reason":"end_turn","content":[`+
+		`{"type":"thinking","thinking":"","signature":"sig"},`+
+		`{"type":"text","text":"{\"a\":"},{"type":"text","text":"1}"}],"usage":{"input_tokens":1,"output_tokens":1}}`)
+	p := NewAnthropicProvider(ai.ProviderConfig{BaseURL: srv.URL}, "")
+
+	resp, err := p.Complete(context.Background(), ai.CompletionRequest{UserPrompt: "x", MaxTokens: 10})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if resp.Content != `{"a":1}` {
+		t.Errorf("Content = %q, want the concatenated text blocks", resp.Content)
+	}
+	if resp.StopReason != "end_turn" {
+		t.Errorf("StopReason = %q, want end_turn", resp.StopReason)
+	}
+}
+
+func TestAnthropicComplete_MaxTokensIsReported(t *testing.T) {
+	srv, _ := anthropicTestServer(t, `{"model":"m","stop_reason":"max_tokens","content":[{"type":"text","text":"{\"a\":"}],"usage":{}}`)
+	p := NewAnthropicProvider(ai.ProviderConfig{BaseURL: srv.URL}, "")
+
+	resp, err := p.Complete(context.Background(), ai.CompletionRequest{UserPrompt: "x", MaxTokens: 10})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if resp.StopReason != ai.StopReasonMaxTokens {
+		t.Errorf("StopReason = %q, want %q", resp.StopReason, ai.StopReasonMaxTokens)
+	}
+}
+
+func TestAnthropicComplete_RefusalIsErrRefused(t *testing.T) {
+	srv, _ := anthropicTestServer(t, `{"model":"m","stop_reason":"refusal","stop_details":{"type":"refusal","category":"cyber","explanation":"no"},"content":[],"usage":{}}`)
+	p := NewAnthropicProvider(ai.ProviderConfig{BaseURL: srv.URL}, "")
+
+	_, err := p.Complete(context.Background(), ai.CompletionRequest{UserPrompt: "x", MaxTokens: 10})
+	if !errors.Is(err, ai.ErrRefused) {
+		t.Fatalf("err = %v, want ai.ErrRefused", err)
+	}
+}
+
+func TestAnthropicComplete_NoTextIsAnError(t *testing.T) {
+	srv, _ := anthropicTestServer(t, `{"model":"m","stop_reason":"end_turn","content":[{"type":"thinking","thinking":""}],"usage":{}}`)
+	p := NewAnthropicProvider(ai.ProviderConfig{BaseURL: srv.URL}, "")
+
+	if _, err := p.Complete(context.Background(), ai.CompletionRequest{UserPrompt: "x", MaxTokens: 10}); err == nil {
+		t.Fatalf("Complete should fail when the response has no text block")
 	}
 }
 
