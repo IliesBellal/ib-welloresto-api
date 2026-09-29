@@ -206,6 +206,13 @@ type PlannedProduct struct {
 	// ailleurs (aucune autre source ne les fournit).
 	Components           []PlannedProductComponent
 	AttributeExternalIDs []string
+
+	// Porte IA : produit groupe (is_product_group) et rattachement à un
+	// groupe du lot (by_product_of), résolu par resolveGroups. EmptyGroup :
+	// groupe dont aucune déclinaison ne sera créée, donc pas créé non plus.
+	IsGroup          bool
+	ParentExternalID string
+	EmptyGroup       bool
 }
 
 // PlannedProductComponent est une ligne de composition résolue, prête à
@@ -219,7 +226,7 @@ type PlannedProductComponent struct {
 
 // Materializable dit si l'entité doit réellement être écrite.
 func (p PlannedProduct) Materializable() bool {
-	return !p.AlreadyImported && !p.SkippedByCollision && !p.ExcludedByUser
+	return !p.AlreadyImported && !p.SkippedByCollision && !p.ExcludedByUser && !p.EmptyGroup
 }
 
 // BuildCommitPlan résout un snapshot et les décisions du wizard en un plan
@@ -238,6 +245,16 @@ func BuildCommitPlan(imp *IntermediateImport, decisions ImportDecisions, lk Prev
 		return nil, []CommitBlocker{{Code: BlockerInvalidCategoryDecision, Message: ErrNilImport.Error()}}
 	}
 
+	// Porte IA : nature et groupe décidés en relecture, appliqués sur une
+	// copie avant toute résolution (la TVA en dépend).
+	imp, aiBlockers := applyAIDecisions(imp, decisions)
+	if imp.Provider == AIPhotoSlug && !decisions.TvaConfirmed {
+		aiBlockers = append(aiBlockers, CommitBlocker{
+			Code:    BlockerTvaNotConfirmed,
+			Message: "les taux de TVA proposés d'après la nature des produits doivent être vérifiés et confirmés",
+		})
+	}
+
 	b := &commitPlanner{
 		imp:       imp,
 		decisions: decisions,
@@ -245,6 +262,7 @@ func BuildCommitPlan(imp *IntermediateImport, decisions ImportDecisions, lk Prev
 		live:      newLiveImportedEntities(lk),
 		resolver:  newTvaResolver(lk.TvaRates),
 		plan:      &CommitPlan{Provider: imp.Provider},
+		blockers:  aiBlockers,
 	}
 
 	b.validateTvaDecisions()
@@ -255,6 +273,7 @@ func BuildCommitPlan(imp *IntermediateImport, decisions ImportDecisions, lk Prev
 	b.buildComponents()
 	b.buildAttributes()
 	b.buildProducts()
+	b.resolveGroups()
 
 	if len(b.blockers) > 0 {
 		return nil, b.blockers
@@ -600,13 +619,15 @@ func (b *commitPlanner) buildProducts() {
 		p := &b.imp.Products[i]
 
 		entry := PlannedProduct{
-			ExternalID:    p.ExternalID,
-			Name:          p.Name,
-			Description:   p.Description,
-			Status:        ProductStatusAvailable,
-			PriceIn:       p.PriceIn,
-			PriceTakeAway: p.PriceTakeAway,
-			PriceDelivery: p.PriceDelivery,
+			ExternalID:       p.ExternalID,
+			Name:             p.Name,
+			Description:      p.Description,
+			Status:           ProductStatusAvailable,
+			PriceIn:          p.PriceIn,
+			PriceTakeAway:    p.PriceTakeAway,
+			PriceDelivery:    p.PriceDelivery,
+			IsGroup:          p.IsGroup,
+			ParentExternalID: p.ParentExternalID,
 		}
 		if p.AllPricesZero {
 			entry.Status = ProductStatusRemovedFromMenu

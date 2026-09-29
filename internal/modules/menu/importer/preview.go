@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 
 	"welloresto-api/internal/importutil"
 )
@@ -354,6 +355,16 @@ type PreviewProduct struct {
 	// pour ce produit — porte "autre etablissement" uniquement, false partout
 	// ailleurs (aucune autre source ne propose cette case).
 	Excluded bool `json:"excluded,omitempty"`
+
+	// Porte IA (lecture de carte par photo) uniquement, vides ailleurs. Kind
+	// et ParentExternalID sont les propositions de la source, reprises dans
+	// Decisions.KindPerProduct / GroupPerProduct.
+	Kind             ProductKind `json:"kind,omitempty"`
+	IsGroup          bool        `json:"is_group,omitempty"`
+	ParentExternalID string      `json:"parent_external_id,omitempty"`
+	Confidence       string      `json:"confidence,omitempty"`
+	Issues           []string    `json:"issues,omitempty"`
+	SourcePhoto      int         `json:"source_photo,omitempty"`
 }
 
 type PreviewChannels struct {
@@ -538,8 +549,17 @@ func BuildPreview(imp *IntermediateImport, lk PreviewLookups) (*PreviewResult, e
 	b.buildProducts()
 	b.buildAttributes()
 	b.buildTvaRates()
+	b.buildSourceWarnings()
 
 	return b.res, nil
+}
+
+// buildSourceWarnings reprend les signalements de la source (porte IA) en
+// avertissements de preview, après ceux de la confrontation à l'existant.
+func (b *previewBuilder) buildSourceWarnings() {
+	for _, w := range b.imp.SourceWarnings {
+		b.warn(w.Code, w.Ref, w.Message)
+	}
 }
 
 type previewBuilder struct {
@@ -758,14 +778,21 @@ func (b *previewBuilder) buildProducts() {
 		p := &b.imp.Products[i]
 
 		entry := PreviewProduct{
-			ExternalID: p.ExternalID,
-			Name:       p.Name,
-			Action:     ActionCreate,
-			Status:     ProductStatusAvailable,
+			ExternalID:       p.ExternalID,
+			Name:             p.Name,
+			Action:           ActionCreate,
+			Status:           ProductStatusAvailable,
+			Kind:             p.Kind,
+			IsGroup:          p.IsGroup,
+			ParentExternalID: p.ParentExternalID,
+			Confidence:       p.Confidence,
+			Issues:           p.Issues,
+			SourcePhoto:      p.SourcePhoto,
 		}
 		if p.AllPricesZero {
 			entry.Status = ProductStatusRemovedFromMenu
 		}
+		b.proposeAIDecisions(p)
 
 		// Un produit déjà importé est ignoré par défaut : inutile de lui
 		// réclamer une catégorie ou d'arbitrer une collision qui ne se
@@ -811,6 +838,31 @@ func (b *previewBuilder) buildProducts() {
 		}
 
 		b.res.Products = append(b.res.Products, entry)
+	}
+}
+
+// proposeAIDecisions reprend les propositions de la porte IA (nature, groupe)
+// dans les décisions, et signale les lignes que le modèle a mal lues. Sans
+// effet pour les autres portes, dont les produits n'ont ni nature ni groupe.
+func (b *previewBuilder) proposeAIDecisions(p *CanonicalProduct) {
+	if p.Kind != "" {
+		if b.res.Decisions.KindPerProduct == nil {
+			b.res.Decisions.KindPerProduct = make(map[string]ProductKind)
+		}
+		b.res.Decisions.KindPerProduct[p.ExternalID] = p.Kind
+	}
+	if p.ParentExternalID != "" {
+		if b.res.Decisions.GroupPerProduct == nil {
+			b.res.Decisions.GroupPerProduct = make(map[string]string)
+		}
+		b.res.Decisions.GroupPerProduct[p.ExternalID] = p.ParentExternalID
+	}
+	if p.Confidence == aiConfidenceLow || len(p.Issues) > 0 {
+		message := fmt.Sprintf("%q (photo %d) est à vérifier", p.Name, p.SourcePhoto)
+		if len(p.Issues) > 0 {
+			message += " : " + strings.Join(p.Issues, ", ")
+		}
+		b.warn(WarningAILowConfidence, p.ExternalID, message)
 	}
 }
 

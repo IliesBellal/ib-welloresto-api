@@ -56,6 +56,19 @@ type IntermediateImport struct {
 	// ce qui laisse la preview et le commit inchanges sur ce chemin.
 	ComponentCategories []CanonicalComponentCategory
 	Components          []CanonicalComponent
+
+	// SourceWarnings sont des signalements de la source elle-même, repris
+	// tels quels en avertissements de preview. Porte IA uniquement : formules
+	// détectées mais non créées, photo floue, doublon entre photos…
+	SourceWarnings []SourceWarning
+}
+
+// SourceWarning est un signalement émis par la source (porte IA), avant toute
+// confrontation à l'existant.
+type SourceWarning struct {
+	Code    string
+	Ref     string
+	Message string
 }
 
 // CanonicalComponentCategory est une categorie d'ingredient (component_category).
@@ -161,6 +174,25 @@ type CanonicalProduct struct {
 	AvailableIn       *bool
 	AvailableTakeAway *bool
 	AvailableDelivery *bool
+
+	// Champs de la porte IA (lecture de carte par photo), vides ailleurs.
+	//
+	// IsGroup : produit groupe (products.is_product_group), sans prix, dont
+	// les déclinaisons sont les produits qui le citent en ParentExternalID
+	// (products.by_product_of). Un groupe n'est jamais en statut
+	// removed_from_menu malgré ses prix nuls : il masquerait ses enfants.
+	IsGroup          bool
+	ParentExternalID string
+
+	// Kind est la nature proposée ; les taux TvaRate* en sont déjà dérivés
+	// (KindTvaRates). La décision KindPerProduct peut la changer au commit.
+	Kind ProductKind
+
+	// Confidence ("high" | "medium" | "low"), Issues et SourcePhoto (n° de
+	// photo, à partir de 1) aident la relecture ; ils ne vont pas en base.
+	Confidence  string
+	Issues      []string
+	SourcePhoto int
 }
 
 // CanonicalProductComponent est une ligne de composition (requires) : quelle
@@ -375,4 +407,20 @@ type ImportDecisions struct {
 	// precedent a deja cree : un produit exclu ici ne l'a jamais ete par
 	// aucun import, il ne l'est simplement pas par celui-ci.
 	ExcludedProducts map[string]bool `json:"excluded_products"`
+
+	// Décisions de la porte IA (lecture de carte par photo), vides ailleurs.
+	//
+	// KindPerProduct change la nature d'un produit ; ses trois taux de TVA
+	// sont alors recalculés par KindTvaRates avant la résolution en tva_id.
+	KindPerProduct map[string]ProductKind `json:"kind_per_product,omitempty"`
+
+	// GroupPerProduct rattache un produit à un groupe (identifiant externe
+	// d'un produit IsGroup du lot), ou le laisse à la racine avec "".
+	// Absent = proposition de la source (ParentExternalID).
+	GroupPerProduct map[string]string `json:"group_per_product,omitempty"`
+
+	// TvaConfirmed : le restaurateur a validé l'étape « Nature / TVA ». Les
+	// taux de la porte IA sont des propositions ; sans cette confirmation,
+	// le commit est refusé (BlockerTvaNotConfirmed).
+	TvaConfirmed bool `json:"tva_confirmed,omitempty"`
 }
