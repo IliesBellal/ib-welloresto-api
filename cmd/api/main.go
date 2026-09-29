@@ -26,6 +26,10 @@ func main() {
 	zlog := logger.New()
 	zap.ReplaceGlobals(zlog)
 
+	// Variables optionnelles absentes : avertissement seul, jamais fatal
+	// (les indispensables le sont déjà dans config.Load).
+	config.LogStartupEnv(zlog, cfg)
+
 	// DB (MySQL par défaut, Postgres si DB_DIALECT=postgres — migration en cours)
 	var db *sql.DB
 	var analyticsDB *sql.DB
