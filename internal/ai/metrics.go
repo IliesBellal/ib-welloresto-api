@@ -10,6 +10,8 @@ var modelCostPer1KTokens = map[string][2]float64{
 	"claude-3-5-haiku-20241022":  {0.00080, 0.00400},
 	"claude-3-5-sonnet-20241022": {0.00300, 0.01500},
 	"claude-3-opus-20240229":     {0.01500, 0.07500},
+	"claude-opus-5-5":            {0.00400, 0.02000}, // menu_ocr
+	"claude-sonnet-5-5":          {0.00200, 0.01000},
 	// OpenAI — https://openai.com/api/pricing/
 	"gpt-4o":      {0.00250, 0.01000},
 	"gpt-4o-mini": {0.00015, 0.00060},

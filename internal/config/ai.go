@@ -47,8 +47,30 @@ func loadAIConfig() ai.AIConfig {
 				// an LLM provider billing outage.
 				Enabled: parseBool(os.Getenv("AI_TASK_UPSELL_ENABLED"), true),
 			},
+			// Lecture de carte par photo (import produits, porte IA) : un appel
+			// par photo, image + JSON contraint par schéma. Voir
+			// docs/cadrage-import-carte-photo-ia.md § 5.3.
+			"menu_ocr": {
+				Provider:  getEnv("AI_TASK_MENU_OCR_PROVIDER", "anthropic"),
+				Model:     getEnv("AI_TASK_MENU_OCR_MODEL", "claude-opus-5-5"),
+				Effort:    parseEffort(getEnv("AI_TASK_MENU_OCR_EFFORT", "medium")),
+				MaxTokens: parseInt(os.Getenv("AI_TASK_MENU_OCR_MAX_TOKENS"), 16000),
+				Timeout:   parseDuration(os.Getenv("AI_TASK_MENU_OCR_TIMEOUT_MS"), 3*time.Minute),
+				// Fermé par défaut : ouvert d'abord sur staging pour les tests.
+				Enabled: parseBool(os.Getenv("AI_TASK_MENU_OCR_ENABLED"), false),
+			},
 		},
 	}
+}
+
+// parseEffort maps "none" to an empty effort (parameter not sent), so a model
+// that rejects effort (e.g. claude-haiku-4-5) can be selected through env vars
+// alone even where an empty variable cannot be set.
+func parseEffort(raw string) string {
+	if raw == "none" {
+		return ""
+	}
+	return raw
 }
 
 // parseDuration parses a duration given as milliseconds (e.g. "5000" → 5s).

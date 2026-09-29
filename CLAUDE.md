@@ -63,7 +63,7 @@ Token-based auth validated against Redis. Tokens injected into request context b
 
 ### AI layer
 
-`internal/ai/` provides a provider-agnostic LLM abstraction. A `Registry` is built at startup in `SetupRoutes` by `buildAIRegistry()` and injected into services that need LLM features. Tasks (`menu_translation`, `upsell`) are mapped to providers and models via env vars. Response caching goes through a Redis-backed `aicache.Cache`. Add new tasks in [internal/config/ai.go](internal/config/ai.go) and new providers in [internal/ai/providers/](internal/ai/providers/).
+`internal/ai/` provides a provider-agnostic LLM abstraction. A `Registry` is built at startup in `SetupRoutes` by `buildAIRegistry()` and injected into services that need LLM features. Tasks (`menu_translation`, `upsell`, `menu_ocr`) are mapped to providers, models, effort and timeout via env vars; the provider returned by `Registry.GetProviderForTask` applies them to every request that leaves them empty (before 2026-09-29 `AI_TASK_*_MODEL` had no effect — see [docs/import-carte-ia-02-couche-ia.md](docs/import-carte-ia-02-couche-ia.md)). Current models (Opus 5.5, Sonnet 5.5) reject `temperature` — leave it at 0 for tasks using them. Response caching goes through a Redis-backed `aicache.Cache`. Add new tasks in [internal/config/ai.go](internal/config/ai.go) and new providers in [internal/ai/providers/](internal/ai/providers/).
 
 ### Real-time & background jobs
 
@@ -88,7 +88,7 @@ Required at runtime (no `.env` in repo):
 - Stripe: `STRIPE_API_KEY`, `STRIPE_ONBOARDING_RETURN_URL`, `STRIPE_ONBOARDING_REFRESH_URL`
 - Uber Eats, Deliveroo, Brevo, Cloudflare R2, FCM credentials
 - AI: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` (optional — AI features error at runtime without them)
-- AI task overrides: `AI_TASK_MENU_TRANSLATION_PROVIDER/MODEL/TEMPERATURE/MAX_TOKENS`, `AI_TASK_UPSELL_PROVIDER/MODEL/TEMPERATURE/MAX_TOKENS`
+- AI task overrides: `AI_TASK_MENU_TRANSLATION_PROVIDER/MODEL/TEMPERATURE/MAX_TOKENS`, `AI_TASK_UPSELL_PROVIDER/MODEL/TEMPERATURE/MAX_TOKENS`, `AI_TASK_MENU_OCR_PROVIDER/MODEL/EFFORT/MAX_TOKENS/TIMEOUT_MS/ENABLED` (defaults: anthropic / `claude-opus-5-5` / `medium` / 16000 / 180000 / **false**; `EFFORT=none` = not sent)
 
 ### Deprecations
 
