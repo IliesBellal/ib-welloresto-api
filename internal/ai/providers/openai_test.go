@@ -41,6 +41,25 @@ func TestOpenAIComplete_FinishReasonNormalised(t *testing.T) {
 	}
 }
 
+func TestOpenAIComplete_RejectsAnthropicOnlyFeatures(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++ }))
+	defer srv.Close()
+	p := NewOpenAIProvider(ai.ProviderConfig{BaseURL: srv.URL}, "")
+
+	for name, req := range map[string]ai.CompletionRequest{
+		"images":      {UserPrompt: "x", Images: []ai.Image{{MediaType: "image/jpeg", Data: []byte("x")}}},
+		"json schema": {UserPrompt: "x", JSONSchema: json.RawMessage(`{"type":"object"}`)},
+	} {
+		if _, err := p.Complete(context.Background(), req); !errors.Is(err, ai.ErrUnsupported) {
+			t.Errorf("%s: err = %v, want ai.ErrUnsupported", name, err)
+		}
+	}
+	if calls != 0 {
+		t.Errorf("OpenAI called %d times, want 0 (refused before sending)", calls)
+	}
+}
+
 func TestOpenAIComplete_RequestModelOverridesDefault(t *testing.T) {
 	var lastModel string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

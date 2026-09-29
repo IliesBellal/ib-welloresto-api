@@ -2,11 +2,13 @@ package providers
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -74,6 +76,69 @@ func TestAnthropicComplete_EffortAndTemperatureOnlyWhenSet(t *testing.T) {
 	cfg, _ := (*body)["output_config"].(map[string]any)
 	if cfg["effort"] != "medium" {
 		t.Errorf("output_config = %v, want effort medium", (*body)["output_config"])
+	}
+}
+
+func TestAnthropicComplete_TextOnlyRequestKeepsStringContent(t *testing.T) {
+	srv, body := anthropicTestServer(t, anthropicTextReply)
+	p := NewAnthropicProvider(ai.ProviderConfig{BaseURL: srv.URL}, "")
+
+	if _, err := p.Complete(context.Background(), ai.CompletionRequest{UserPrompt: "bonjour", MaxTokens: 10}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	msgs, _ := (*body)["messages"].([]any)
+	first, _ := msgs[0].(map[string]any)
+	if first["content"] != "bonjour" {
+		t.Errorf("content = %#v, want the plain string sent before images existed", first["content"])
+	}
+}
+
+func TestAnthropicComplete_ImagesBeforeTextAndSchema(t *testing.T) {
+	srv, body := anthropicTestServer(t, anthropicTextReply)
+	p := NewAnthropicProvider(ai.ProviderConfig{BaseURL: srv.URL}, "")
+
+	schema := json.RawMessage(`{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"],"additionalProperties":false}`)
+	req := ai.CompletionRequest{
+		UserPrompt: "Lis cette carte",
+		MaxTokens:  10,
+		Images:     []ai.Image{{MediaType: "image/jpeg", Data: []byte("jpeg-bytes")}},
+		JSONSchema: schema,
+	}
+	if _, err := p.Complete(context.Background(), req); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	msgs, _ := (*body)["messages"].([]any)
+	first, _ := msgs[0].(map[string]any)
+	blocks, _ := first["content"].([]any)
+	if len(blocks) != 2 {
+		t.Fatalf("content blocks = %#v, want image then text", first["content"])
+	}
+	img, _ := blocks[0].(map[string]any)
+	src, _ := img["source"].(map[string]any)
+	if img["type"] != "image" || src["type"] != "base64" || src["media_type"] != "image/jpeg" ||
+		src["data"] != base64.StdEncoding.EncodeToString([]byte("jpeg-bytes")) {
+		t.Errorf("image block = %#v", img)
+	}
+	txt, _ := blocks[1].(map[string]any)
+	if txt["type"] != "text" || txt["text"] != "Lis cette carte" {
+		t.Errorf("text block = %#v", txt)
+	}
+
+	cfg, _ := (*body)["output_config"].(map[string]any)
+	format, _ := cfg["format"].(map[string]any)
+	if format["type"] != "json_schema" {
+		t.Fatalf("output_config.format = %#v, want json_schema", cfg["format"])
+	}
+	sentSchema, _ := json.Marshal(format["schema"])
+	var want, got any
+	_ = json.Unmarshal(schema, &want)
+	_ = json.Unmarshal(sentSchema, &got)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("schema = %s, want %s", sentSchema, schema)
+	}
+	if _, sent := cfg["effort"]; sent {
+		t.Errorf("effort sent while empty: %#v", cfg)
 	}
 }
 

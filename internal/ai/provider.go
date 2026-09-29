@@ -2,9 +2,22 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 )
+
+// ErrUnsupported is returned (wrapped) when a request uses a feature the
+// provider does not implement (e.g. images or JSONSchema on OpenAI), instead
+// of silently dropping it.
+var ErrUnsupported = errors.New("ai: feature not supported by this provider")
+
+// Image is an image sent to the model alongside the user prompt.
+type Image struct {
+	// MediaType is "image/jpeg", "image/png", "image/gif" or "image/webp".
+	MediaType string
+	Data      []byte
+}
 
 // ErrRefused is returned (wrapped) by a provider when the model declined the
 // request (Anthropic stop_reason "refusal", OpenAI finish_reason
@@ -61,6 +74,16 @@ type CompletionRequest struct {
 
 	// JSONMode instructs the provider to return pure JSON with no markdown wrapping.
 	JSONMode bool
+
+	// Images are sent before UserPrompt, in order (Anthropic only).
+	Images []Image
+
+	// JSONSchema, when set, constrains the answer to this JSON Schema
+	// (Anthropic structured outputs, output_config.format). Every object in
+	// the schema needs "additionalProperties": false; numeric/string bounds
+	// (minimum, maxLength, pattern…) are not supported and must be checked
+	// by the caller. Anthropic only.
+	JSONSchema json.RawMessage
 }
 
 // CompletionResponse holds the result of a successful LLM call.

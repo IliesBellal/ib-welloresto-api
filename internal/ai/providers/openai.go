@@ -75,6 +75,13 @@ func (p *OpenAIProvider) Name() string {
 // Complete sends a request to the OpenAI Chat Completions API and returns the completion.
 // The ctx is forwarded to the HTTP request for cancellation / deadline support.
 func (p *OpenAIProvider) Complete(ctx context.Context, req ai.CompletionRequest) (*ai.CompletionResponse, error) {
+	if len(req.Images) > 0 {
+		return nil, fmt.Errorf("openai: images: %w", ai.ErrUnsupported)
+	}
+	if len(req.JSONSchema) > 0 {
+		return nil, fmt.Errorf("openai: JSONSchema: %w", ai.ErrUnsupported)
+	}
+
 	systemPrompt := req.SystemPrompt
 	if req.JSONMode {
 		systemPrompt += openAIJSONModeInstruction

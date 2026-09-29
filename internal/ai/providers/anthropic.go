@@ -3,6 +3,7 @@ package providers
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -88,12 +89,31 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req ai.CompletionReque
 		model = req.Model
 	}
 
+	// Text-only requests keep the plain string content they always had; with
+	// images the content becomes blocks, images first as the docs recommend.
+	var content any = req.UserPrompt
+	if len(req.Images) > 0 {
+		blocks := make([]anthropicContentBlock, 0, len(req.Images)+1)
+		for _, img := range req.Images {
+			blocks = append(blocks, anthropicContentBlock{
+				Type: "image",
+				Source: &anthropicImageSource{
+					Type:      "base64",
+					MediaType: img.MediaType,
+					Data:      base64.StdEncoding.EncodeToString(img.Data),
+				},
+			})
+		}
+		blocks = append(blocks, anthropicContentBlock{Type: "text", Text: req.UserPrompt})
+		content = blocks
+	}
+
 	body := anthropicRequest{
 		Model:     model,
 		MaxTokens: req.MaxTokens,
 		System:    systemPrompt,
 		Messages: []anthropicMessage{
-			{Role: "user", Content: req.UserPrompt},
+			{Role: "user", Content: content},
 		},
 	}
 
@@ -101,8 +121,11 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req ai.CompletionReque
 		t := req.Temperature
 		body.Temperature = &t
 	}
-	if req.Effort != "" {
+	if req.Effort != "" || len(req.JSONSchema) > 0 {
 		body.OutputConfig = &anthropicOutputConfig{Effort: req.Effort}
+		if len(req.JSONSchema) > 0 {
+			body.OutputConfig.Format = &anthropicOutputFormat{Type: "json_schema", Schema: req.JSONSchema}
+		}
 	}
 
 	payload, err := json.Marshal(body)
@@ -203,12 +226,31 @@ type anthropicRequest struct {
 }
 
 type anthropicOutputConfig struct {
-	Effort string `json:"effort,omitempty"`
+	Effort string                 `json:"effort,omitempty"`
+	Format *anthropicOutputFormat `json:"format,omitempty"`
+}
+
+type anthropicOutputFormat struct {
+	Type   string          `json:"type"`
+	Schema json.RawMessage `json:"schema"`
 }
 
 type anthropicMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role string `json:"role"`
+	// Content is a plain string, or []anthropicContentBlock when images are sent.
+	Content any `json:"content"`
+}
+
+type anthropicContentBlock struct {
+	Type   string                `json:"type"`
+	Text   string                `json:"text,omitempty"`
+	Source *anthropicImageSource `json:"source,omitempty"`
+}
+
+type anthropicImageSource struct {
+	Type      string `json:"type"`
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
 }
 
 type anthropicResponse struct {
