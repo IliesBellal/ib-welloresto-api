@@ -1185,7 +1185,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
             SELECT p.product_id, p.by_product_of, p.name, p.category, p.category, p.price, p.price_take_away, p.price_delivery, p.product_desc,
                    p.available_in, p.available_take_away, p.available_delivery,
                    tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away, p.bg_color, p.is_product_group, p.is_available_on_sno, p.is_available_on_kiosk, p.status,
-				   p.display_order, p.image_url
+				   p.display_order, p.image_url, p.sync_uber_eats, p.sync_deliveroo
             FROM products p
             INNER JOIN tva_categories tva_in on tva_in.tva_id = p.tva_in_id
             INNER JOIN tva_categories tva_delivery on tva_delivery.tva_id = p.tva_delivery_id
@@ -1210,10 +1210,20 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			// le Scan & Order (qui les affiche comme des produits à part entière),
 			// seul le back-office — qui passe par GetAll* — les montrait.
 			var imageURL sql.NullString
+			// sync_uber_eats / sync_deliveroo manquaient aussi : les mappers
+			// plateformes, qui envoient désormais les sous-produits à la place
+			// de leur groupe, ignoraient donc chaque enfant (SyncUberEats nil).
+			var syncUberEats, syncDeliveroo sql.NullBool
 			if err := rows.Scan(&p.ProductID, &by, &p.Name, &p.Category, &p.CategoryID, &p.Price, &p.PriceTakeAway,
 				&p.PriceDelivery, &desc, &availIn, &availTake, &availDel, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup,
-				&p.IsAvailableOnSNO, &p.IsAvailableOnKiosk, &p.Status, &p.DisplayOrder, &imageURL); err != nil {
+				&p.IsAvailableOnSNO, &p.IsAvailableOnKiosk, &p.Status, &p.DisplayOrder, &imageURL, &syncUberEats, &syncDeliveroo); err != nil {
 				return nil, err
+			}
+			if syncUberEats.Valid {
+				p.SyncUberEats = &syncUberEats.Bool
+			}
+			if syncDeliveroo.Valid {
+				p.SyncDeliveroo = &syncDeliveroo.Bool
 			}
 			if by.Valid {
 				p.ByProductOf = &by.String

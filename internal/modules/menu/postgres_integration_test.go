@@ -626,6 +626,13 @@ func TestMenuRepository_Postgres(t *testing.T) {
 		t.Fatalf("tva_in_id après refus = %q, want %q inchangé", got, tvaDelivery)
 	}
 
+	// Drapeaux de synchro distincts sur le sous-produit : GetMenu doit les
+	// lire (les mappers Uber Eats / Deliveroo envoient les sous-produits).
+	if _, err := db.ExecContext(ctx,
+		`UPDATE products SET sync_uber_eats = TRUE, sync_deliveroo = FALSE WHERE product_id = $1`, prodC); err != nil {
+		t.Fatalf("seed drapeaux de synchro prodC: %v", err)
+	}
+
 	// --- GetMenu (assemblage complet + no_update_required) ---
 	menu, err := repo.GetMenu(ctx, merchantID, nil)
 	if err != nil {
@@ -652,6 +659,10 @@ func TestMenuRepository_Postgres(t *testing.T) {
 			for _, sp := range mp.SubProducts {
 				if sp.ProductID == prodC {
 					foundSub = true
+					if sp.SyncUberEats == nil || !*sp.SyncUberEats || sp.SyncDeliveroo == nil || *sp.SyncDeliveroo {
+						t.Fatalf("GetMenu: drapeaux de synchro du sous-produit = uber %v / deliveroo %v, want true / false",
+							sp.SyncUberEats, sp.SyncDeliveroo)
+					}
 				}
 			}
 		}
