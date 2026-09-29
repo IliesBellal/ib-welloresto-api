@@ -114,7 +114,14 @@ Le sous-produit garde son propre prix, sa photo, ses options et sa disponibilit�
 | `TestToDeliverooFormat_NothingMarkedForSync` | Aucun produit marqué : erreur, pas de carte vide |
 | Effet du filtre Deliveroo sur staging (lecture seule) | 2 590 produits actifs, tous marqués : aucun retiré |
 | Requête `sub_products` modifiée, exécutée **en lecture seule sur staging** pour les 8 marchands qui ont des groupes | SQL valide ; 363 sous-produits renvoyés, drapeaux lus sur les 363 (aucun NULL) |
-| `TestMenuRepository_Postgres` (tag `postgres_integration`) | **Non exécuté.** Il crée puis supprime ses propres données sur la base ciblée ; à lancer avec `POSTGRES_URL` pointé sur staging une fois cette portée validée |
+| `TestMenuRepository_Postgres` (tag `postgres_integration`), **exécuté sur staging le 2026-09-29** avec l'accord d'Ilies | **OK** (15 s). Le sous-produit ressort avec ses drapeaux de synchro (Uber vrai, Deliveroo faux). Le test crée puis supprime ses propres données |
+
+**Le test d'intégration échouait déjà avant ce chantier** (vérifié sur le commit de base `f3ea367`). Le commit `7b684dc` (2026-08-06) a ajouté un produit `itest-menu-complet` à la catégorie de test, sans mettre à jour trois assertions qui comptaient les produits :
+- `GetMenu` : 3 racines au lieu de 2 ;
+- `ListAvailableProductsForUpsell` : 3 racines au lieu de 2 ;
+- allergènes après assignation en masse : le compte est désormais limité aux deux produits assignés (`prodA`, `prodB`), ce que l'assertion cherchait à vérifier.
+
+Ces trois corrections font partie du commit « test(menu) » (§ 6). Elles étaient nécessaires pour atteindre la nouvelle vérification des drapeaux.
 
 | Chaque commit de code, isolément, dans un worktree propre (sans les modifications locales non commitées) | `go build ./...`, `go vet` (avec et sans tag d'intégration) et tests unitaires du module menu : OK sur les 3 commits |
 
@@ -128,7 +135,8 @@ Commits atomiques sur `staging`, autorisés pour ce chantier le 2026-09-29 :
 | `144f27b` | `GetMenu` lit les drapeaux de synchro des sous-produits (D3) + test d'intégration |
 | `21f5273` | Filtre `sync_deliveroo` dans le mapper Deliveroo (D4) + tests |
 | `cda3f52` | Aplatissement des groupes dans les deux mappers (D1, D2) + tests |
-| *(ce document)* | Doc de l'étape 1 |
+| `d69ca9b` | Doc de l'étape 1 |
+| *(suivant)* | `test(menu)` : trois assertions obsolètes du test d'intégration corrigées ; test passé sur staging |
 
 `repository.go` contenait des modifications locales sans rapport (catégories marketplace). Seuls les blocs de ce correctif ont été commités, par patch partiel sur l'index ; les autres restent dans l'arbre de travail.
 

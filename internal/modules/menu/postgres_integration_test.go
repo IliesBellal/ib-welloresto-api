@@ -647,7 +647,9 @@ func TestMenuRepository_Postgres(t *testing.T) {
 			menuCat = &menu.ProductsTypes[i]
 		}
 	}
-	if menuCat == nil || len(menuCat.Products) != 2 {
+	// 3 racines : prodA, prodB et prodFull (« itest-menu-complet », ajouté à
+	// la même catégorie par 7b684dc) ; prodC est un sous-produit de prodA.
+	if menuCat == nil || len(menuCat.Products) != 3 {
 		t.Fatalf("GetMenu catégorie itest absente ou mauvais compte de produits racines: %+v", menuCat)
 	}
 	foundSub := false
@@ -722,8 +724,9 @@ func TestMenuRepository_Postgres(t *testing.T) {
 
 	// --- upsell (by_product_of = 0/NULL, booléens) ---
 	ups, err := repo.ListAvailableProductsForUpsell(ctx, merchantID)
-	if err != nil || len(ups) != 2 {
-		t.Fatalf("ListAvailableProductsForUpsell = (%d, %v), want 2 racines", len(ups), err)
+	// 3 racines : prodA, prodB, prodFull (voir le compte GetMenu plus haut).
+	if err != nil || len(ups) != 3 {
+		t.Fatalf("ListAvailableProductsForUpsell = (%d, %v), want 3 racines", len(ups), err)
 	}
 
 	// --- statuts / disponibilités ---
@@ -773,7 +776,11 @@ func TestMenuRepository_Postgres(t *testing.T) {
 		t.Fatalf("BulkAssignAllergen: %v", err) // prodA a déjà l'allergène -> ignoré
 	}
 	var algCount int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM product_allergens WHERE allergen_id = 'itest-menu-alg'`).Scan(&algCount); err != nil || algCount != 2 {
+	// Limité à prodA/prodB : prodFull porte aussi cet allergène depuis sa
+	// création (7b684dc), hors du périmètre de l'assignation en masse testée.
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM product_allergens WHERE allergen_id = 'itest-menu-alg' AND product_id IN ($1, $2)`,
+		prodA, prodB).Scan(&algCount); err != nil || algCount != 2 {
 		t.Fatalf("product_allergens = (%d, %v), want 2", algCount, err)
 	}
 
