@@ -28,14 +28,17 @@ func loadAIConfig() ai.AIConfig {
 		Tasks: map[string]ai.TaskConfig{
 			"menu_translation": {
 				Provider:    getEnv("AI_TASK_MENU_TRANSLATION_PROVIDER", "anthropic"),
-				Model:       getEnv("AI_TASK_MENU_TRANSLATION_MODEL", "claude-haiku-4-5"),
+				// Empty default = the provider's own default model
+				// (claude-haiku-4-5 / gpt-4o-mini): a provider switch alone
+				// must not send an Anthropic model name to OpenAI.
+				Model:       os.Getenv("AI_TASK_MENU_TRANSLATION_MODEL"),
 				Temperature: parseFloat64(os.Getenv("AI_TASK_MENU_TRANSLATION_TEMPERATURE"), 0.3),
 				MaxTokens:   parseInt(os.Getenv("AI_TASK_MENU_TRANSLATION_MAX_TOKENS"), 4096),
 				Enabled:     true,
 			},
 			"upsell": {
 				Provider:    getEnv("AI_TASK_UPSELL_PROVIDER", "anthropic"),
-				Model:       getEnv("AI_TASK_UPSELL_MODEL", "claude-haiku-4-5"),
+				Model:       os.Getenv("AI_TASK_UPSELL_MODEL"), // empty = provider default, see above
 				Temperature: parseFloat64(os.Getenv("AI_TASK_UPSELL_TEMPERATURE"), 0.5),
 				MaxTokens:   parseInt(os.Getenv("AI_TASK_UPSELL_MAX_TOKENS"), 1024),
 				// Kill-switch: AI_TASK_UPSELL_ENABLED=false skips the LLM call

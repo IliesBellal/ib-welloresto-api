@@ -28,14 +28,19 @@ type OpenAIProvider struct {
 	apiKey     string
 	baseURL    string
 	model      string
+	timeout    time.Duration
 	httpClient *http.Client
 }
 
 // NewOpenAIProvider creates a configured OpenAI provider.
 //   - cfg.APIKey is required.
 //   - cfg.BaseURL overrides the default endpoint when non-empty.
-//   - cfg.Timeout overrides the default 30s HTTP timeout when non-zero.
-//   - model defaults to gpt-4o-mini when empty.
+//   - cfg.Timeout overrides the default 30s timeout when non-zero; a request
+//     can override it again with CompletionRequest.Timeout.
+//   - model defaults to gpt-4o-mini when empty; a request can override it
+//     with CompletionRequest.Model.
+//
+// CompletionRequest.Effort is Anthropic-only and ignored here.
 func NewOpenAIProvider(cfg ai.ProviderConfig, model string) *OpenAIProvider {
 	timeout := openAIDefaultTimeout
 	if cfg.Timeout > 0 {
@@ -55,9 +60,10 @@ func NewOpenAIProvider(cfg ai.ProviderConfig, model string) *OpenAIProvider {
 		apiKey:  cfg.APIKey,
 		baseURL: baseURL,
 		model:   model,
-		httpClient: &http.Client{
-			Timeout: timeout,
-		},
+		timeout: timeout,
+		// No client-level Timeout: the deadline is set per request on the
+		// context (see Complete).
+		httpClient: &http.Client{},
 	}
 }
 
@@ -74,8 +80,13 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req ai.CompletionRequest)
 		systemPrompt += openAIJSONModeInstruction
 	}
 
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	}
+
 	body := openAIRequest{
-		Model: p.model,
+		Model: model,
 		Messages: []openAIMessage{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: req.UserPrompt},
@@ -97,6 +108,13 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req ai.CompletionRequest)
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to marshal request: %w", err)
 	}
+
+	timeout := p.timeout
+	if req.Timeout > 0 {
+		timeout = req.Timeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL, bytes.NewReader(payload))
 	if err != nil {

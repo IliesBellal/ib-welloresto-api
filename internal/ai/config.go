@@ -36,6 +36,15 @@ type TaskConfig struct {
 	// Defaults to the provider's built-in default when empty.
 	Model string
 
+	// Effort is the Anthropic effort level ("low", "medium", "high", "xhigh",
+	// "max"). Empty means not sent — required for models that reject the
+	// parameter (e.g. claude-haiku-4-5).
+	Effort string
+
+	// Timeout overrides the provider's HTTP timeout for this task only.
+	// Zero keeps the provider default.
+	Timeout time.Duration
+
 	Temperature float64
 	MaxTokens   int
 
@@ -47,14 +56,23 @@ type TaskConfig struct {
 	Enabled bool
 }
 
-// Validate checks that every task references a provider declared in Providers.
-// Called by AppConfig.validate() at startup.
+// validEfforts lists the effort levels accepted by the Anthropic API.
+var validEfforts = map[string]bool{"": true, "low": true, "medium": true, "high": true, "xhigh": true, "max": true}
+
+// Validate checks that every task references a provider declared in Providers
+// and uses a known effort level. Called by AppConfig.validate() at startup.
 func (c AIConfig) Validate() error {
 	for task, taskCfg := range c.Tasks {
 		if _, ok := c.Providers[taskCfg.Provider]; !ok {
 			return fmt.Errorf(
 				"ai config: task %q references unknown provider %q — add it to AI_PROVIDERS",
 				task, taskCfg.Provider,
+			)
+		}
+		if !validEfforts[taskCfg.Effort] {
+			return fmt.Errorf(
+				"ai config: task %q has unknown effort %q (want low, medium, high, xhigh or max)",
+				task, taskCfg.Effort,
 			)
 		}
 	}

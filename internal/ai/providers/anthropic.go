@@ -33,14 +33,17 @@ type AnthropicProvider struct {
 	apiKey     string
 	baseURL    string
 	model      string
+	timeout    time.Duration
 	httpClient *http.Client
 }
 
 // NewAnthropicProvider creates a configured Anthropic provider.
 //   - cfg.APIKey is required.
 //   - cfg.BaseURL overrides the default endpoint when non-empty.
-//   - cfg.Timeout overrides the default 30s HTTP timeout when non-zero.
-//   - model defaults to claude-haiku-4-5 when empty.
+//   - cfg.Timeout overrides the default 30s timeout when non-zero; a request
+//     can override it again with CompletionRequest.Timeout.
+//   - model defaults to claude-haiku-4-5 when empty; a request can override
+//     it with CompletionRequest.Model.
 func NewAnthropicProvider(cfg ai.ProviderConfig, model string) *AnthropicProvider {
 	timeout := defaultTimeout
 	if cfg.Timeout > 0 {
@@ -60,9 +63,10 @@ func NewAnthropicProvider(cfg ai.ProviderConfig, model string) *AnthropicProvide
 		apiKey:  cfg.APIKey,
 		baseURL: baseURL,
 		model:   model,
-		httpClient: &http.Client{
-			Timeout: timeout,
-		},
+		timeout: timeout,
+		// No client-level Timeout: the deadline is set per request on the
+		// context (see Complete), so one task can wait longer than another.
+		httpClient: &http.Client{},
 	}
 }
 
@@ -79,8 +83,13 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req ai.CompletionReque
 		systemPrompt += jsonModeInstruction
 	}
 
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	}
+
 	body := anthropicRequest{
-		Model:     p.model,
+		Model:     model,
 		MaxTokens: req.MaxTokens,
 		System:    systemPrompt,
 		Messages: []anthropicMessage{
@@ -92,11 +101,21 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req ai.CompletionReque
 		t := req.Temperature
 		body.Temperature = &t
 	}
+	if req.Effort != "" {
+		body.OutputConfig = &anthropicOutputConfig{Effort: req.Effort}
+	}
 
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: failed to marshal request: %w", err)
 	}
+
+	timeout := p.timeout
+	if req.Timeout > 0 {
+		timeout = req.Timeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL, bytes.NewReader(payload))
 	if err != nil {
@@ -161,11 +180,16 @@ func stripMarkdownFences(s string) string {
 // ---- internal Anthropic API types ----
 
 type anthropicRequest struct {
-	Model       string             `json:"model"`
-	MaxTokens   int                `json:"max_tokens"`
-	System      string             `json:"system,omitempty"`
-	Messages    []anthropicMessage `json:"messages"`
-	Temperature *float64           `json:"temperature,omitempty"`
+	Model        string                 `json:"model"`
+	MaxTokens    int                    `json:"max_tokens"`
+	System       string                 `json:"system,omitempty"`
+	Messages     []anthropicMessage     `json:"messages"`
+	Temperature  *float64               `json:"temperature,omitempty"`
+	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
+}
+
+type anthropicOutputConfig struct {
+	Effort string `json:"effort,omitempty"`
 }
 
 type anthropicMessage struct {

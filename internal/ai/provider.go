@@ -1,6 +1,9 @@
 package ai
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // LLMProvider is the interface every LLM backend must implement.
 // Add new providers (OpenAI, Mistral, …) by creating a new struct in
@@ -17,9 +20,24 @@ type LLMProvider interface {
 // CompletionRequest holds all parameters for a single LLM call.
 type CompletionRequest struct {
 	// Task identifies the business feature driving this call.
-	// Expected values: "menu_translation", "upsell".
+	// Expected values: "menu_translation", "upsell", "menu_ocr".
 	// Used for metrics tagging — must be non-empty.
 	Task string
+
+	// Model is the exact model identifier sent to the provider. Empty means
+	// the provider's built-in default. Filled from TaskConfig.Model by the
+	// provider returned by Registry.GetProviderForTask when left empty.
+	Model string
+
+	// Effort is the Anthropic output_config.effort level ("low" … "max").
+	// Empty means not sent (the model default applies). Ignored by OpenAI.
+	// Filled from TaskConfig.Effort when left empty.
+	Effort string
+
+	// Timeout bounds the whole HTTP round-trip. Zero means the provider's
+	// default (ProviderConfig.Timeout). Filled from TaskConfig.Timeout when
+	// left empty. A shorter deadline already set on ctx still wins.
+	Timeout time.Duration
 
 	SystemPrompt string
 	UserPrompt   string
