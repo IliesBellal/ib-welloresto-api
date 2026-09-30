@@ -840,6 +840,15 @@ func (b *commitPlanner) assignChannels(p *CanonicalProduct, entry *PlannedProduc
 		{TvaChannelDelivery, p.TvaRateDelivery, &entry.PriceDelivery, &entry.TvaDeliveryID, &entry.AvailableDelivery, p.AvailableDelivery},
 	}
 
+	// Un produit groupe (porte IA) n'est jamais vendu : sa TVA est reprise de
+	// sa première déclinaison par resolveGroups. Une TVA qu'il ne sait pas
+	// résoudre ici ne doit donc pas bloquer un lot où rien ne permet de la
+	// corriger.
+	block := b.block
+	if p.IsGroup {
+		block = func(string, string, string) {}
+	}
+
 	for _, ch := range channels {
 		// nil (fichier, saisie manuelle) : comportement historique, TRUE. La
 		// porte "autre établissement" fournit sourceAvail et fait autorité.
@@ -848,9 +857,22 @@ func (b *commitPlanner) assignChannels(p *CanonicalProduct, entry *PlannedProduc
 			*ch.available = *ch.sourceAvail
 		}
 
+		// TVA choisie produit par produit en relecture (tva_per_product) :
+		// elle prime sur le taux de la source, après vérification de son canal.
+		if override := b.tvaOverride(p.ExternalID, ch.channel); override != nil {
+			if decided, _, ok := b.resolver.describeID(*override); ok && decided == ch.channel {
+				*ch.tvaID = *override
+			} else {
+				b.block(BlockerInvalidTvaMapping, p.ExternalID,
+					fmt.Sprintf("le taux de TVA n° %d choisi pour %q n'existe pas ou n'est pas un taux du canal %s",
+						*override, p.Name, ch.channel.Label()))
+			}
+			continue
+		}
+
 		switch {
 		case ch.rate == nil:
-			b.block(BlockerTvaRateUnresolved, p.ExternalID,
+			block(BlockerTvaRateUnresolved, p.ExternalID,
 				fmt.Sprintf("%q n'a pas de taux de TVA sur le canal %s", p.Name, ch.channel.Label()))
 
 		case *ch.rate == 0:
@@ -873,7 +895,7 @@ func (b *commitPlanner) assignChannels(p *CanonicalProduct, entry *PlannedProduc
 				}
 			}
 			if !resolved {
-				b.block(BlockerTvaRateUnresolved, p.ExternalID,
+				block(BlockerTvaRateUnresolved, p.ExternalID,
 					fmt.Sprintf("le canal %s de %q a un taux de TVA à 0 mais aucun taux de repli n'est configuré pour ce canal",
 						ch.channel.Label(), p.Name))
 			}
@@ -881,7 +903,7 @@ func (b *commitPlanner) assignChannels(p *CanonicalProduct, entry *PlannedProduc
 		default:
 			tvaID, ok := b.lookupTva(*ch.rate, ch.channel)
 			if !ok {
-				b.block(BlockerTvaRateUnresolved, p.ExternalID,
+				block(BlockerTvaRateUnresolved, p.ExternalID,
 					fmt.Sprintf("aucun taux de TVA à %g%% n'est configuré pour le canal %s (produit %q)",
 						*ch.rate, ch.channel.Label(), p.Name))
 				continue

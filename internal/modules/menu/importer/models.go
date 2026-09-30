@@ -423,4 +423,28 @@ type ImportDecisions struct {
 	// taux de la porte IA sont des propositions ; sans cette confirmation,
 	// le commit est refusé (BlockerTvaNotConfirmed).
 	TvaConfirmed bool `json:"tva_confirmed,omitempty"`
+
+	// PricePerProduct remplace les trois prix d'un produit (centimes), saisis
+	// en relecture. Un produit groupe n'a pas de prix.
+	PricePerProduct map[string]ChannelPrices `json:"price_per_product,omitempty"`
+
+	// TvaPerProduct impose le tva_id d'un produit par canal, choisi en
+	// relecture parmi les taux du marchand ; il prime sur le taux de la
+	// source. Chaque identifiant est revérifié contre son canal.
+	TvaPerProduct map[string]ChannelTvaIDs `json:"tva_per_product,omitempty"`
+}
+
+// ChannelPrices porte les prix d'un produit par canal, en centimes.
+type ChannelPrices struct {
+	In       int `json:"in"`
+	TakeAway int `json:"take_away"`
+	Delivery int `json:"delivery"`
+}
+
+// ChannelTvaIDs porte un tva_id par canal ; nil = pas de choix pour ce
+// canal (pointeur : tva_categories contient les identifiants 0 et -1).
+type ChannelTvaIDs struct {
+	In       *int `json:"in,omitempty"`
+	TakeAway *int `json:"take_away,omitempty"`
+	Delivery *int `json:"delivery,omitempty"`
 }
