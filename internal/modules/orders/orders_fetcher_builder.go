@@ -401,6 +401,9 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		step := "products"
 		// oi.isPaid / oi.isDistributed sont boolean en Postgres mais scannés en
 		// NullInt64 côté Go — CASE 1/0 valide dans les deux dialectes.
+		// oi.is_upsell doit être renvoyé : la caisse renvoie toutes les lignes
+		// à chaque modification et l'upsert écrase is_upsell avec la valeur
+		// reçue — sans ce champ, une ligne upsell repassait à false.
 		q := `
 		SELECT o.order_id, oi.quantity, oi.paid_quantity, oi.price, oi.product_id, p.name, p.product_desc, pc.categ_name, oi.order_item_id,
 		       CASE WHEN oi.isPaid THEN 1 ELSE 0 END AS isPaid,
@@ -408,7 +411,8 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		       oi.ordered_on, oi.base_price, oi.discount_id, d.discount_name, oi.ready_for_distribution_quantity,
 		       oi.distributed_quantity, tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away, oi.delay_id, oc.content, oc.user_id, oc.creation_date,
 		p.price_take_away, p.price_delivery, p.image_url, oi.production_status, oi.production_status_done_quantity, p.production_color,
-		p.available_in, p.available_take_away, p.available_delivery
+		p.available_in, p.available_take_away, p.available_delivery,
+		       CASE WHEN oi.is_upsell THEN 1 ELSE 0 END AS is_upsell
 		FROM orders o
 		INNER JOIN orderitems oi ON o.order_id = oi.order_id AND oi.merchant_id = o.merchant_id
 		INNER JOIN products p ON oi.product_id = p.product_id AND oi.merchant_id = p.merchant_id
@@ -428,7 +432,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var quantity, paidQuantity, price, isPaid, isDistributed, basePrice, discountID, readyForDistribution, distributedQuantity, priceTakeAway, priceDelivery, productionDoneQty sql.NullInt64
+			var quantity, paidQuantity, price, isPaid, isDistributed, basePrice, discountID, readyForDistribution, distributedQuantity, priceTakeAway, priceDelivery, productionDoneQty, isUpsell sql.NullInt64
 			var productID, name, productDesc, categName, orderItemID, discountName, delayID, commentContent, commentUserID, imageURL, productionStatus, productionColor, orderID sql.NullString
 			var tvaIn, tvaDelivery, tvaTakeAway sql.NullFloat64
 			var orderedOn, commentCreation sql.NullTime
@@ -441,7 +445,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				&tvaIn, &tvaDelivery, &tvaTakeAway, &delayID, &commentContent, &commentUserID,
 				&commentCreation, &priceTakeAway, &priceDelivery, &imageURL, &productionStatus,
 				&productionDoneQty, &productionColor, &availableIn, &availableTakeAway,
-				&availableDelivery,
+				&availableDelivery, &isUpsell,
 			)
 
 			if scanErr != nil {
@@ -463,7 +467,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 					&tvaIn, &tvaDelivery, &tvaTakeAway, &delayID, &commentContent, &commentUserID,
 					&commentCreation, &priceTakeAway, &priceDelivery, &imageURL, &productionStatus,
 					&productionDoneQty, &productionColor, &availableIn, &availableTakeAway,
-					&availableDelivery,
+					&availableDelivery, &isUpsell,
 				}
 
 				fmt.Println("➡️ Types attendus par Go pour chaque champ :")
@@ -501,6 +505,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				ReadyForDistributionQuantity: helpers.IntPtr(int(readyForDistribution.Int64)),
 				IsPaid:                       helpers.BoolPtr(isPaid.Int64 != 0),
 				IsDistributed:                helpers.BoolPtr(isDistributed.Int64 != 0),
+				IsUpsell:                     isUpsell.Int64 != 0,
 				Price:                        price.Int64,
 				PriceTakeAway:                &priceTakeAway.Int64,
 				PriceDelivery:                &priceDelivery.Int64,

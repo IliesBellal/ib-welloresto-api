@@ -69,6 +69,7 @@ type ProductEntry struct {
 	ReadyForDistributionQuantity *int                   `json:"ready_for_distribution_quantity,omitempty"`
 	IsPaid                       *bool                  `json:"isPaid,omitempty"`
 	IsDistributed                *bool                  `json:"isDistributed,omitempty"`
+	IsUpsell                     bool                   `json:"is_upsell,omitempty"` // orderitems.is_upsell ; absent quand false, donc jamais dans les réponses menu
 	DiscountID                   *int64                 `json:"discount_id,omitempty"`
 	DiscountName                 *string                `json:"discount_name,omitempty"`
 	DiscountedPrice              *int64                 `json:"discounted_price,omitempty"`
