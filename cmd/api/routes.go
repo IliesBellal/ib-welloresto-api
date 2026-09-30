@@ -782,6 +782,12 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			// Chantier 14 — the back-office calls this once per session to
 			// decide whether to force the password-set screen.
 			r.With(authMiddleware).Get("/password/needs-set", authH.NeedsPasswordSet)
+
+			// Rattachement Google depuis les paramètres du compte — self-service,
+			// identité issue du token (voir googleauth/link.go).
+			r.With(authMiddleware).Get("/google/link", googleAuthH.LinkStatus)
+			r.With(authMiddleware).Post("/google/link", googleAuthH.Link)
+			r.With(authMiddleware).Delete("/google/link", googleAuthH.Unlink)
 		})
 
 		r.Route("/merchants/{id}/onboarding", func(r chi.Router) {

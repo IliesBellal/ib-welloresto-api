@@ -10,6 +10,18 @@ type AuthenticateRequest struct {
 // google_sub, auto-linked account) need. PAS un jeton signé — Token is the
 // same opaque users_rights.token every other auth path in this API returns;
 // there is no JWT anywhere in this system's own session model.
+// LinkRequest is the JSON payload for POST /v1/auth/google/link.
+type LinkRequest struct {
+	IDToken string `json:"id_token"`
+}
+
+// LinkStatusResponse is GET /v1/auth/google/link's payload. CanUnlink is
+// false for an account whose only login method is Google.
+type LinkStatusResponse struct {
+	Linked    bool `json:"linked"`
+	CanUnlink bool `json:"can_unlink"`
+}
+
 type AuthenticateResponse struct {
 	MerchantID string `json:"merchant_id"`
 	UserID     string `json:"user_id"`

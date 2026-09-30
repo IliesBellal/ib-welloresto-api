@@ -79,3 +79,87 @@ func (r *Repository) LinkGoogleSub(ctx context.Context, userID, googleSub string
 	_, err := db.ExecContext(ctx, `UPDATE users SET google_sub = ? WHERE user_id = ?`, googleSub, userID)
 	return err
 }
+
+// LinkState is a user's Google rattachement as seen from the account
+// settings: whether a google_sub is attached, and whether the account also
+// has a password (the condition for being allowed to detach it).
+type LinkState struct {
+	Linked      bool
+	HasPassword bool
+}
+
+// GetLinkState returns userID's LinkState, or (nil, nil) if no such user.
+func (r *Repository) GetLinkState(ctx context.Context, userID string) (*LinkState, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	var s LinkState
+	err := db.QueryRowContext(ctx, `
+		SELECT google_sub IS NOT NULL, password <> '' FROM users WHERE user_id = ?
+	`, userID).Scan(&s.Linked, &s.HasPassword)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// FindUserIDByGoogleSub returns the user_id holding googleSub, or "" if none.
+// Unlike FindTokenByGoogleSub, does not require a users_rights row.
+func (r *Repository) FindUserIDByGoogleSub(ctx context.Context, googleSub string) (string, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	var userID string
+	err := db.QueryRowContext(ctx, `SELECT user_id FROM users WHERE google_sub = ?`, googleSub).Scan(&userID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return userID, err
+}
+
+// LinkGoogleSubIfUnlinked attaches googleSub to userID from the account
+// settings. The WHERE guard (google_sub IS NULL) makes "already linked to a
+// different Google account" atomic with the write: matched=false then means
+// the caller must unlink first. An account with a password becomes 'both' —
+// it now genuinely has two working login methods, same rule as
+// auth.AuthRepository.SetPasswordForGoogleAccount.
+func (r *Repository) LinkGoogleSubIfUnlinked(ctx context.Context, userID, googleSub string) (matched bool, err error) {
+	db := dbx.GetDB(ctx, r.database)
+	res, err := db.ExecContext(ctx, `
+		UPDATE users
+		SET google_sub = ?,
+		    auth_provider = CASE WHEN password <> '' THEN 'both' ELSE auth_provider END
+		WHERE user_id = ? AND google_sub IS NULL
+	`, googleSub, userID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// UnlinkGoogleSub detaches userID's Google identity. Guarded on
+// password <> '' in the same statement: an account without a password must
+// keep Google, or it would be left with no way to log in. matched=false
+// covers both "not linked" and "no password" — the caller disambiguates
+// with GetLinkState.
+func (r *Repository) UnlinkGoogleSub(ctx context.Context, userID string) (matched bool, err error) {
+	db := dbx.GetDB(ctx, r.database)
+	res, err := db.ExecContext(ctx, `
+		UPDATE users
+		SET google_sub = NULL, auth_provider = 'password'
+		WHERE user_id = ? AND google_sub IS NOT NULL AND password <> ''
+	`, userID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}

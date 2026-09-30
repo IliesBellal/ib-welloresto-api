@@ -548,6 +548,12 @@ var (
 	ErrGoogleAccountNotFound    = errors.New("google_account_not_found")
 	ErrGoogleAccountHasPassword = errors.New("google_account_has_password")
 
+	// /v1/auth/google/link — rattachement d'un compte Google depuis les
+	// paramètres du compte (session déjà ouverte).
+	ErrGoogleAccountLinkedElsewhere = errors.New("google_account_linked_elsewhere")
+	ErrGoogleAlreadyLinked          = errors.New("google_already_linked")
+	ErrGoogleUnlinkRequiresPassword = errors.New("google_unlink_requires_password")
+
 	// LOT A Semaine 3, Chantier 13 — POST /v1/merchants/{id}/onboarding/{code}/skip
 	ErrOnboardingTaskNotSkippable   = errors.New("onboarding_task_not_skippable")
 	ErrOnboardingSkipReasonRequired = errors.New("onboarding_skip_reason_required")
@@ -1761,6 +1767,21 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusConflict
 		errorStatus = "google_account_has_password"
 		errorMsg = "This email already has a password-based account. Log in with your password, then link Google from settings."
+
+	case errors.Is(err, ErrGoogleAccountLinkedElsewhere):
+		status = http.StatusConflict
+		errorStatus = "google_account_linked_elsewhere"
+		errorMsg = "This Google account is already linked to another Wello Resto account."
+
+	case errors.Is(err, ErrGoogleAlreadyLinked):
+		status = http.StatusConflict
+		errorStatus = "google_already_linked"
+		errorMsg = "A different Google account is already linked to this account. Unlink it first."
+
+	case errors.Is(err, ErrGoogleUnlinkRequiresPassword):
+		status = http.StatusConflict
+		errorStatus = "google_unlink_requires_password"
+		errorMsg = "This account has no password: unlinking Google would leave it without any way to log in."
 
 	case errors.Is(err, ErrUnknownPackageID):
 		status = http.StatusBadRequest
