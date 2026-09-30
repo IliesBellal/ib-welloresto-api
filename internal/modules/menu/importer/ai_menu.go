@@ -275,9 +275,13 @@ func (m *aiMerger) addPage(page *AIMenuPage, photo int) {
 		if f.PriceCents != nil && *f.PriceCents > 0 {
 			price = fmt.Sprintf(" à %s €", formatCents(*f.PriceCents))
 		}
+		// Seules les formules composées de produits de la carte arrivent ici :
+		// une formule à choix simples est lue comme un produit à options
+		// (menuOCRSystemPrompt).
 		m.warn(WarningAIFormulaNotCreated, photoRef, fmt.Sprintf(
-			"formule « %s »%s détectée sur la photo %d : non créée, les formules n'existent pas encore dans Wello",
-			name, price, photo))
+			"formule « %s »%s détectée sur la photo %d : non créée, elle reprend des produits de la carte. "+
+				"À créer à la main : une promotion, ou un produit « %s » à prix fixe",
+			name, price, photo, name))
 	}
 
 	for _, w := range page.Warnings {

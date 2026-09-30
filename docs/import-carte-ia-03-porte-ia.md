@@ -224,3 +224,44 @@ Confiance (`high` / `medium` / `low`, toute autre valeur devient `low`), problè
 | `ab8b313` | Migration 161 et repository des brouillons et crédits |
 | `ea6cdc0` | Service, consigne, handler, config, routes + tests |
 | *(suivant)* | Cette doc, `CLAUDE.md` |
+
+---
+
+## 8. Retours du test de bout en bout (2026-09-30)
+
+Le test sur staging a réussi : 2 photos, 42 produits, 37,7 s et 26,4 s, environ 0,19 $. La relecture d'Ilies a donné quatre changements. La partie back-office est décrite dans `wello-back-office/docs/import-produits-phase10-photo.md`.
+
+### D14 — Formules : deux cas
+- **Formule à choix simples** : ses choix ne sont pas vendus seuls sur la carte (« menu enfant : nuggets ou tenders, compote ou jus »). Le modèle la lit comme **un produit configurable** :
+  - prix de la formule, nature `food` ;
+  - un groupe d'options par étape de choix, min 1 et max 1 ;
+  - un problème « formule convertie en produit à choix : vérifier les choix », donc un avertissement `ai_low_confidence` à la relecture.
+  
+  Rien ne change dans le pipeline : ce sont un produit et des groupes d'options ordinaires (D6).
+- **Formule composée de produits de la carte** (entrée + plat + dessert) : toujours non créée. L'avertissement `ai_formula_not_created` propose maintenant de la créer à la main, en promotion ou en produit « Menu … » à prix fixe. Le vrai développement des formules reste hors de ce chantier.
+- En cas de doute, le modèle garde la formule dans `formulas`, ce qui ne crée rien.
+- Seule la consigne change (`menuOCRSystemPrompt`). Elle **n'a pas encore été retestée sur de vraies photos** ; c'est à faire au prochain test staging.
+
+### D15 — Prix et TVA modifiables produit par produit
+La relecture remplace la colonne « Nature » et le tableau de résolution des taux par un prix et un taux de TVA modifiables pour chaque canal. Il y a deux nouvelles décisions.
+- **`price_per_product`** : `{external_id: {in, take_away, delivery}}`, en centimes.
+  - Appliquée par `applyAIDecisions` sur la copie du canonique.
+  - Chaque prix doit être entre 0 et 10 000 €. Un prix sur un produit groupe ou sur un produit absent est refusé (`invalid_price_decision`).
+  - Un prix saisi recalcule `AllPricesZero`, donc le statut disponible ou `removed_from_menu`.
+- **`tva_per_product`** : `{external_id: {in?, take_away?, delivery?}}`, des `tva_id`.
+  - Appliquée par `assignChannels`. Elle prime sur le taux déduit de la nature.
+  - Chaque id est revérifié contre son canal (`describeID`). Un id inconnu, d'un autre canal ou sur un produit absent donne `invalid_tva_mapping`.
+  - Un canal non renseigné garde la résolution habituelle.
+  - Une TVA choisie débloque un produit `other`, sans qu'il faille changer sa nature.
+- **Groupes :**
+  - un produit groupe n'est jamais vendu ; il prend la TVA de sa première déclinaison créée (`resolveGroups`) ;
+  - une TVA qu'il ne sait pas résoudre ne bloque plus le lot ;
+  - un groupe qui n'est pas créé (moins de deux déclinaisons) ne réclame pas de TVA non plus.
+- **Ce qui ne change pas :**
+  - `kind_per_product` reste accepté ;
+  - la confirmation `tva_confirmed` reste obligatoire ; le back-office la place en fin de page.
+
+| Vérification | Résultat |
+|---|---|
+| `ai_decisions_test.go` : TVA par produit (produit `other` débloqué, groupe aligné sur ses déclinaisons), TVA partielle (un seul canal), prix saisis (canonique d'origine intact), 7 décisions invalides (prix négatif, aberrant, sur un groupe, sur un produit absent ; TVA d'un autre canal, inconnue, sur un produit absent) | OK |
+| `go test ./internal/modules/menu/...` | OK |

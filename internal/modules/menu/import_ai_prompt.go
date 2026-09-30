@@ -34,8 +34,10 @@ Suppléments et options (option_groups) :
 - Les suppléments et choix proposés (« supplément fromage +1 € », « sauce au choix : ketchup, mayonnaise ») forment des groupes d'options : nom du groupe, options avec extra_price_cents (0 si gratuit), min et max de choix si la carte les indique (sinon min 0 et max 0).
 - Rattache un groupe d'options à un produit (option_group_refs) seulement si la carte le relie explicitement à ce produit ou à sa rubrique.
 
-Formules et menus composés (formulas) :
-- Une formule (« Menu midi : entrée + plat 15,90 € », « menu enfant ») va dans formulas, jamais dans products.
+Formules et menus composés : deux cas.
+- Formule à choix simples, dont les choix ne sont pas vendus séparément sur la carte (« Menu enfant 8,50 € : nuggets ou tenders, compote ou jus de pomme ») : c'est un produit configurable. Crée-la dans products (nom de la formule, prix de la formule, kind food), avec un groupe d'options par étape de choix (« Plat au choix » : Nuggets, Tenders ; « Dessert ou boisson » : Compote, Jus de pomme), min 1 et max 1, extra_price_cents 0 sauf supplément écrit, rattachés par option_group_refs. Ajoute dans issues : « formule convertie en produit à choix : vérifier les choix ».
+- Formule composée de produits de la carte (« Menu midi : entrée + plat + dessert 15,90 € », « plat du jour + café ») : elle va dans formulas, jamais dans products. Ne crée pas de produit pour elle.
+- En cas de doute entre les deux, utilise formulas.
 
 Nature du produit (kind), qui sert à proposer la TVA :
 - food : plats, sandwichs, desserts, tout ce qui se mange ;
