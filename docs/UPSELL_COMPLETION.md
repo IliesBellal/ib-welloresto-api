@@ -191,8 +191,18 @@ liste complète tronquée ensuite.
   peut pas mesurer l'effet d'un changement de score sans suivi des
   acceptations.
 - **Exclure les lignes `is_upsell` de l'analyse**, pour éviter qu'une
-  suggestion se renforce elle-même. Ce drapeau vaut toujours `false` pour
-  l'instant, donc sans effet aujourd'hui.
+  suggestion se renforce elle-même. Mise à jour du 2026-09-28 : le drapeau
+  n'est plus toujours `false`. Les trois canaux (POS, borne, SNO) l'écrivent
+  depuis 2026-09 (voir `internal/modules/stats/service.go`). Il reste peu
+  utilisé, car l'upsell n'est activé que chez très peu de commerçants.
+  La question vaut pour deux calculs :
+  - les associations « achetés ensemble » (cron upsell) ;
+  - le calcul nocturne de `is_popular` (`UpdatePopularProducts`, refonte du
+    2026-09-28) : un produit populaire est mis en avant, donc suggéré, donc
+    vendu en upsell, et reste populaire. Décision d'Ilies (2026-09-28) :
+    garder les lignes upsell pour l'instant et trancher lors de l'analyse
+    upsell prévue dans 3 mois (vers fin décembre 2026), en comparant le
+    classement avec et sans ces lignes.
 - **Suivi des acceptations** : 1 acceptation enregistrée sur 320
   suggestions. Sans ce suivi, on ne pourra pas savoir si ce chantier améliore
   les ventes. Chantier séparé, voir

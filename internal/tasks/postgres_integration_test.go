@@ -284,64 +284,271 @@ func TestComputeAndStoreAverageDistributionTime_Postgres(t *testing.T) {
 }
 
 // --- UpdatePopularProducts (par marchand) --------------------------------
+//
+// Règles testées : docs/POPULAR_PRODUCTS.md (P1 à P11). Les produits sont
+// créés il y a 60 jours sauf mention contraire, pour que le score ne dépende
+// que des commandes : une commande récente vaut environ 1,85 point
+// (28 × ln 2 / (14 × 0,75)).
 
-func TestUpdateMerchantPopularProducts_Postgres(t *testing.T) {
-	rawDB := pgtest.Open(t)
-	ctx := context.Background()
-	merchantID := seedTaskMerchant(t, rawDB, ctx, 1)
+// popularProductSeed décrit un produit à insérer. Les champs vides prennent
+// les valeurs d'un produit affichable ordinaire.
+type popularProductSeed struct {
+	name        string
+	category    string
+	isPopular   bool
+	disabled    bool
+	status      string
+	isGroup     bool
+	byProductOf int64
+	ageDays     int
+}
 
-	var popularProductID, staleProductID int64
-	if err := rawDB.QueryRowContext(ctx, `
-		INSERT INTO products (merchant_id, name, price, category)
-		VALUES ($1, 'itest popular', 500, 'itest-cat')
-		RETURNING product_id`, merchantID).Scan(&popularProductID); err != nil {
-		t.Fatalf("seed popular product: %v", err)
+func seedPopularCategory(t *testing.T, db *sql.DB, ctx context.Context, merchantID, categID string) {
+	t.Helper()
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO productcateg (merchant_id, merchant_categ_id, categ_name, categ_order)
+		VALUES ($1, $2, $3, 0)`, merchantID, categID, categID); err != nil {
+		t.Fatalf("seed productcateg %s: %v", categID, err)
 	}
-	if err := rawDB.QueryRowContext(ctx, `
-		INSERT INTO products (merchant_id, name, price, category, is_popular)
-		VALUES ($1, 'itest stale', 500, 'itest-cat-2', TRUE)
-		RETURNING product_id`, merchantID).Scan(&staleProductID); err != nil {
-		t.Fatalf("seed stale product: %v", err)
-	}
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM productcateg WHERE merchant_id = $1`, merchantID)
+	})
+}
 
-	// 6 commandes récentes (< 30 jours) avec 1 orderitem chacune sur le
-	// produit "popular" -> doit ressortir en top catégorie ET top global.
-	// Le produit "stale" n'a aucune commande récente -> is_popular doit être
-	// remis à FALSE par le reset.
-	now := time.Now().UTC()
-	for i := 0; i < 6; i++ {
+func seedPopularProduct(t *testing.T, db *sql.DB, ctx context.Context, merchantID string, p popularProductSeed) int64 {
+	t.Helper()
+	status := p.status
+	if status == "" {
+		status = "available"
+	}
+	age := p.ageDays
+	if age == 0 {
+		age = 60
+	}
+	var byProductOf interface{}
+	if p.byProductOf != 0 {
+		byProductOf = p.byProductOf
+	}
+	var id int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO products (merchant_id, name, price, category, is_popular, enabled, status,
+		                      is_product_group, by_product_of, creation_date)
+		VALUES ($1, $2, 500, $3, $4, $5, $6, $7, $8, now() - make_interval(days => $9))
+		RETURNING product_id`,
+		merchantID, p.name, p.category, p.isPopular, !p.disabled, status,
+		p.isGroup, byProductOf, age).Scan(&id); err != nil {
+		t.Fatalf("seed product %s: %v", p.name, err)
+	}
+	return id
+}
+
+// popularOrders insère des commandes d'un seul produit. Sans state ni
+// brandStatus, les commandes sont CLOSED / CLOSED (valides).
+type popularOrders struct {
+	merchantID  string
+	nextNum     int
+	state       string
+	brandStatus string
+}
+
+// add insère n commandes du produit, créées ageDays jours plus tôt.
+func (o *popularOrders) add(t *testing.T, db *sql.DB, ctx context.Context, productID int64, n int, ageDays float64, isUpsell bool) {
+	t.Helper()
+	state, brandStatus := o.state, o.brandStatus
+	if state == "" {
+		state, brandStatus = "CLOSED", "CLOSED"
+	}
+	created := time.Now().UTC().Add(-time.Duration(ageDays * float64(24*time.Hour)))
+	for i := 0; i < n; i++ {
+		o.nextNum++
 		var orderID int64
-		if err := rawDB.QueryRowContext(ctx, `
-			INSERT INTO orders (merchant_id, order_num, brand_status, price, tva, ht, created_by, creation_date)
-			VALUES ($1, $2, 'PENDING_APPROVAL', 500, 0, 500, 'itest', $3)
-			RETURNING order_id`, merchantID, 100+i, now.Add(-time.Duration(i)*time.Hour)).Scan(&orderID); err != nil {
-			t.Fatalf("seed order %d: %v", i, err)
+		if err := db.QueryRowContext(ctx, `
+			INSERT INTO orders (merchant_id, order_num, brand_status, state, price, tva, ht, created_by, creation_date)
+			VALUES ($1, $2, $3, $4, 500, 0, 500, 'itest', $5)
+			RETURNING order_id`, o.merchantID, o.nextNum, brandStatus, state, created).Scan(&orderID); err != nil {
+			t.Fatalf("seed order: %v", err)
 		}
-		if _, err := rawDB.ExecContext(ctx, `
-			INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, price)
-			VALUES ($1, $2, $3, 1, 500)`, orderID, popularProductID, merchantID); err != nil {
-			t.Fatalf("seed orderitem %d: %v", i, err)
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, price, is_upsell)
+			VALUES ($1, $2, $3, 1, 500, $4)`, orderID, productID, o.merchantID, isUpsell); err != nil {
+			t.Fatalf("seed orderitem: %v", err)
 		}
 	}
+}
 
-	tm := &TasksManager{DB: rawDB}
+func popularFlags(t *testing.T, db *sql.DB, ctx context.Context, merchantID string) map[int64]bool {
+	t.Helper()
+	rows, err := db.QueryContext(ctx,
+		`SELECT product_id, COALESCE(is_popular, FALSE) FROM products WHERE merchant_id = $1`, merchantID)
+	if err != nil {
+		t.Fatalf("read flags: %v", err)
+	}
+	defer rows.Close()
+	flags := make(map[int64]bool)
+	for rows.Next() {
+		var id int64
+		var flag bool
+		if err := rows.Scan(&id, &flag); err != nil {
+			t.Fatalf("scan flags: %v", err)
+		}
+		flags[id] = flag
+	}
+	return flags
+}
+
+func runPopular(t *testing.T, db *sql.DB, ctx context.Context, merchantID string) map[int64]bool {
+	t.Helper()
+	tm := &TasksManager{DB: db}
 	if err := tm.updateMerchantPopularProducts(ctx, merchantID); err != nil {
 		t.Fatalf("updateMerchantPopularProducts failed against postgres: %v", err)
 	}
+	return popularFlags(t, db, ctx, merchantID)
+}
 
-	var popularFlag, staleFlag sql.NullBool
-	if err := rawDB.QueryRowContext(ctx, `SELECT is_popular FROM products WHERE product_id = $1 AND merchant_id = $2`, popularProductID, merchantID).Scan(&popularFlag); err != nil {
-		t.Fatalf("read back popular product: %v", err)
+func assertPopular(t *testing.T, flags map[int64]bool, want map[int64]bool, names map[int64]string) {
+	t.Helper()
+	for id, w := range want {
+		if flags[id] != w {
+			t.Errorf("%s (product %d): is_popular = %v, want %v", names[id], id, flags[id], w)
+		}
 	}
-	if !popularFlag.Valid || !popularFlag.Bool {
-		t.Fatalf("expected popular product is_popular=TRUE, got %+v", popularFlag)
-	}
-	if err := rawDB.QueryRowContext(ctx, `SELECT is_popular FROM products WHERE product_id = $1 AND merchant_id = $2`, staleProductID, merchantID).Scan(&staleFlag); err != nil {
-		t.Fatalf("read back stale product: %v", err)
-	}
-	if !staleFlag.Valid || staleFlag.Bool {
-		t.Fatalf("expected stale product is_popular reset to FALSE, got %+v", staleFlag)
-	}
+}
+
+func TestUpdateMerchantPopularProducts_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+	m := seedTaskMerchant(t, db, ctx, 1)
+	seedPopularCategory(t, db, ctx, m, "it-plats")
+	seedPopularCategory(t, db, ctx, m, "it-desserts")
+
+	best := seedPopularProduct(t, db, ctx, m, popularProductSeed{name: "best", category: "it-plats"})
+	other := seedPopularProduct(t, db, ctx, m, popularProductSeed{name: "other", category: "it-plats"})
+	stale := seedPopularProduct(t, db, ctx, m, popularProductSeed{name: "stale", category: "it-plats", isPopular: true})
+	filler := seedPopularProduct(t, db, ctx, m, popularProductSeed{name: "filler", category: "it-plats"})
+	dessert := seedPopularProduct(t, db, ctx, m, popularProductSeed{name: "dessert", category: "it-desserts"})
+	disabled := seedPopularProduct(t, db, ctx, m, popularProductSeed{name: "disabled", category: "it-desserts", isPopular: true, disabled: true})
+	removed := seedPopularProduct(t, db, ctx, m, popularProductSeed{name: "removed", category: "it-desserts", status: "removed_from_menu"})
+	names := map[int64]string{best: "best", other: "other", stale: "stale", filler: "filler",
+		dessert: "dessert", disabled: "disabled", removed: "removed"}
+
+	orders := &popularOrders{merchantID: m, nextNum: 1000}
+	orders.add(t, db, ctx, best, 8, 1, false)
+	orders.add(t, db, ctx, other, 5, 1, false) // 2e d'une catégorie de 4 : plafond 1
+	orders.add(t, db, ctx, dessert, 4, 2, false)
+	orders.add(t, db, ctx, disabled, 10, 1, false) // vend, mais désactivé
+	orders.add(t, db, ctx, removed, 10, 1, false)  // vend, mais retiré de la carte
+
+	want := map[int64]bool{best: true, other: false, stale: false, filler: false,
+		dessert: true, disabled: false, removed: false}
+	assertPopular(t, runPopular(t, db, ctx, m), want, names)
+
+	// Un second passage ne change rien.
+	assertPopular(t, runPopular(t, db, ctx, m), want, names)
+}
+
+func TestUpdateMerchantPopularProducts_InvalidOrdersIgnored_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+	m := seedTaskMerchant(t, db, ctx, 1)
+	seedPopularCategory(t, db, ctx, m, "it-a")
+	seedPopularCategory(t, db, ctx, m, "it-b")
+	seedPopularCategory(t, db, ctx, m, "it-c")
+	seedPopularCategory(t, db, ctx, m, "it-d")
+
+	canceled := seedPopularProduct(t, db, ctx, m, popularProductSeed{name: "canceled", category: "it-a"})
+	denied := seedPopularProduct(t, db, ctx, m, popularProductSeed{name: "denied", category: "it-b"})
+	open := seedPopularProduct(t, db, ctx, m, popularProductSeed{name: "open", category: "it-c"})
+	valid := seedPopularProduct(t, db, ctx, m, popularProductSeed{name: "valid", category: "it-d"})
+	names := map[int64]string{canceled: "canceled", denied: "denied", open: "open", valid: "valid"}
+
+	// brand_status en minuscules : certaines lignes de prod l'ont ainsi.
+	(&popularOrders{merchantID: m, nextNum: 2000, state: "CLOSED", brandStatus: "canceled"}).add(t, db, ctx, canceled, 10, 1, false)
+	(&popularOrders{merchantID: m, nextNum: 2100, state: "CLOSED", brandStatus: "DENIED"}).add(t, db, ctx, denied, 10, 1, false)
+	(&popularOrders{merchantID: m, nextNum: 2200, state: "OPEN", brandStatus: "PENDING"}).add(t, db, ctx, open, 10, 1, false)
+	(&popularOrders{merchantID: m, nextNum: 2300, state: "DONE", brandStatus: "COMPLETED"}).add(t, db, ctx, valid, 3, 1, false)
+	// Hors fenêtre de 28 jours : ignorées même si valides.
+	(&popularOrders{merchantID: m, nextNum: 2400}).add(t, db, ctx, canceled, 10, 30, false)
+
+	assertPopular(t, runPopular(t, db, ctx, m),
+		map[int64]bool{canceled: false, denied: false, open: false, valid: true}, names)
+}
+
+func TestUpdateMerchantPopularProducts_VariantUsesGroupCategory_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+	m := seedTaskMerchant(t, db, ctx, 1)
+	seedPopularCategory(t, db, ctx, m, "it-boissons")
+
+	group := seedPopularProduct(t, db, ctx, m, popularProductSeed{name: "coca", category: "it-boissons", isGroup: true})
+	small := seedPopularProduct(t, db, ctx, m, popularProductSeed{name: "coca 33cl", byProductOf: group})
+	large := seedPopularProduct(t, db, ctx, m, popularProductSeed{name: "coca 50cl", byProductOf: group})
+	orphan := seedPopularProduct(t, db, ctx, m, popularProductSeed{name: "orphan"})
+	names := map[int64]string{group: "group", small: "coca 33cl", large: "coca 50cl", orphan: "orphan"}
+
+	orders := &popularOrders{merchantID: m, nextNum: 3000}
+	orders.add(t, db, ctx, small, 6, 1, false)
+	orders.add(t, db, ctx, large, 1, 1, false)
+	orders.add(t, db, ctx, orphan, 6, 1, false) // catégorie vide, pas de groupe : jamais affiché
+
+	assertPopular(t, runPopular(t, db, ctx, m),
+		map[int64]bool{group: false, small: true, large: false, orphan: false}, names)
+}
+
+func TestUpdateMerchantPopularProducts_UpsellLinesCounted_Postgres(t *testing.T) {
+	// P3 : les ventes upsell comptent pour l'instant (à revoir lors de
+	// l'analyse upsell de fin 2026).
+	db := pgtest.Open(t)
+	ctx := context.Background()
+	m := seedTaskMerchant(t, db, ctx, 1)
+	seedPopularCategory(t, db, ctx, m, "it-desserts")
+
+	upsold := seedPopularProduct(t, db, ctx, m, popularProductSeed{name: "upsold", category: "it-desserts"})
+	(&popularOrders{merchantID: m, nextNum: 4000}).add(t, db, ctx, upsold, 4, 1, true)
+
+	assertPopular(t, runPopular(t, db, ctx, m),
+		map[int64]bool{upsold: true}, map[int64]string{upsold: "upsold"})
+}
+
+func TestUpdateMerchantPopularProducts_Hysteresis_Postgres(t *testing.T) {
+	// 3 commandes vieilles de 10 jours : score ≈ 3,4, sous le seuil de 4 mais
+	// au-dessus de 75 % de ce seuil.
+	db := pgtest.Open(t)
+	ctx := context.Background()
+	m := seedTaskMerchant(t, db, ctx, 1)
+	seedPopularCategory(t, db, ctx, m, "it-a")
+	seedPopularCategory(t, db, ctx, m, "it-b")
+
+	incumbent := seedPopularProduct(t, db, ctx, m, popularProductSeed{name: "incumbent", category: "it-a", isPopular: true})
+	newcomer := seedPopularProduct(t, db, ctx, m, popularProductSeed{name: "newcomer", category: "it-b"})
+	names := map[int64]string{incumbent: "incumbent", newcomer: "newcomer"}
+
+	orders := &popularOrders{merchantID: m, nextNum: 5000}
+	orders.add(t, db, ctx, incumbent, 3, 10, false)
+	orders.add(t, db, ctx, newcomer, 3, 10, false)
+
+	assertPopular(t, runPopular(t, db, ctx, m),
+		map[int64]bool{incumbent: true, newcomer: false}, names)
+}
+
+func TestUpdateMerchantPopularProducts_NewProduct_Postgres(t *testing.T) {
+	// Créés il y a 2 jours. Une vente : extrapolée au-dessus du seuil, mais
+	// une seule commande ne suffit pas (P11). Trois ventes : populaire.
+	db := pgtest.Open(t)
+	ctx := context.Background()
+	m := seedTaskMerchant(t, db, ctx, 1)
+	seedPopularCategory(t, db, ctx, m, "it-a")
+	seedPopularCategory(t, db, ctx, m, "it-b")
+
+	oneSale := seedPopularProduct(t, db, ctx, m, popularProductSeed{name: "one sale", category: "it-a", ageDays: 2})
+	threeSales := seedPopularProduct(t, db, ctx, m, popularProductSeed{name: "three sales", category: "it-b", ageDays: 2})
+	names := map[int64]string{oneSale: "one sale", threeSales: "three sales"}
+
+	orders := &popularOrders{merchantID: m, nextNum: 6000}
+	orders.add(t, db, ctx, oneSale, 1, 1, false)
+	orders.add(t, db, ctx, threeSales, 3, 1, false)
+
+	assertPopular(t, runPopular(t, db, ctx, m),
+		map[int64]bool{oneSale: false, threeSales: true}, names)
 }
 
 // --- RecomputeUpsellPatterns (par marchand) ------------------------------
