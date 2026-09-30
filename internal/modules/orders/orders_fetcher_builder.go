@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"reflect"
+	"strings"
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
@@ -599,6 +600,49 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		}
 	}
 
+	// --- 12. CANCELLATION ---
+	// Requête séparée plutôt que jointure dans le header : une ligne labels
+	// dupliquée dupliquerait sinon la commande elle-même. Le nettoyage de
+	// deletion_reason_id (guillemets parasites, codes non numériques) reprend
+	// celui de analytics.reasonSubquerySelect.
+	cancellationsByOrderID := map[string]*models.OrderCancellation{}
+	{
+		step := "cancellation"
+		rawReasonID := `NULLIF(TRIM(BOTH '''' FROM o.deletion_reason_id), '')`
+		q := `
+		SELECT o.order_id, ` + rawReasonID + ` AS reason_id, o.deletion_comment,
+		       COALESCE(l.label, dr.deletion_reason_desc) AS reason_label
+		FROM orders o
+		LEFT JOIN deletion_reasons dr ON ` + castChar("dr.deletion_reason_id") + ` = ` + rawReasonID + `
+		LEFT JOIN labels l ON l.label_value = ` + castChar("dr.deletion_reason_id") + `
+			AND l.label_type = 'deletion_reason' AND l.lang = 'FR'
+		WHERE o.merchant_id = ? AND o.brand_status IN ('CANCELED', 'DENIED', 'DELETED') ` + whereFilters.SQL
+
+		rows, err := runQuery(step, q, filteredArgs()...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var orderID, reasonID, comment, label sql.NullString
+			if err := rows.Scan(&orderID, &reasonID, &comment, &label); err != nil {
+				return nil, err
+			}
+			if _, seen := cancellationsByOrderID[orderID.String]; seen {
+				continue
+			}
+			cancellation := &models.OrderCancellation{
+				ReasonID: trimmedNullString(reasonID),
+				Label:    trimmedNullString(label),
+				Comment:  trimmedNullString(comment),
+			}
+			if cancellation.ReasonID == nil && cancellation.Label == nil && cancellation.Comment == nil {
+				continue
+			}
+			cancellationsByOrderID[orderID.String] = cancellation
+		}
+	}
+
 	// =====================================================
 	// HEADER ORDERS
 	// =====================================================
@@ -808,12 +852,25 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			} else {
 				ord.Location = []models.Location{}
 			}
+			ord.Cancellation = cancellationsByOrderID[orderID.String]
 
 			orders = append(orders, ord)
 		}
 	}
 
 	return orders, nil
+}
+
+// trimmedNullString retourne nil pour un NULL ou une chaîne vide après trim.
+func trimmedNullString(value sql.NullString) *string {
+	if !value.Valid {
+		return nil
+	}
+	trimmed := strings.TrimSpace(value.String)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 func selectLastOrderCommentContent(comments []models.OrderComment) *string {

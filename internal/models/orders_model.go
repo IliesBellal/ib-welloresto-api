@@ -269,6 +269,21 @@ type Order struct {
 	DeliverySession       *DeliverySession `json:"delivery_session"`
 	CashRegister          *CashRegister    `json:"cash_register"`
 	DeliveryStop          *DeliveryStop    `json:"delivery_stop,omitempty"`
+	// Cancellation n'est renseigné que pour une commande annulée ou refusée
+	// (brand_status CANCELED / DENIED / DELETED) portant un motif ou un
+	// commentaire ; absent du JSON sinon.
+	Cancellation *OrderCancellation `json:"cancellation,omitempty"`
+}
+
+// OrderCancellation expose le motif d'annulation persisté sur orders
+// (deletion_reason_id + deletion_comment). Label est le libellé FR du motif
+// catalogué (labels, repli sur deletion_reasons.deletion_reason_desc) ; il est
+// nul quand l'id stocké n'est pas un motif du catalogue (code plateforme
+// tronqué, etc.) — ReasonID garde alors la valeur brute.
+type OrderCancellation struct {
+	ReasonID *string `json:"reason_id"`
+	Label    *string `json:"label"`
+	Comment  *string `json:"comment"`
 }
 
 // OrderUser Can be used as Responsible, OrderedBy, DeliveryMan, etc...

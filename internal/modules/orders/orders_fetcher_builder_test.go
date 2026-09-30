@@ -38,6 +38,7 @@ func expectSupportingQueries(mock sqlmock.Sqlmock) {
 		"p.order_id, p.payment_id, p.mop",                     // payments
 		"oi.quantity, oi.paid_quantity, oi.price",             // products
 		"ds.id AS delivery_session_id",                        // delivery sessions (temp)
+		"o.deletion_comment",                                  // cancellation
 	}
 	for _, f := range fragments {
 		mock.ExpectQuery(f).WillReturnRows(sqlmock.NewRows([]string{"x"}))
