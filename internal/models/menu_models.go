@@ -1,5 +1,23 @@
 package models
 
+// Catégories « fantômes » des produits créés automatiquement quand une
+// commande marketplace contient un article inconnu. Elles n'existent
+// volontairement pas dans productcateg : ces produits restent hors de la
+// caisse, du Scan&Order, de la borne et de la synchro du menu Uber (qui
+// joignent productcateg en INNER JOIN), mais les analyses peuvent les
+// rattacher à leur plateforme d'origine.
+const (
+	MarketplaceCategoryUberEats  = "UBER_EATS"
+	MarketplaceCategoryDeliveroo = "DELIVEROO"
+)
+
+// MarketplaceCategoryLabels donne le libellé affiché de chaque catégorie
+// fantôme, dans l'ordre où les analyses les listent.
+var MarketplaceCategoryLabels = []struct{ ID, Label string }{
+	{MarketplaceCategoryUberEats, "Uber Eats"},
+	{MarketplaceCategoryDeliveroo, "Deliveroo"},
+}
+
 // Top-level response
 type MenuResponse struct {
 	Status          string              `json:"status"`

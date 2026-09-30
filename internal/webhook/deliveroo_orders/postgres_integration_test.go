@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"welloresto-api/internal/database/dbx/pgtest"
+	"welloresto-api/internal/models"
 )
 
 func TestRepository_Postgres(t *testing.T) {
@@ -232,37 +233,27 @@ func TestRepository_ProductAndOptionSync_Postgres(t *testing.T) {
 		UnitPrice:       DeliverooMoney{Fractional: 990, CurrencyCode: "EUR"},
 	}
 
-	// SyncProduct's create path has its own pre-existing, independent bug:
-	// products.category is NOT NULL with no default (confirmed in the MySQL
-	// source DDL too) and this INSERT never sets it — same bug class as
-	// webhook/ubereats.CreateAttributeFromUberGroup and this module's
-	// getOrCreateDefaultGroupTx. Documented in the Tier2 report, left unfixed.
-	// Confirm the failure is that specific bug, not a regression in the
-	// dbx/InsertReturningID conversion done here.
-	if _, err := repo.SyncProduct(ctx, merchantID, item); err == nil {
-		t.Fatal("expected SyncProduct create-path to fail on the pre-existing category NOT NULL bug")
-	} else if !strings.Contains(err.Error(), "category") {
-		t.Fatalf("expected a category NOT NULL violation, got: %v", err)
+	// SyncProduct's create path: an unknown Deliveroo item becomes a product
+	// in the DELIVEROO ghost category (products.category is NOT NULL with no
+	// default — this INSERT used to omit it and failed) plus its mapping.
+	productID, err := repo.SyncProduct(ctx, merchantID, item)
+	if err != nil {
+		t.Fatalf("SyncProduct create-path failed against postgres: %v", err)
+	}
+	productIntID, err = strconv.ParseInt(productID, 10, 64)
+	if err != nil {
+		t.Fatalf("SyncProduct returned a non-numeric product id %q: %v", productID, err)
+	}
+	var category string
+	if err := db.QueryRowContext(ctx, `SELECT category FROM products WHERE product_id = $1`, productIntID).Scan(&category); err != nil {
+		t.Fatalf("read created product: %v", err)
+	}
+	if category != models.MarketplaceCategoryDeliveroo {
+		t.Fatalf("created product category = %q, want %q", category, models.MarketplaceCategoryDeliveroo)
 	}
 
-	// Seed the product/mapping directly (working around the bug above) to
-	// exercise the parts of SyncProduct/GetProductMapping that are this
-	// module's actual Tier2 conversion surface: the CAST-based
+	// SyncProduct's "already mapped" read path: exercises the CAST-based
 	// products.product_id (integer) <-> *.product_id (varchar) join.
-	if err := db.QueryRowContext(ctx, `
-		INSERT INTO products (merchant_id, name, product_desc, price, category)
-		VALUES ($1, $2, $3, $4, 'itest-category') RETURNING product_id`,
-		merchantID, item.Name, item.OperationalName, item.UnitPrice.Fractional).Scan(&productIntID); err != nil {
-		t.Fatalf("seed product: %v", err)
-	}
-	productID := strconv.FormatInt(productIntID, 10)
-	if _, err := db.ExecContext(ctx, `
-		INSERT INTO integration_deliveroo_products_mapping(merchant_id, product_id, item_id, item_name)
-		VALUES ($1, $2, $3, $4)`, merchantID, productID, posItemID, item.OperationalName); err != nil {
-		t.Fatalf("seed integration_deliveroo_products_mapping: %v", err)
-	}
-
-	// SyncProduct's "already mapped" read path: exercises the CAST-based join.
 	productID2, err := repo.SyncProduct(ctx, merchantID, item)
 	if err != nil {
 		t.Fatalf("SyncProduct (existing mapping via CAST join) failed against postgres: %v", err)

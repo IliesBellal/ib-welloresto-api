@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/models"
 )
 
 // ---- Produits (POST /analytics/products) ----
@@ -30,13 +31,26 @@ import (
 // GetProductCategories returns every enabled category for the accessible
 // merchant scope, ordered the same way the POS/menu screens order them
 // (categ_order) — read from productcateg, never the maquette's hardcoded
-// entrees/plats/desserts/boissons list (PROMPT 16 §3).
+// entrees/plats/desserts/boissons list (PROMPT 16 §3). The marketplace
+// "ghost" categories (models.MarketplaceCategoryLabels), which have no
+// productcateg row by design, are appended last — only those actually
+// carried by a product of the scope, so a merchant without Deliveroo never
+// sees a Deliveroo filter.
 func (r *Repository) GetProductCategories(ctx context.Context, merchantIDs []string) ([]ProductCategoryOption, error) {
 	query := `
 		SELECT merchant_categ_id, categ_name
 		FROM productcateg
 		WHERE merchant_id = ANY(?) AND enabled = TRUE
 		ORDER BY categ_order ASC
+	`
+	marketplaceIDs := make([]string, len(models.MarketplaceCategoryLabels))
+	for i, c := range models.MarketplaceCategoryLabels {
+		marketplaceIDs[i] = c.ID
+	}
+	marketplaceQuery := `
+		SELECT DISTINCT category
+		FROM products
+		WHERE merchant_id = ANY(?) AND category = ANY(?)
 	`
 
 	result := make([]ProductCategoryOption, 0)
@@ -54,12 +68,52 @@ func (r *Repository) GetProductCategories(ctx context.Context, merchantIDs []str
 			}
 			result = append(result, row)
 		}
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		mRows, err := tx.QueryContext(ctx, marketplaceQuery, merchantIDs, marketplaceIDs)
+		if err != nil {
+			return err
+		}
+		defer mRows.Close()
+
+		present := make(map[string]bool)
+		for mRows.Next() {
+			var id string
+			if err := mRows.Scan(&id); err != nil {
+				return err
+			}
+			present[id] = true
+		}
+		if err := mRows.Err(); err != nil {
+			return err
+		}
+		for _, c := range models.MarketplaceCategoryLabels {
+			if present[c.ID] {
+				result = append(result, ProductCategoryOption{CategoryID: c.ID, Name: c.Label})
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("get product categories: %w", err)
 	}
 	return result, nil
+}
+
+// marketplaceCategoryLabelSQL maps a products.category column to the label
+// of its marketplace ghost category, '' otherwise — the fallback when the
+// productcateg LEFT JOIN finds nothing. Literals come from
+// models.MarketplaceCategoryLabels, never from the request.
+func marketplaceCategoryLabelSQL(column string) string {
+	var b strings.Builder
+	b.WriteString("CASE " + column)
+	for _, c := range models.MarketplaceCategoryLabels {
+		fmt.Fprintf(&b, " WHEN '%s' THEN '%s'", c.ID, c.Label)
+	}
+	b.WriteString(" ELSE '' END")
+	return b.String()
 }
 
 // productsCategoryFilter appends the optional category_id filter to a
@@ -265,7 +319,7 @@ func (r *Repository) GetProductsPage(ctx context.Context, merchantIDs []string, 
 				p.product_id::text AS product_id,
 				p.name AS name,
 				p.category AS category_id,
-				COALESCE(pc.categ_name, '') AS category_name,
+				COALESCE(pc.categ_name, `+marketplaceCategoryLabelSQL("p.category")+`) AS category_name,
 				SUM(oi.quantity) AS quantity_sold,
 				SUM((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity) AS revenue_ttc_cents,
 				`+roundToIntExpr("SUM("+htLineExpr+")")+` AS revenue_ht_cents,

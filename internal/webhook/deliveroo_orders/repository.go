@@ -11,6 +11,7 @@ import (
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
+	"welloresto-api/internal/models"
 )
 
 type Repository struct {
@@ -224,8 +225,8 @@ func (r *Repository) SyncProduct(ctx context.Context, merchantID string, item De
 	}
 
 	newID, err := db.InsertReturningID(ctx,
-		`INSERT INTO products (merchant_id, name, product_desc, price) VALUES(?, ?, ?, ?)`,
-		"product_id", merchantID, item.Name, item.OperationalName, item.UnitPrice.Fractional)
+		`INSERT INTO products (merchant_id, name, product_desc, price, category) VALUES(?, ?, ?, ?, ?)`,
+		"product_id", merchantID, item.Name, item.OperationalName, item.UnitPrice.Fractional, models.MarketplaceCategoryDeliveroo)
 	if err != nil {
 		logger.FromContext(ctx).Error(err.Error())
 		return "", err

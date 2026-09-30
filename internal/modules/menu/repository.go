@@ -2754,13 +2754,14 @@ func (r *MenuRepository) CreateExternalProductTx(ctx context.Context, merchantID
 			tva_delivery_id,
 			tva_take_away_id
 		)
-		VALUES (?, ?, ?, 'UBER_EATS_TEMP', ?, FALSE, 5, 9, 3)
+		VALUES (?, ?, ?, ?, ?, FALSE, 5, 9, 3)
 	`
 
 	newID, err := db.InsertReturningID(ctx, query, "product_id",
 		merchantID,
 		name,
 		description,
+		models.MarketplaceCategoryUberEats,
 		price,
 	)
 	if err != nil {
