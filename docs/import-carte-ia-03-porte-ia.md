@@ -238,7 +238,7 @@ Le test sur staging a réussi : 2 photos, 42 produits, 37,7 s et 26,4 s, environ
   - un problème « formule convertie en produit à choix : vérifier les choix », donc un avertissement `ai_low_confidence` à la relecture.
   
   Rien ne change dans le pipeline : ce sont un produit et des groupes d'options ordinaires (D6).
-- **Formule composée de produits de la carte** (entrée + plat + dessert) : toujours non créée. L'avertissement `ai_formula_not_created` propose maintenant de la créer à la main, en promotion ou en produit « Menu … » à prix fixe. Le vrai développement des formules reste hors de ce chantier.
+- **Formule composée de produits de la carte** (entrée + plat + dessert) : toujours non créée. L'avertissement `ai_formula_not_created` invite à la configurer manuellement, en promotion ou en produit « Menu … » à prix fixe. Il est formulé en action à faire, sans dire que l'outil ne sait pas faire (retour d'Ilies). Le vrai développement des formules reste hors de ce chantier.
 - En cas de doute, le modèle garde la formule dans `formulas`, ce qui ne crée rien.
 - Seule la consigne change (`menuOCRSystemPrompt`). Elle **n'a pas encore été retestée sur de vraies photos** ; c'est à faire au prochain test staging.
 
@@ -265,3 +265,9 @@ La relecture remplace la colonne « Nature » et le tableau de résolution des t
 |---|---|
 | `ai_decisions_test.go` : TVA par produit (produit `other` débloqué, groupe aligné sur ses déclinaisons), TVA partielle (un seul canal), prix saisis (canonique d'origine intact), 7 décisions invalides (prix négatif, aberrant, sur un groupe, sur un produit absent ; TVA d'un autre canal, inconnue, sur un produit absent) | OK |
 | `go test ./internal/modules/menu/...` | OK |
+
+### Libellés affichés au restaurateur (2026-09-30)
+Les messages de la preview et du commit sont affichés tels quels dans le back-office. Ils ne citent donc plus de nom technique :
+- statut `removed_from_menu` → « Retiré du menu », le libellé de la page produits ;
+- `product_id` → « n° » ;
+- formule non créée → « à configurer manuellement… ».

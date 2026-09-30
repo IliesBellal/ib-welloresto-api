@@ -278,9 +278,11 @@ func (m *aiMerger) addPage(page *AIMenuPage, photo int) {
 		// Seules les formules composées de produits de la carte arrivent ici :
 		// une formule à choix simples est lue comme un produit à options
 		// (menuOCRSystemPrompt).
+		// Message affiché tel quel au restaurateur : on dit quoi faire, pas ce
+		// qui manque.
 		m.warn(WarningAIFormulaNotCreated, photoRef, fmt.Sprintf(
-			"formule « %s »%s détectée sur la photo %d : non créée, elle reprend des produits de la carte. "+
-				"À créer à la main : une promotion, ou un produit « %s » à prix fixe",
+			"formule « %s »%s (photo %d) : à configurer manuellement, par exemple en promotion "+
+				"ou en produit « %s » à prix fixe",
 			name, price, photo, name))
 	}
 

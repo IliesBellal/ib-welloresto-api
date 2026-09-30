@@ -665,7 +665,7 @@ func (b *commitPlanner) buildProducts() {
 				// création assumée du doublon
 			default:
 				b.block(BlockerNameCollisionUnresolved, p.ExternalID,
-					fmt.Sprintf("le produit %q existe déjà (product_id %d) : choisir de l'ignorer ou de l'importer quand même",
+					fmt.Sprintf("le produit %q existe déjà (n° %d) : choisir de l'ignorer ou de l'importer quand même",
 						p.Name, match.ProductID))
 				b.plan.Products = append(b.plan.Products, entry)
 				continue

@@ -819,7 +819,9 @@ func (b *previewBuilder) buildProducts() {
 		if p.AllPricesZero {
 			b.res.Summary.ProductsRemovedFromMenu++
 			b.warn(WarningProductRemovedFromMenu, p.ExternalID,
-				fmt.Sprintf("%q n'a aucun prix : importé en statut %s", p.Name, ProductStatusRemovedFromMenu))
+				// Libellé du back-office pour removed_from_menu : le message est
+				// affiché tel quel au restaurateur.
+				fmt.Sprintf("%q n'a aucun prix : importé avec le statut « Retiré du menu »", p.Name))
 		}
 
 		b.assignCategory(p, &entry)
