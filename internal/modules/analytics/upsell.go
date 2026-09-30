@@ -36,11 +36,9 @@ const upsellSuggestionsMinProposed = staffCancellationMinOrders
 // byte-for-byte what stats.upsellLinesWhereClause already had — including
 // the lack of `upper(o.brand_status)` this package's own
 // analyticsOrdersScopeWhere applies elsewhere (scope.go's doc comment: 8 PROD
-// rows carry a lowercase brand_status). This is a migration, not a rewrite:
-// since orderitems.is_upsell is false on every row in this system today (see
-// models.go's package doc comment), that divergence is currently
-// unobservable on either side of the migration — worth revisiting once the
-// Kiosk/ScanNOrder write-path gap closes (a separate, later lot), not now.
+// rows carry a lowercase brand_status). This is a migration, not a rewrite;
+// the divergence only matters for an upsell line on an order whose
+// brand_status is stored lowercase.
 const upsellLineHTExpr = `
 	CASE
 		WHEN tva.tva_rate = 0 THEN ((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity)
@@ -316,17 +314,64 @@ func (r *Repository) GetUpsellByStaff(ctx context.Context, merchantIDs, channels
 	return result, nil
 }
 
+// upsellTopProductsLimit bounds UpsellResponse.TopProducts — a ranking for
+// the tab, not an export.
+const upsellTopProductsLimit = 10
+
+// GetUpsellTopProducts ranks the products sold as upsell (is_upsell lines)
+// in the same scope/channel/order filter as GetUpsellTotals: units sold
+// first, HT revenue as the tie-breaker. Grouped by the ordered product
+// itself — a variant ("Coca Cola (33cl)") stays distinct from its siblings,
+// which is what the upsell engine actually proposes.
+func (r *Repository) GetUpsellTopProducts(ctx context.Context, merchantIDs, channels []string, startUTC, endUTC time.Time, limit int) ([]UpsellProductRow, error) {
+	filterPred, filterArgs := r.orderFilter.predicate()
+	query := strings.TrimSpace(`
+		SELECT p.product_id::text AS product_id,
+			p.name AS product_name,
+			SUM(oi.quantity) AS quantity_sold,
+			COUNT(*) AS upsell_lines,
+			`+roundToIntExpr("COALESCE(SUM("+upsellLineHTExpr+"), 0)")+` AS upsell_revenue_ht
+	`) + "\n" + strings.TrimSpace(upsellLinesFromJoins) + "\n" +
+		strings.TrimSpace(upsellLinesWhereClause) + `
+		AND (` + channelCaseExpr + `) = ANY(?)` + filterPred + `
+		GROUP BY p.product_id, p.name
+		ORDER BY quantity_sold DESC, upsell_revenue_ht DESC, p.product_id ASC
+		LIMIT ?
+	`
+	args := append([]interface{}{merchantIDs, startUTC, endUTC, channels}, filterArgs...)
+	args = append(args, limit)
+
+	result := make([]UpsellProductRow, 0)
+	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
+		rows, err := tx.QueryContext(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var row UpsellProductRow
+			if err := rows.Scan(&row.ProductID, &row.Name, &row.QuantitySold, &row.UpsellLines, &row.UpsellRevenueHTCents); err != nil {
+				return err
+			}
+			result = append(result, row)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get upsell top products: %w", err)
+	}
+	return result, nil
+}
+
 // GetUpsellInstrumentationActive is the switch PROMPT 19 asks for: true once
 // at least one orderitems row for this merchant scope has ever carried
 // is_upsell = true, across every period, every state, every brand_status —
 // deliberately unbounded by date or scope beyond merchant_id, since the
 // question is "has this establishment's write path ever produced this
 // signal at all," not "did it happen in the requested window." Flips to
-// true automatically, with no redeploy, the moment any channel starts
-// writing is_upsell = true on a real order line (currently only POS does —
-// see docs/audits/audit_upsell_traceability.md: Kiosk/ScanNOrder both have
-// working upsell UIs but neither serializes the flag yet, a separate later
-// lot this PROMPT does not touch).
+// true automatically the first time a channel (POS, Kiosk or ScanNOrder)
+// records an accepted upsell on a real order line.
 func (r *Repository) GetUpsellInstrumentationActive(ctx context.Context, merchantIDs []string) (bool, error) {
 	var active bool
 	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {

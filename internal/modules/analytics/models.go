@@ -1037,22 +1037,14 @@ type ClientsTopResponse struct {
 // a correctly-wired reference query; see upsell.go's doc comment for exactly
 // what changed structurally and what did not.
 //
-// The central fact this whole tab is built around: orderitems.is_upsell is
-// false on every row in this system — 0 of 77,454 lines, verified against
-// staging 2026-09-05 — not because no upsell happens, but because only the
-// POS channel actually writes true. Kiosk and ScanNOrder both have working
-// upsell UIs and both already link upsell_suggestions to the order
-// (suggestion_id transmitted, Tracker fires), but neither serializes
-// is_upsell on the order item itself yet (the traceability audit's gaps 1/2
-// — a client-side fix, deliberately a separate, later lot: this PROMPT does
-// not touch any is_upsell write path). Every field below DERIVED FROM
-// orderitems.is_upsell — CurrentPeriod/PreviousPeriod, and
-// UpsellByStaffResponse.Staff — is gated by InstrumentationActive: false
-// today, meaning the screen must show a "data not collected" message in
-// place of those numbers, never a bare 0. See
-// GetUpsellInstrumentationActive's doc comment (upsell.go) for the exact
-// detection rule, which flips automatically, with no redeploy, the day any
-// channel starts writing true.
+// orderitems.is_upsell is written by all three ordering channels (POS, Kiosk,
+// ScanNOrder — see stats.GetUpsellStats' note). Every field below DERIVED
+// FROM it — CurrentPeriod/PreviousPeriod, TopProducts, and
+// UpsellByStaffResponse.Staff — is gated by InstrumentationActive: false for
+// an establishment that has never recorded an upsell line (upsell disabled
+// or never accepted), meaning the screen must show a message in place of
+// those numbers, never a bare 0. See GetUpsellInstrumentationActive's doc
+// comment (upsell.go) for the exact detection rule.
 //
 // Suggestions (the transformation-rate block) is the one exception: it reads
 // upsell_suggestions, a completely different write path
@@ -1095,7 +1087,23 @@ type UpsellResponse struct {
 	CurrentPeriod  UpsellPeriodTotals `json:"current_period"`
 	PreviousPeriod UpsellPeriodTotals `json:"previous_period"`
 
+	// TopProducts ranks the current period's upsell products (at most
+	// upsellTopProductsLimit, upsell.go) — derived from orderitems.is_upsell,
+	// so gated by InstrumentationActive like CurrentPeriod. Never null.
+	TopProducts []UpsellProductRow `json:"top_products"`
+
 	Suggestions UpsellSuggestionsTotals `json:"suggestions"`
+}
+
+// UpsellProductRow is one entry of UpsellResponse.TopProducts. QuantitySold
+// counts units (SUM(quantity)); UpsellLines counts order lines, the unit
+// UpsellPeriodTotals.UpsellLines uses — a line "x2" is 2 units, 1 line.
+type UpsellProductRow struct {
+	ProductID            string `json:"product_id"`
+	Name                 string `json:"name"`
+	QuantitySold         int64  `json:"quantity_sold"`
+	UpsellLines          int64  `json:"upsell_lines"`
+	UpsellRevenueHTCents int64  `json:"upsell_revenue_ht_cents"`
 }
 
 // UpsellPeriodTotals.TotalOrdersCount is the rate's denominator, stated
@@ -1106,10 +1114,10 @@ type UpsellResponse struct {
 // TotalOrdersCount is the whole computation the frontend needs for "taux de
 // commandes avec au moins un upsell" — no pre-divided rate is shipped, same
 // convention as CancellationsPeriodTotals. UpsellLines/
-// UpsellRevenueHTCents/OrdersWithUpsellCount are always 0 today and
-// meaningless until UpsellResponse.InstrumentationActive is true — the
-// frontend must not render them as real zeros before that; TotalOrdersCount
-// alone is real regardless (it does not depend on is_upsell at all).
+// UpsellRevenueHTCents/OrdersWithUpsellCount are meaningless while
+// UpsellResponse.InstrumentationActive is false — the frontend must not
+// render them as real zeros then; TotalOrdersCount alone is real regardless
+// (it does not depend on is_upsell at all).
 type UpsellPeriodTotals struct {
 	From                  string `json:"from"`
 	To                    string `json:"to"`

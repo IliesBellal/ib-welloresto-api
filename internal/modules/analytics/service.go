@@ -2233,6 +2233,10 @@ func (s *Service) GetUpsell(ctx context.Context, req UpsellRequest) (*UpsellResp
 		if cached, ok := s.redis.Get(ctx, cacheKey); ok {
 			var resp UpsellResponse
 			if err := json.Unmarshal([]byte(cached), &resp); err == nil {
+				// Entrée écrite avant l'ajout de top_products : jamais null.
+				if resp.TopProducts == nil {
+					resp.TopProducts = []UpsellProductRow{}
+				}
 				return &resp, nil
 			}
 		}
@@ -2270,6 +2274,11 @@ func (s *Service) GetUpsell(ctx context.Context, req UpsellRequest) (*UpsellResp
 		return nil, err
 	}
 
+	topProducts, err := repo.GetUpsellTopProducts(ctx, merchantIDs, channels, currentStartUTC, currentEndUTC, upsellTopProductsLimit)
+	if err != nil {
+		return nil, err
+	}
+
 	proposed, accepted, err := repo.GetUpsellSuggestionsTotals(ctx, merchantIDs, currentStartUTC, currentEndUTC)
 	if err != nil {
 		return nil, err
@@ -2287,6 +2296,7 @@ func (s *Service) GetUpsell(ctx context.Context, req UpsellRequest) (*UpsellResp
 		InstrumentationActive: active,
 		CurrentPeriod:         currentPeriod,
 		PreviousPeriod:        previousPeriod,
+		TopProducts:           topProducts,
 		Suggestions:           suggestions,
 	}
 

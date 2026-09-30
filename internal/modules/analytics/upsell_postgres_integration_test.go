@@ -244,6 +244,121 @@ func TestUpsell_Postgres(t *testing.T) {
 	}
 }
 
+// TestUpsellTopProducts_Postgres checks GetUpsellTopProducts' ranking on a
+// hand-computed dataset: units sold (not lines) drive the order, non-upsell
+// lines never count, the channel filter applies, and the limit is honoured.
+func TestUpsellTopProducts_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+
+	var merchantIntID, tvaID20, productX, productY int64
+	const merchantTZ = "Europe/Paris"
+
+	cleanup := func() {
+		if merchantIntID != 0 {
+			_, _ = db.ExecContext(ctx, `DELETE FROM orderitems WHERE merchant_id = $1`, itoa(merchantIntID))
+			_, _ = db.ExecContext(ctx, `DELETE FROM orders WHERE merchant_id = $1`, itoa(merchantIntID))
+			_, _ = db.ExecContext(ctx, `DELETE FROM products WHERE merchant_id = $1`, itoa(merchantIntID))
+			_, _ = db.ExecContext(ctx, `DELETE FROM merchant WHERE id = $1`, merchantIntID)
+		}
+		if tvaID20 != 0 {
+			_, _ = db.ExecContext(ctx, `DELETE FROM tva_categories WHERE tva_id = $1`, tvaID20)
+		}
+	}
+	t.Cleanup(cleanup)
+
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO merchant (fullname, address, street_number, street, zip_code, city, siret, web_site, merchanttel, token, timezone)
+		VALUES ('ITest Upsell Top Merchant', 'addr', '1', 'street', '75001', 'Paris', 'siret-upsell-top', 'https://example.com', '0600000000', 'tok-upsell-top', $1)
+		RETURNING id`, merchantTZ).Scan(&merchantIntID); err != nil {
+		t.Fatalf("seed merchant: %v", err)
+	}
+	merchantID := itoa(merchantIntID)
+
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO tva_categories (delivery_type, tva_title, tva_desc, tva_rate)
+		VALUES ('0', 'ITest Upsell Top TVA 20', 'itest', 20) RETURNING tva_id`).Scan(&tvaID20); err != nil {
+		t.Fatalf("seed tva_categories: %v", err)
+	}
+	for _, p := range []struct {
+		name  string
+		price int
+		id    *int64
+	}{{"ITest Upsell Dessert X", 1000, &productX}, {"ITest Upsell Boisson Y", 300, &productY}} {
+		if err := db.QueryRowContext(ctx, `
+			INSERT INTO products (merchant_id, name, category, price, tva_in_id, tva_take_away_id, tva_delivery_id)
+			VALUES ($1, $2, 'itest-upsell-top-categ', $3, $4, $4, $4) RETURNING product_id`,
+			merchantID, p.name, p.price, tvaID20).Scan(p.id); err != nil {
+			t.Fatalf("seed product %s: %v", p.name, err)
+		}
+	}
+
+	loc, err := time.LoadLocation(merchantTZ)
+	if err != nil {
+		t.Fatalf("LoadLocation: %v", err)
+	}
+	base := time.Date(2026, 3, 1, 12, 0, 0, 0, loc)
+	startUTC, endUTC := time.Date(2026, 3, 1, 0, 0, 0, 0, loc).UTC(), time.Date(2026, 3, 3, 0, 0, 0, 0, loc).UTC()
+
+	// O1 dine_in: X upsell x1 (1000 TTC -> 833 HT), Y upsell x2 (600 TTC -> 500 HT).
+	o1 := seedCancelOrder(t, ctx, db, merchantID, 601, "WELLO_RESTO", "ACCEPTED", "IN", 1600, base, "-1", nil, nil)
+	seedUpsellOrderItem(t, ctx, db, o1, productX, merchantID, 1, 1000, true)
+	seedUpsellOrderItem(t, ctx, db, o1, productY, merchantID, 2, 300, true)
+	// O2 dine_in: Y upsell x1 (300 TTC -> 250 HT); X ordered normally — must not count.
+	o2 := seedCancelOrder(t, ctx, db, merchantID, 602, "WELLO_RESTO", "ACCEPTED", "IN", 1300, base, "-1", nil, nil)
+	seedUpsellOrderItem(t, ctx, db, o2, productY, merchantID, 1, 300, true)
+	seedUpsellOrderItem(t, ctx, db, o2, productX, merchantID, 5, 1000, false)
+	// O3 delivery: X upsell x3 (3000 TTC -> 2500 HT).
+	o3 := seedCancelOrder(t, ctx, db, merchantID, 603, "WELLO_RESTO", "ACCEPTED", "DELIVERY", 3000, base, "-1", nil, nil)
+	seedUpsellOrderItem(t, ctx, db, o3, productX, merchantID, 3, 1000, true)
+
+	repo := NewRepository(db)
+
+	// dine_in only: Y (3 units, 2 lines, 750 HT) ahead of X (1 unit, 833 HT) —
+	// units rank first, even against higher revenue.
+	dineIn, err := repo.GetUpsellTopProducts(ctx, []string{merchantID}, []string{ChannelDineIn}, startUTC, endUTC, 10)
+	if err != nil {
+		t.Fatalf("GetUpsellTopProducts (dine_in): %v", err)
+	}
+	if len(dineIn) != 2 {
+		t.Fatalf("expected 2 products, got %+v", dineIn)
+	}
+	if dineIn[0].ProductID != itoa(productY) || dineIn[0].QuantitySold != 3 || dineIn[0].UpsellLines != 2 || dineIn[0].UpsellRevenueHTCents != 750 {
+		t.Fatalf("expected Y first with 3 units / 2 lines / 750 HT, got %+v", dineIn[0])
+	}
+	if dineIn[1].ProductID != itoa(productX) || dineIn[1].QuantitySold != 1 || dineIn[1].UpsellRevenueHTCents != 833 {
+		t.Fatalf("expected X second with 1 unit / 833 HT (O2's non-upsell x5 excluded), got %+v", dineIn[1])
+	}
+
+	// All channels: X (4 units, 3333 HT) now ahead of Y (3 units).
+	all, err := repo.GetUpsellTopProducts(ctx, []string{merchantID}, append([]string(nil), Channels...), startUTC, endUTC, 10)
+	if err != nil {
+		t.Fatalf("GetUpsellTopProducts (all channels): %v", err)
+	}
+	if len(all) != 2 || all[0].ProductID != itoa(productX) || all[0].QuantitySold != 4 || all[0].UpsellRevenueHTCents != 833+2500 {
+		t.Fatalf("expected X first with 4 units / 3333 HT across all channels, got %+v", all)
+	}
+
+	// Limit honoured.
+	limited, err := repo.GetUpsellTopProducts(ctx, []string{merchantID}, append([]string(nil), Channels...), startUTC, endUTC, 1)
+	if err != nil {
+		t.Fatalf("GetUpsellTopProducts (limit 1): %v", err)
+	}
+	if len(limited) != 1 || limited[0].ProductID != itoa(productX) {
+		t.Fatalf("expected only X with limit 1, got %+v", limited)
+	}
+
+	// Empty period: empty slice, never nil (the JSON contract says never null).
+	empty, err := repo.GetUpsellTopProducts(ctx, []string{merchantID}, append([]string(nil), Channels...),
+		time.Date(2020, 1, 1, 0, 0, 0, 0, loc).UTC(), time.Date(2020, 2, 1, 0, 0, 0, 0, loc).UTC(), 10)
+	if err != nil {
+		t.Fatalf("GetUpsellTopProducts (empty period): %v", err)
+	}
+	if empty == nil || len(empty) != 0 {
+		t.Fatalf("expected a non-nil empty slice, got %#v", empty)
+	}
+}
+
 // seedUpsellOrderItem inserts one orderitems row with an explicit is_upsell
 // value — the one column postgres_integration_test.go's seedOrderItem
 // doesn't set (it always defaults false).
