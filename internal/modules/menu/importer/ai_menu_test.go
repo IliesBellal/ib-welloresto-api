@@ -53,7 +53,7 @@ func aiTestPages() []AIMenuPage {
 
 func buildAITestImport(t *testing.T) *IntermediateImport {
 	t.Helper()
-	imp, err := BuildAIMenuImport(aiTestPages())
+	imp, err := BuildAIMenuImport(aiTestPages(), nil)
 	if err != nil {
 		t.Fatalf("BuildAIMenuImport: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestBuildAIMenuImport_FormulasAndPhotoWarnings(t *testing.T) {
 }
 
 func TestBuildAIMenuImport_NoProducts(t *testing.T) {
-	if _, err := BuildAIMenuImport([]AIMenuPage{{Warnings: []string{"photo illisible"}}}); err != ErrNoProducts {
+	if _, err := BuildAIMenuImport([]AIMenuPage{{Warnings: []string{"photo illisible"}}}, nil); err != ErrNoProducts {
 		t.Fatalf("err = %v, want ErrNoProducts", err)
 	}
 }

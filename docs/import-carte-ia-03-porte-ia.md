@@ -271,3 +271,54 @@ Les messages de la preview et du commit sont affichés tels quels dans le back-o
 - statut `removed_from_menu` → « Retiré du menu », le libellé de la page produits ;
 - `product_id` → « n° » ;
 - formule non créée → « à configurer manuellement… ».
+
+---
+
+## 9. Ingrédients lus dans les descriptions (2026-09-30)
+
+Demande d'Ilies : générer aussi la composition (ingrédients et association produit ↔ ingrédient) d'après la description. Ses choix :
+- ingrédients de la description uniquement, sans rien inventer ;
+- quantité 0 ;
+- unité propre à l'ingrédient ;
+- catégories dans une liste fixe ;
+- fusion par nom ;
+- relecture minimale ;
+- option décochée par défaut ;
+- allergènes hors périmètre pour l'instant.
+
+### D16 — Lecture à la demande
+- **L'option se coche à l'envoi des photos.** Le champ multipart `ingredients=true` de `POST /menu/import/ai` la transmet ; elle est décochée par défaut.
+- **Stockage par photo.** Le choix est enregistré dans chaque photo du brouillon (`pages[].ingredients`), pas dans une colonne : une relance relit la photo dans le même mode, et `menu_import_drafts` n'a pas besoin de migration.
+- **Le schéma a toujours le champ.** Chaque produit porte `ingredients` (nom, catégorie, unité), que les ingrédients soient demandés ou non. La consigne système est elle aussi unique. Seul le message de chaque photo dit si les ingrédients sont demandés (sinon, liste vide). Schéma et consigne restent donc identiques, et le cache côté API est préservé.
+- **Règles de la consigne :**
+  - seulement ce qui est écrit dans la description, rien de déduit du nom (« Margherita » sans description = aucun ingrédient) ;
+  - au singulier, sans quantité ni préparation ;
+  - même écriture d'un produit à l'autre ;
+  - sel, poivre, huile et eau ignorés, sauf s'ils distinguent le plat.
+- **Coût.** Quelques jetons de sortie par produit quand l'option est décochée (une liste vide), davantage quand elle est cochée. À mesurer au prochain test.
+
+### D17 — Du texte au catalogue
+- **Fusion (`aiIngredientKey`).** Même nom → même ingrédient, sans tenir compte de la casse, des accents ni du pluriel simple (s ou x final des mots de plus de 3 lettres). « Tomates » et « tomate » sont un seul ingrédient, « Pommes de terre » et « pomme de terre » aussi. La première apparition fixe le nom, la catégorie et l'unité.
+- **Catégories d'ingrédient**, liste fixe (`AIIngredientCategories`) : Viandes, Poissons et fruits de mer, Fromages et crèmerie, Légumes, Fruits, Épicerie, Sauces et condiments, Boulangerie, Autres. Seules les catégories servies sont déclarées. Une catégorie du même nom chez le marchand est réutilisée, par la mécanique existante de la porte « autre établissement ».
+- **Unité.** Le modèle choisit parmi PCE, G, KG, L, ML, CL : G pour ce qui se pèse, CL ou ML pour un liquide, PCE pour ce qui se compte. Le code est traduit en `unit_of_measure.id` par une lecture de la table (`UnitIDsByCode`), car les identifiants sont des données, pas des constantes. Un code inconnu retombe sur PCE. Sans PCE, aucun ingrédient n'est repris et l'avertissement `ai_ingredients_skipped` le signale.
+- **Composition.**
+  - Chaque ligne a une quantité 0, l'unité de l'ingrédient et les trois canaux actifs : elle décrit le produit sans toucher au stock.
+  - Rappel : un ingrédient passé en rupture rend indisponibles les produits qui le contiennent (`orders/repository.go`). C'est une raison de plus de n'importer que ce qui est écrit.
+- **Réutilisation.** Un ingrédient existant du même nom (`NormalizeLabel` : casse et espaces) est réutilisé au lieu d'être recréé. C'est le comportement existant. Limite : « Tomates » chez le marchand ne rejoint pas « Tomate » lu sur la carte. La consigne demande le singulier pour limiter ce cas.
+- **Preview.**
+  - `component_external_ids` sur chaque produit photo ;
+  - `components` et `component_categories` : liste existante, avec l'action create ou reuse_existing.
+
+### D18 — Relecture et commit
+- **Décision `ingredients_per_product`** : `{external_id: [component_external_id…]}`, les ingrédients gardés pour ce produit.
+  - Produit absent de la décision : tous ses ingrédients sont gardés.
+  - On ne peut que retirer : un ingrédient non lu pour ce produit, ou un produit absent, bloque le commit (`invalid_ingredient_decision`).
+- **Ingrédients inutilisés non créés** (`pruneUnusedComponents`, porte IA seulement). Après la résolution des produits, le plan retire les ingrédients qu'aucun produit créé n'utilise plus, puis les catégories devenues vides. Cela couvre les produits exclus, les homonymes ignorés et les ingrédients retirés partout. La porte « autre établissement » garde son comportement : elle reprend tout le catalogue.
+- **L'écriture en base est inchangée.** Composants, catégories, `recipes` et `requires` passent par le code de la porte « autre établissement », qui n'est pas propre à une porte.
+
+| Vérification | Résultat |
+|---|---|
+| `ai_ingredients_test.go` | OK. Couvre : enums du schéma alignés sur les listes Go ; fusion (casse, accents, pluriels) ; unité de la première apparition ; repli PCE ; aucun ingrédient sans unités (avertissement) ; aucun ingrédient sans description lue ; plan avec les ingrédients ; ingrédient retiré partout non créé, catégorie vide non créée ; ingrédients d'un produit exclu non créés ; 3 décisions invalides |
+| `import_ai_service_test.go` | OK. Option transmise dans le message de chaque photo, consigne système inchangée, choix gardé par photo, preview avec ingrédients et composition ; option absente = « non demandés » |
+| `TestAIImport_Postgres_EndToEndWithIngredients` | **Écrit, pas exécuté** : il écrit sur staging (données de test nettoyées) ; il attend l'accord d'Ilies. Il vérifie : lecture des unités, 3 ingrédients, 3 catégories, 3 lignes de composition à quantité 0, unité proposée conservée |
+| Consigne sur de vraies photos | **Non testée** : prochain test staging |

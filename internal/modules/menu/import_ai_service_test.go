@@ -165,6 +165,10 @@ func (f *fakeAIDraftStore) ListDraftsToPurge(context.Context, time.Duration, int
 	return out, nil
 }
 
+func (f *fakeAIDraftStore) UnitIDsByCode(context.Context) (map[string]string, error) {
+	return map[string]string{"PCE": "1", "G": "2", "KG": "3", "L": "4", "ML": "5", "CL": "6"}, nil
+}
+
 func (f *fakeAIDraftStore) MarkFilesPurged(_ context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -319,7 +323,7 @@ func TestAIImport_ExtractionThenPreview(t *testing.T) {
 	env := newAITestEnv(t, true)
 	ctx := aiTestContext()
 
-	started, err := env.service.StartExtraction(ctx, [][]byte{aiTestJPEG, aiTestJPEG})
+	started, err := env.service.StartExtraction(ctx, [][]byte{aiTestJPEG, aiTestJPEG}, false)
 	if err != nil {
 		t.Fatalf("StartExtraction: %v", err)
 	}
@@ -368,7 +372,7 @@ func TestAIImport_CommitHookMarksDraftCommitted(t *testing.T) {
 	if env.imports.OnDraftCommitted == nil {
 		t.Fatal("NewAIImportService doit brancher OnDraftCommitted")
 	}
-	started, _ := env.service.StartExtraction(aiTestContext(), [][]byte{aiTestJPEG})
+	started, _ := env.service.StartExtraction(aiTestContext(), [][]byte{aiTestJPEG}, false)
 	env.service.Wait()
 
 	env.imports.OnDraftCommitted(context.Background(), aiTestMerchant, started.ID)
@@ -379,13 +383,13 @@ func TestAIImport_CommitHookMarksDraftCommitted(t *testing.T) {
 
 func TestAIImport_DisabledTaskOrStorage(t *testing.T) {
 	env := newAITestEnv(t, false)
-	if _, err := env.service.StartExtraction(aiTestContext(), [][]byte{aiTestJPEG}); !errors.Is(err, ErrAIImportDisabled) {
+	if _, err := env.service.StartExtraction(aiTestContext(), [][]byte{aiTestJPEG}, false); !errors.Is(err, ErrAIImportDisabled) {
 		t.Errorf("tâche fermée : err = %v, want ErrAIImportDisabled", err)
 	}
 
 	enabled := newAITestEnv(t, true)
 	noStorage := NewAIImportService(enabled.drafts, nil, nil, enabled.imports, zap.NewNop(), 10)
-	if _, err := noStorage.StartExtraction(aiTestContext(), [][]byte{aiTestJPEG}); !errors.Is(err, ErrAIImportDisabled) {
+	if _, err := noStorage.StartExtraction(aiTestContext(), [][]byte{aiTestJPEG}, false); !errors.Is(err, ErrAIImportDisabled) {
 		t.Errorf("sans stockage ni registre : err = %v, want ErrAIImportDisabled", err)
 	}
 }
@@ -395,11 +399,11 @@ func TestAIImport_CreditsExhausted(t *testing.T) {
 	ctx := aiTestContext()
 	env.drafts.overrides[aiTestMerchant] = 1
 
-	if _, err := env.service.StartExtraction(ctx, [][]byte{aiTestJPEG}); err != nil {
+	if _, err := env.service.StartExtraction(ctx, [][]byte{aiTestJPEG}, false); err != nil {
 		t.Fatalf("première extraction: %v", err)
 	}
 	env.service.Wait()
-	if _, err := env.service.StartExtraction(ctx, [][]byte{aiTestJPEG}); !errors.Is(err, ErrAICreditsExhausted) {
+	if _, err := env.service.StartExtraction(ctx, [][]byte{aiTestJPEG}, false); !errors.Is(err, ErrAICreditsExhausted) {
 		t.Errorf("err = %v, want ErrAICreditsExhausted", err)
 	}
 }
@@ -408,7 +412,7 @@ func TestAIImport_NothingReadRefundsCredit(t *testing.T) {
 	env := newAITestEnv(t, true)
 	env.provider.set(1, fakeOCRReply{err: fmt.Errorf("anthropic: %w", ai.ErrRefused)})
 
-	started, _ := env.service.StartExtraction(aiTestContext(), [][]byte{aiTestJPEG})
+	started, _ := env.service.StartExtraction(aiTestContext(), [][]byte{aiTestJPEG}, false)
 	env.service.Wait()
 
 	d := env.drafts.drafts[started.ID]
@@ -422,7 +426,7 @@ func TestAIImport_PartialFailureThenRetry(t *testing.T) {
 	ctx := aiTestContext()
 	env.provider.set(2, fakeOCRReply{content: `{"categories":[`, stopReason: ai.StopReasonMaxTokens})
 
-	started, _ := env.service.StartExtraction(ctx, [][]byte{aiTestJPEG, aiTestJPEG})
+	started, _ := env.service.StartExtraction(ctx, [][]byte{aiTestJPEG, aiTestJPEG}, false)
 	env.service.Wait()
 
 	got, _ := env.service.GetDraft(ctx, started.ID)
@@ -460,7 +464,7 @@ func TestAIImport_UnreadableModelOutput(t *testing.T) {
 	env := newAITestEnv(t, true)
 	env.provider.set(1, fakeOCRReply{content: "pas du json"})
 
-	started, _ := env.service.StartExtraction(aiTestContext(), [][]byte{aiTestJPEG})
+	started, _ := env.service.StartExtraction(aiTestContext(), [][]byte{aiTestJPEG}, false)
 	env.service.Wait()
 	if p := env.drafts.drafts[started.ID].Pages[0]; p.Status != AIPageFailed || !strings.Contains(p.Error, "illisible") {
 		t.Errorf("photo = %+v, want échec « illisible »", p)
@@ -472,14 +476,14 @@ func TestAIImport_OneRunningExtractionPerMerchant(t *testing.T) {
 	ctx := aiTestContext()
 	env.drafts.drafts["running"] = &AIDraft{ID: "running", MerchantID: aiTestMerchant, Status: AIDraftProcessing}
 
-	if _, err := env.service.StartExtraction(ctx, [][]byte{aiTestJPEG}); !errors.Is(err, ErrAIDraftAlreadyRunning) {
+	if _, err := env.service.StartExtraction(ctx, [][]byte{aiTestJPEG}, false); !errors.Is(err, ErrAIDraftAlreadyRunning) {
 		t.Errorf("err = %v, want ErrAIDraftAlreadyRunning", err)
 	}
 }
 
 func TestAIImport_MaintenancePurgesPhotos(t *testing.T) {
 	env := newAITestEnv(t, true)
-	started, _ := env.service.StartExtraction(aiTestContext(), [][]byte{aiTestJPEG})
+	started, _ := env.service.StartExtraction(aiTestContext(), [][]byte{aiTestJPEG}, false)
 	env.service.Wait()
 	env.imports.OnDraftCommitted(context.Background(), aiTestMerchant, started.ID)
 
@@ -562,10 +566,65 @@ func TestAIImportHandler_StatusCodes(t *testing.T) {
 func TestAIImport_PreviewStoredUnderImportKey(t *testing.T) {
 	env := newAITestEnv(t, true)
 	ctx := aiTestContext()
-	started, _ := env.service.StartExtraction(ctx, [][]byte{aiTestJPEG})
+	started, _ := env.service.StartExtraction(ctx, [][]byte{aiTestJPEG}, false)
 	env.service.Wait()
 	got, _ := env.service.GetDraft(ctx, started.ID)
 	if _, ok := env.store.values[helpers.GetMenuImportPreviewKey(aiTestMerchant, got.Preview.Token)]; !ok {
 		t.Errorf("snapshot absent de la clé de preview d'import")
+	}
+}
+
+func TestAIImport_IngredientsOnDemand(t *testing.T) {
+	env := newAITestEnv(t, true)
+	ctx := aiTestContext()
+	// Réponse du modèle quand les ingrédients sont demandés.
+	env.provider.set(2, fakeOCRReply{content: `{"categories":[{"ref":"c1","name":"Burgers"}],"product_groups":[],
+"products":[{"ref":"p1","category_ref":"c1","group_ref":null,"name":"Classique","description":"steak haché, cheddar, tomates","price_cents":1250,"option_group_refs":[],"kind":"food","confidence":"high","issues":[],
+"ingredients":[{"name":"Steak haché","category":"meat","unit":"G"},{"name":"Cheddar","category":"dairy","unit":"G"},{"name":"Tomate","category":"vegetables","unit":"G"}]}],
+"option_groups":[],"formulas":[],"warnings":[]}`})
+
+	started, err := env.service.StartExtraction(ctx, [][]byte{aiTestJPEG, aiTestJPEG}, true)
+	if err != nil {
+		t.Fatalf("StartExtraction: %v", err)
+	}
+	env.service.Wait()
+
+	for _, call := range env.provider.calls {
+		if !strings.Contains(call.UserPrompt, "Ingrédients demandés") {
+			t.Errorf("consigne de la photo sans demande d'ingrédients : %q", call.UserPrompt)
+		}
+		if call.SystemPrompt != menuOCRSystemPrompt {
+			t.Errorf("la consigne système doit rester identique (cache)")
+		}
+	}
+	// Le choix est gardé par photo : une relance relit dans le même mode.
+	for _, page := range env.drafts.drafts[started.ID].Pages {
+		if !page.Ingredients {
+			t.Errorf("photo %d : choix des ingrédients non enregistré", page.Photo)
+		}
+	}
+
+	got, err := env.service.GetDraft(ctx, started.ID)
+	if err != nil || got.Preview == nil {
+		t.Fatalf("GetDraft: %v", err)
+	}
+	if len(got.Preview.Components) != 3 || len(got.Preview.ComponentCategories) != 3 {
+		t.Errorf("preview = %d ingrédients, %d catégories, want 3 et 3", len(got.Preview.Components), len(got.Preview.ComponentCategories))
+	}
+	for _, p := range got.Preview.Products {
+		if p.Name == "Classique" && len(p.ComponentExternalIDs) != 3 {
+			t.Errorf("composition de Classique = %v, want 3 ingrédients", p.ComponentExternalIDs)
+		}
+	}
+}
+
+func TestAIImport_IngredientsNotRequestedByDefault(t *testing.T) {
+	env := newAITestEnv(t, true)
+	if _, err := env.service.StartExtraction(aiTestContext(), [][]byte{aiTestJPEG}, false); err != nil {
+		t.Fatalf("StartExtraction: %v", err)
+	}
+	env.service.Wait()
+	if call := env.provider.calls[0]; !strings.Contains(call.UserPrompt, "Ingrédients non demandés") {
+		t.Errorf("consigne = %q, want les ingrédients non demandés", call.UserPrompt)
 	}
 }

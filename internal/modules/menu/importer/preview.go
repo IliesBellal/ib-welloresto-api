@@ -365,6 +365,9 @@ type PreviewProduct struct {
 	Confidence       string      `json:"confidence,omitempty"`
 	Issues           []string    `json:"issues,omitempty"`
 	SourcePhoto      int         `json:"source_photo,omitempty"`
+	// ComponentExternalIDs : ingrédients lus dans la description (entrées de
+	// PreviewResult.Components), si le restaurateur les a demandés.
+	ComponentExternalIDs []string `json:"component_external_ids,omitempty"`
 }
 
 type PreviewChannels struct {
@@ -791,6 +794,11 @@ func (b *previewBuilder) buildProducts() {
 		}
 		if p.AllPricesZero {
 			entry.Status = ProductStatusRemovedFromMenu
+		}
+		if b.imp.Provider == AIPhotoSlug {
+			for _, c := range p.Components {
+				entry.ComponentExternalIDs = append(entry.ComponentExternalIDs, c.ComponentExternalID)
+			}
 		}
 		b.proposeAIDecisions(p)
 

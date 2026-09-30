@@ -48,6 +48,11 @@ type AIDraftPage struct {
 	R2Key string `json:"r2_key"`
 	// Status : pending | done | failed.
 	Status string `json:"status"`
+	// Ingredients : lire aussi les ingrédients des descriptions (choix fait à
+	// l'envoi). Porté par chaque photo plutôt que par une colonne du
+	// brouillon : une relance relit la photo dans le même mode, sans
+	// migration de menu_import_drafts.
+	Ingredients bool `json:"ingredients,omitempty"`
 	// Output est l'AIMenuPage validée, gardée brute pour pouvoir rejouer la
 	// fusion (BuildAIMenuImport) sans rappeler l'IA.
 	Output  json.RawMessage   `json:"output,omitempty"`
@@ -128,6 +133,16 @@ func (d *AIDraft) photosDone() int {
 		}
 	}
 	return n
+}
+
+// withIngredients dit si les ingrédients ont été demandés pour ce brouillon.
+func (d *AIDraft) withIngredients() bool {
+	for _, p := range d.Pages {
+		if p.Ingredients {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *AIDraft) summary() AIDraftSummary {

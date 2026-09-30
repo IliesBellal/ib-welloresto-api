@@ -59,6 +59,8 @@ type aiDraftStore interface {
 	ExpireDrafts(ctx context.Context) (int64, error)
 	ListDraftsToPurge(ctx context.Context, purgeAfter time.Duration, limit int) ([]AIDraft, error)
 	MarkFilesPurged(ctx context.Context, id string) error
+	// UnitIDsByCode lit unit_of_measure (uom -> id), pour les ingrédients.
+	UnitIDsByCode(ctx context.Context) (map[string]string, error)
 }
 
 // AIPhotoStore est le bucket R2 privé (*r2.Client).
@@ -145,8 +147,9 @@ func (s *AIImportService) Credits(ctx context.Context, merchantID string) (AICre
 // StartExtraction dépose les photos (JPEG déjà normalisés par le
 // back-office), crée le brouillon et lance la lecture en arrière-plan.
 // Le crédit est réservé dès la création ; il est rendu si aucune photo n'a
-// pu être lue (échec technique ou refus).
-func (s *AIImportService) StartExtraction(ctx context.Context, photos [][]byte) (*AIDraftResponse, error) {
+// pu être lue (échec technique ou refus). withIngredients demande aussi les
+// ingrédients cités dans les descriptions.
+func (s *AIImportService) StartExtraction(ctx context.Context, photos [][]byte, withIngredients bool) (*AIDraftResponse, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -175,9 +178,10 @@ func (s *AIImportService) StartExtraction(ctx context.Context, photos [][]byte) 
 	}
 	for i := range photos {
 		draft.Pages = append(draft.Pages, AIDraftPage{
-			Photo:  i + 1,
-			R2Key:  fmt.Sprintf("%s/%s/%s/%d.jpg", aiPhotoKeyPrefix, user.MerchantID, draft.ID, i+1),
-			Status: AIPagePending,
+			Photo:       i + 1,
+			R2Key:       fmt.Sprintf("%s/%s/%s/%d.jpg", aiPhotoKeyPrefix, user.MerchantID, draft.ID, i+1),
+			Status:      AIPagePending,
+			Ingredients: withIngredients,
 		})
 	}
 	if err := s.drafts.CreateDraft(ctx, draft); err != nil {
@@ -330,7 +334,7 @@ func (s *AIImportService) readPhoto(ctx context.Context, provider ai.LLMProvider
 	resp, err := provider.Complete(ctx, ai.CompletionRequest{
 		Task:         menuOCRTask,
 		SystemPrompt: menuOCRSystemPrompt,
-		UserPrompt:   menuOCRUserPrompt(page.Photo, total),
+		UserPrompt:   menuOCRUserPrompt(page.Photo, total, page.Ingredients),
 		MaxTokens:    cfg.MaxTokens,
 		Images:       []ai.Image{{MediaType: aiPhotoContentType, Data: data}},
 		JSONSchema:   importer.AIMenuPageSchema,
@@ -405,7 +409,14 @@ func (s *AIImportService) GetDraft(ctx context.Context, id string) (*AIDraftResp
 		pages = append(pages, *page)
 	}
 
-	imp, err := importer.BuildAIMenuImport(pages)
+	var unitIDs map[string]string
+	if draft.withIngredients() {
+		if unitIDs, err = s.drafts.UnitIDsByCode(ctx); err != nil {
+			return nil, err
+		}
+	}
+
+	imp, err := importer.BuildAIMenuImport(pages, unitIDs)
 	if errors.Is(err, importer.ErrNoProducts) {
 		resp := s.response(ctx, draft, nil)
 		resp.Error = aiDraftErrNoProduct

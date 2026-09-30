@@ -76,6 +76,9 @@ type AIProduct struct {
 	Kind            string   `json:"kind"`
 	Confidence      string   `json:"confidence"`
 	Issues          []string `json:"issues"`
+	// Ingredients : vide sauf si les ingrédients ont été demandés
+	// (menuOCRUserPrompt). Absent des lectures antérieures : nil.
+	Ingredients []AIIngredient `json:"ingredients"`
 }
 
 type AIOptionGroup struct {
@@ -128,8 +131,15 @@ var AIMenuPageSchema = json.RawMessage(`{
         "option_group_refs": {"type": "array", "items": {"type": "string"}},
         "kind": {"type": "string", "enum": ["food", "hot_drink", "soft_drink_served", "soft_drink_sealed", "packaged_food", "alcohol", "other"]},
         "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
-        "issues": {"type": "array", "items": {"type": "string"}}},
-      "required": ["ref", "category_ref", "group_ref", "name", "description", "price_cents", "option_group_refs", "kind", "confidence", "issues"],
+        "issues": {"type": "array", "items": {"type": "string"}},
+        "ingredients": {"type": "array", "items": {
+          "type": "object",
+          "properties": {
+            "name": {"type": "string"},
+            "category": {"type": "string", "enum": ["meat", "fish", "dairy", "vegetables", "fruits", "grocery", "sauces", "bakery", "other"]},
+            "unit": {"type": "string", "enum": ["PCE", "G", "KG", "L", "ML", "CL"]}},
+          "required": ["name", "category", "unit"], "additionalProperties": false}}},
+      "required": ["ref", "category_ref", "group_ref", "name", "description", "price_cents", "option_group_refs", "kind", "confidence", "issues", "ingredients"],
       "additionalProperties": false}},
     "option_groups": {"type": "array", "items": {
       "type": "object",
@@ -186,6 +196,12 @@ type aiMerger struct {
 	groupByID   map[string]*aiGroup
 	products    []CanonicalProduct
 	productByID map[string]int
+
+	// Ingrédients (ai_ingredients.go).
+	unitIDs              map[string]string // unit_of_measure.uom -> id
+	componentByKey       map[string]*CanonicalComponent
+	ingredientCategories map[string]struct{}
+	ingredientsSkipped   bool
 }
 
 // BuildAIMenuImport fusionne les pages lues (une par photo, dans l'ordre des
@@ -202,14 +218,21 @@ type aiMerger struct {
 // déclinaisons (« s'il n'y a qu'un seul Coca, on le laisse à la racine »).
 // Les produits groupes précèdent tous les autres dans Products, pour que le
 // commit crée chaque parent avant ses enfants.
-func BuildAIMenuImport(pages []AIMenuPage) (*IntermediateImport, error) {
+//
+// Ingrédients : même nom (casse, accents et pluriel ignorés) → même
+// composant. unitIDs traduit les codes d'unité du modèle (unit_of_measure.uom)
+// en identifiants ; il ne sert que si des ingrédients ont été lus.
+func BuildAIMenuImport(pages []AIMenuPage, unitIDs map[string]string) (*IntermediateImport, error) {
 	m := &aiMerger{
-		out:            &IntermediateImport{Provider: AIPhotoSlug},
-		categoryNames:  make(map[string]string),
-		categoryByKey:  make(map[string]string),
-		attributeByKey: make(map[string]string),
-		groupByID:      make(map[string]*aiGroup),
-		productByID:    make(map[string]int),
+		out:                  &IntermediateImport{Provider: AIPhotoSlug},
+		categoryNames:        make(map[string]string),
+		categoryByKey:        make(map[string]string),
+		attributeByKey:       make(map[string]string),
+		groupByID:            make(map[string]*aiGroup),
+		productByID:          make(map[string]int),
+		unitIDs:              unitIDs,
+		componentByKey:       make(map[string]*CanonicalComponent),
+		ingredientCategories: make(map[string]struct{}),
 	}
 
 	for i := range pages {
@@ -217,6 +240,9 @@ func BuildAIMenuImport(pages []AIMenuPage) (*IntermediateImport, error) {
 	}
 
 	m.finishGroups()
+	if m.ingredientsSkipped {
+		m.warn(WarningAIIngredientsSkipped, "", "des ingrédients n'ont pas pu être repris : aucune unité de mesure n'est configurée")
+	}
 
 	if len(m.out.Products) == 0 {
 		return nil, ErrNoProducts
@@ -465,6 +491,7 @@ func (m *aiMerger) product(p AIProduct, categoryID string, grp *aiGroup, attribu
 		Confidence:           confidence,
 		Issues:               issues,
 		SourcePhoto:          photo,
+		Components:           m.ingredients(p),
 	}
 
 	m.productByID[id] = len(m.products)

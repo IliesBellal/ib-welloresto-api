@@ -51,9 +51,10 @@ type IntermediateImport struct {
 	Attributes []CanonicalAttribute
 
 	// ComponentCategories et Components n'existent que pour la porte "autre
-	// etablissement" (V1b, cf. import_merchant_repository.go) : aucun format
-	// fichier connu ne porte de composition. Vides pour toute autre source,
-	// ce qui laisse la preview et le commit inchanges sur ce chemin.
+	// etablissement" (V1b, cf. import_merchant_repository.go) et pour la porte
+	// IA quand les ingredients sont demandes (ai_ingredients.go) : aucun
+	// format fichier connu ne porte de composition. Vides pour toute autre
+	// source, ce qui laisse la preview et le commit inchanges sur ce chemin.
 	ComponentCategories []CanonicalComponentCategory
 	Components          []CanonicalComponent
 
@@ -161,8 +162,9 @@ type CanonicalProduct struct {
 	AllPricesZero bool
 
 	// Components et AttributeExternalIDs n'existent que pour la porte "autre
-	// etablissement" (V1b) : composition (recettes) et rattachement d'options,
-	// que ni le fichier ni la saisie manuelle ne portent. Vides ailleurs.
+	// etablissement" (V1b) et la porte IA : composition (recettes) et
+	// rattachement d'options, que ni le fichier ni la saisie manuelle ne
+	// portent. Vides ailleurs.
 	Components           []CanonicalProductComponent
 	AttributeExternalIDs []string
 
@@ -432,6 +434,11 @@ type ImportDecisions struct {
 	// relecture parmi les taux du marchand ; il prime sur le taux de la
 	// source. Chaque identifiant est revérifié contre son canal.
 	TvaPerProduct map[string]ChannelTvaIDs `json:"tva_per_product,omitempty"`
+
+	// IngredientsPerProduct : ingrédients gardés en relecture pour un produit
+	// (porte IA), parmi ceux lus dans sa description. Produit absent de la
+	// map = tous ses ingrédients ; liste vide = aucun.
+	IngredientsPerProduct map[string][]string `json:"ingredients_per_product,omitempty"`
 }
 
 // ChannelPrices porte les prix d'un produit par canal, en centimes.

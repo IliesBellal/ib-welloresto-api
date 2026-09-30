@@ -19,6 +19,9 @@ const (
 	// BlockerInvalidPriceDecision : prix négatif ou aberrant, produit absent
 	// du lot, ou prix posé sur un produit groupe.
 	BlockerInvalidPriceDecision = "invalid_price_decision"
+	// BlockerInvalidIngredientDecision : ingrédient qui n'a pas été lu dans
+	// la description du produit, ou produit absent du lot.
+	BlockerInvalidIngredientDecision = "invalid_ingredient_decision"
 )
 
 // maxDecidedPriceCents borne un prix saisi en relecture (10 000 €), comme la
@@ -37,7 +40,8 @@ const maxDecidedPriceCents = aiMaxPriceCents
 // prix hors bornes produit un blocage.
 func applyAIDecisions(imp *IntermediateImport, decisions ImportDecisions) (*IntermediateImport, []CommitBlocker) {
 	if len(decisions.KindPerProduct) == 0 && len(decisions.GroupPerProduct) == 0 &&
-		len(decisions.PricePerProduct) == 0 && len(decisions.TvaPerProduct) == 0 {
+		len(decisions.PricePerProduct) == 0 && len(decisions.TvaPerProduct) == 0 &&
+		len(decisions.IngredientsPerProduct) == 0 {
 		return imp, nil
 	}
 
@@ -117,6 +121,37 @@ func applyAIDecisions(imp *IntermediateImport, decisions ImportDecisions) (*Inte
 		p.PriceIn, p.PriceTakeAway, p.PriceDelivery = prices.In, prices.TakeAway, prices.Delivery
 		// Un prix saisi fait sortir la ligne du statut removed_from_menu.
 		p.AllPricesZero = prices.In == 0 && prices.TakeAway == 0 && prices.Delivery == 0
+	}
+
+	// Ingrédients : on ne peut que retirer ce que la lecture a proposé, pas
+	// en ajouter (un ingrédient se crée à partir de la description).
+	for externalID, kept := range decisions.IngredientsPerProduct {
+		i, ok := index[externalID]
+		if !ok {
+			block(BlockerInvalidIngredientDecision, externalID, fmt.Sprintf("produit %q absent de l'import", externalID))
+			continue
+		}
+		p := &out.Products[i]
+		proposed := make(map[string]CanonicalProductComponent, len(p.Components))
+		for _, c := range p.Components {
+			proposed[c.ComponentExternalID] = c
+		}
+		components := make([]CanonicalProductComponent, 0, len(kept))
+		valid := true
+		for _, componentID := range kept {
+			c, ok := proposed[componentID]
+			if !ok {
+				valid = false
+				break
+			}
+			components = append(components, c)
+		}
+		if !valid {
+			block(BlockerInvalidIngredientDecision, externalID,
+				fmt.Sprintf("un ingrédient choisi pour %q n'a pas été lu dans sa description", p.Name))
+			continue
+		}
+		p.Components = components
 	}
 
 	// Les tva_id eux-mêmes sont vérifiés par assignChannels ; ici, seul le
@@ -202,4 +237,47 @@ func (b *commitPlanner) resolveGroups() {
 	}
 
 	sort.SliceStable(products, func(i, j int) bool { return products[i].IsGroup && !products[j].IsGroup })
+}
+
+// pruneUnusedComponents retire du plan (porte IA) les ingrédients et
+// catégories d'ingrédient qu'aucun produit créé n'utilise plus : produit
+// exclu, homonyme ignoré, ingrédient retiré en relecture. Les autres portes
+// reprennent un catalogue entier, ingrédients inutilisés compris.
+func (b *commitPlanner) pruneUnusedComponents() {
+	used := make(map[string]struct{})
+	for _, p := range b.plan.Products {
+		if !p.Materializable() {
+			continue
+		}
+		for _, c := range p.Components {
+			used[c.ComponentExternalID] = struct{}{}
+		}
+	}
+
+	components := b.plan.Components[:0]
+	usedCategories := make(map[string]struct{})
+	for _, c := range b.plan.Components {
+		if _, ok := used[c.ExternalID]; ok {
+			components = append(components, c)
+			usedCategories[c.CategoryExternalID] = struct{}{}
+		}
+	}
+	b.plan.Components = components
+
+	categories := b.plan.ComponentCategories[:0]
+	for _, c := range b.plan.ComponentCategories {
+		if _, ok := usedCategories[c.ExternalID]; ok {
+			categories = append(categories, c)
+		}
+	}
+	b.plan.ComponentCategories = categories
+
+	b.plannedComponents = make(map[string]*PlannedComponent, len(b.plan.Components))
+	for i := range b.plan.Components {
+		b.plannedComponents[b.plan.Components[i].ExternalID] = &b.plan.Components[i]
+	}
+	b.plannedComponentCategories = make(map[string]*PlannedComponentCategory, len(b.plan.ComponentCategories))
+	for i := range b.plan.ComponentCategories {
+		b.plannedComponentCategories[b.plan.ComponentCategories[i].ExternalID] = &b.plan.ComponentCategories[i]
+	}
 }

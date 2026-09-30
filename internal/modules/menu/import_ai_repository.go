@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"welloresto-api/internal/database/dbx"
@@ -239,4 +240,24 @@ func (r *AIDraftRepository) MarkFilesPurged(ctx context.Context, id string) erro
 	_, err := dbx.GetDB(ctx, r.db).ExecContext(ctx,
 		`UPDATE menu_import_drafts SET files_purged_at = now() WHERE id::text = ?`, id)
 	return err
+}
+
+// UnitIDsByCode lit la table globale unit_of_measure (uom -> id) : les
+// ingrédients lus sur les photos portent un code d'unité (PCE, G, CL…).
+func (r *AIDraftRepository) UnitIDsByCode(ctx context.Context) (map[string]string, error) {
+	rows, err := dbx.GetDB(ctx, r.db).QueryContext(ctx, `SELECT id::text, uom FROM unit_of_measure`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	units := make(map[string]string)
+	for rows.Next() {
+		var id, code string
+		if err := rows.Scan(&id, &code); err != nil {
+			return nil, err
+		}
+		units[strings.ToUpper(strings.TrimSpace(code))] = id
+	}
+	return units, rows.Err()
 }

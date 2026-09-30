@@ -274,6 +274,9 @@ func BuildCommitPlan(imp *IntermediateImport, decisions ImportDecisions, lk Prev
 	b.buildAttributes()
 	b.buildProducts()
 	b.resolveGroups()
+	if imp.Provider == AIPhotoSlug {
+		b.pruneUnusedComponents()
+	}
 
 	if len(b.blockers) > 0 {
 		return nil, b.blockers

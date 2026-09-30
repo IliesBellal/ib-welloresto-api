@@ -17,10 +17,13 @@ import (
 // donc pas passée par lui (et dépasserait 10 Mo en base64 côté API).
 const (
 	aiFormPhotosField = "photos"
-	aiMaxPhotos       = 10
-	aiMaxPhotoBytes   = 7 << 20
-	aiMaxUploadBytes  = 20 << 20
-	aiUploadOverhead  = 1 << 20 // en-têtes multipart
+	// aiFormIngredientsField : "true" pour lire aussi les ingrédients des
+	// descriptions (case de l'étape photo, décochée par défaut).
+	aiFormIngredientsField = "ingredients"
+	aiMaxPhotos            = 10
+	aiMaxPhotoBytes        = 7 << 20
+	aiMaxUploadBytes       = 20 << 20
+	aiUploadOverhead       = 1 << 20 // en-têtes multipart
 )
 
 // AIImportHandler expose la porte IA de l'import produits. Le commit reste
@@ -33,7 +36,8 @@ func NewAIImportHandler(s *AIImportService) *AIImportHandler {
 	return &AIImportHandler{service: s}
 }
 
-// StartAIImport — POST /menu/import/ai (multipart, champ « photos » répété).
+// StartAIImport — POST /menu/import/ai (multipart, champ « photos » répété,
+// champ « ingredients » facultatif).
 func (h *AIImportHandler) StartAIImport(w http.ResponseWriter, r *http.Request) {
 	const action = "start_ai_import"
 	r.Body = http.MaxBytesReader(w, r.Body, aiMaxUploadBytes+aiUploadOverhead)
@@ -77,7 +81,8 @@ func (h *AIImportHandler) StartAIImport(w http.ResponseWriter, r *http.Request) 
 		photos = append(photos, data)
 	}
 
-	resp, err := h.service.StartExtraction(r.Context(), photos)
+	withIngredients := r.FormValue(aiFormIngredientsField) == "true"
+	resp, err := h.service.StartExtraction(r.Context(), photos, withIngredients)
 	if err != nil {
 		h.sendError(w, r, action, err)
 		return

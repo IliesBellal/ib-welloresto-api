@@ -203,7 +203,7 @@ func TestAIImport_Postgres_EndToEnd(t *testing.T) {
 	service := NewAIImportService(NewAIDraftRepository(db), newFakeAIPhotoStore(), registry, imports, zap.NewNop(), 10)
 
 	ctx := itestImportContext(merchantID)
-	started, err := service.StartExtraction(ctx, [][]byte{aiTestJPEG, aiTestJPEG})
+	started, err := service.StartExtraction(ctx, [][]byte{aiTestJPEG, aiTestJPEG}, false)
 	if err != nil {
 		t.Fatalf("StartExtraction: %v", err)
 	}
@@ -237,6 +237,83 @@ func TestAIImport_Postgres_EndToEnd(t *testing.T) {
 	if got := itestCount(t, db,
 		`SELECT count(*) FROM products WHERE merchant_Id = $1 AND by_product_of IS NOT NULL`, merchantID); got != 2 {
 		t.Fatalf("déclinaisons rattachées = %d, want 2", got)
+	}
+}
+
+// Bout en bout avec les ingrédients demandés : composants, catégories
+// d'ingrédient et lignes de composition à quantité 0 écrits en base.
+func TestAIImport_Postgres_EndToEndWithIngredients(t *testing.T) {
+	db := pgtest.Open(t)
+	merchantID, _ := itestImportMerchant(t, db, "aii")
+	t.Cleanup(func() {
+		ctx := context.Background()
+		for _, q := range []string{
+			`DELETE FROM menu_import_drafts WHERE merchant_id = $1`,
+			`DELETE FROM import_components_mapping WHERE merchant_id = $1`,
+			`DELETE FROM import_component_categories_mapping WHERE merchant_id = $1`,
+			`DELETE FROM requires WHERE recipe_id IN (SELECT recipe_id FROM recipes WHERE merchant_id = $1)`,
+			`DELETE FROM recipes WHERE merchant_id = $1`,
+			`DELETE FROM components WHERE merchant_id = $1`,
+			`DELETE FROM component_category WHERE merchant_id = $1`,
+		} {
+			_, _ = db.ExecContext(ctx, q, merchantID)
+		}
+	})
+
+	units, err := NewAIDraftRepository(db).UnitIDsByCode(context.Background())
+	if err != nil || units["PCE"] == "" || units["G"] == "" {
+		t.Fatalf("UnitIDsByCode = %v, %v ; want au moins PCE et G", units, err)
+	}
+
+	page2 := `{"categories":[{"ref":"c1","name":"Burgers"}],"product_groups":[],
+"products":[{"ref":"p1","category_ref":"c1","group_ref":null,"name":"Classique","description":"steak haché, cheddar, tomates","price_cents":1250,"option_group_refs":[],"kind":"food","confidence":"high","issues":[],
+"ingredients":[{"name":"Steak haché","category":"meat","unit":"G"},{"name":"Cheddar","category":"dairy","unit":"G"},{"name":"Tomate","category":"vegetables","unit":"PCE"}]}],
+"option_groups":[],"formulas":[],"warnings":[]}`
+	provider := &fakeOCRProvider{replies: map[int]fakeOCRReply{1: {content: aiTestPage1}, 2: {content: page2}}}
+	registry, err := ai.NewRegistry(ai.AIConfig{Tasks: map[string]ai.TaskConfig{
+		menuOCRTask: {Provider: "anthropic", Enabled: true, MaxTokens: 16000},
+	}}, map[string]ai.LLMProvider{"anthropic": provider})
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	imports := itestImportService(db, newFakePreviewStore())
+	service := NewAIImportService(NewAIDraftRepository(db), newFakeAIPhotoStore(), registry, imports, zap.NewNop(), 10)
+
+	ctx := itestImportContext(merchantID)
+	started, err := service.StartExtraction(ctx, [][]byte{aiTestJPEG, aiTestJPEG}, true)
+	if err != nil {
+		t.Fatalf("StartExtraction: %v", err)
+	}
+	service.Wait()
+
+	draft, err := service.GetDraft(ctx, started.ID)
+	if err != nil || draft.Preview == nil || len(draft.Preview.Components) != 3 {
+		t.Fatalf("brouillon = %+v, %v ; want une preview à 3 ingrédients", draft, err)
+	}
+
+	decisions := draft.Preview.Decisions
+	decisions.TvaConfirmed = true
+	if _, err := imports.CommitImport(ctx, &ImportCommitRequest{Token: draft.Preview.Token, Decisions: &decisions}); err != nil {
+		t.Fatalf("CommitImport: %v", err)
+	}
+
+	if got := itestCount(t, db, `SELECT count(*) FROM components WHERE merchant_id = $1 AND enabled`, merchantID); got != 3 {
+		t.Errorf("ingrédients créés = %d, want 3", got)
+	}
+	if got := itestCount(t, db, `SELECT count(*) FROM component_category WHERE merchant_id = $1`, merchantID); got != 3 {
+		t.Errorf("catégories d'ingrédient créées = %d, want 3", got)
+	}
+	if got := itestCount(t, db, `
+		SELECT count(*) FROM requires rq
+		JOIN recipes r ON r.recipe_id = rq.recipe_id
+		JOIN products p ON p.product_id = r.product_id
+		WHERE r.merchant_id = $1 AND p.name = 'Classique' AND rq.quantity = 0 AND rq.enabled`, merchantID); got != 3 {
+		t.Errorf("lignes de composition de Classique à quantité 0 = %d, want 3", got)
+	}
+	if got := itestCount(t, db, `
+		SELECT count(*) FROM components c
+		WHERE c.merchant_id = $1 AND c.name = 'Tomate' AND c.unit_of_measure::text = $2`, merchantID, units["PCE"]); got != 1 {
+		t.Errorf("la tomate doit être en pièces (unité proposée)")
 	}
 }
 
