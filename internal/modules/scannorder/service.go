@@ -509,6 +509,21 @@ func (s *Service) GetPricingSNO(ctx context.Context, req *models.PricingRequest)
 		}, nil
 	}
 
+	// 🔹 1bis. Mode de commande proposé par le marchand (cf. isOrderTypeEnabled)
+	if req.Order == nil || !isOrderTypeEnabled(merchant, req.Order.OrderType) {
+		orderType := ""
+		if req.Order != nil {
+			orderType = req.Order.OrderType
+		}
+		logger.FromContext(ctx).Warn("SNO pricing: order type not enabled for merchant",
+			zap.String("merchant_id", merchant.MerchantID),
+			zap.String("order_type", orderType),
+		)
+		return &models.PricingResponse{
+			Status: StatusOrderTypeNotAvailable,
+		}, nil
+	}
+
 	// 🔹 2. Delivery zone check
 	if req.Order.OrderType == "DELIVERY" &&
 		req.Order.Customer != nil {
@@ -976,6 +991,20 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest
 	}
 	if suspended {
 		return models.CreateOrderResult{Status: "merchant_suspended"}, nil
+	}
+
+	// Mode de commande proposé par le marchand — avant la vérif d'ouverture,
+	// que IN contourne (cf. isOrderTypeEnabled).
+	if req.Order == nil || !isOrderTypeEnabled(merchant, req.Order.OrderType) {
+		orderType := ""
+		if req.Order != nil {
+			orderType = req.Order.OrderType
+		}
+		log.Warn("SNO create order: order type not enabled for merchant",
+			zap.String("merchant_id", merchant.MerchantID),
+			zap.String("order_type", orderType),
+		)
+		return models.CreateOrderResult{Status: StatusOrderTypeNotAvailable}, nil
 	}
 
 	order := req.Order
