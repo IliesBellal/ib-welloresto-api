@@ -1,5 +1,10 @@
 package models
 
+import (
+	"encoding/json"
+	"math"
+)
+
 // Requête principale envoyée par le POS
 type RequestObject struct {
 	MerchantID         string       `json:"merchant_id"`
@@ -58,6 +63,26 @@ type OrderRequest struct {
 	CartDiscountCode   string  `json:"cart_discount_code,omitempty"`
 	CartDiscountAmount int     `json:"cart_discount_amount"` // en centimes, toujours >= 0
 }
+
+// UnmarshalJSON accepte un delivery_travel_seconds décimal (les durées OSRM
+// côté scannorder arrivent en float, ex. 494.1) et l'arrondit à la seconde,
+// la colonne orders.delivery_travel_seconds étant un integer.
+func (o *OrderRequest) UnmarshalJSON(data []byte) error {
+	type alias OrderRequest
+	aux := struct {
+		*alias
+		DeliveryTravelSeconds *float64 `json:"delivery_travel_seconds,omitempty"`
+	}{alias: (*alias)(o)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if aux.DeliveryTravelSeconds != nil {
+		v := int(math.Round(*aux.DeliveryTravelSeconds))
+		o.DeliveryTravelSeconds = &v
+	}
+	return nil
+}
+
 type CustomerRequest struct {
 	CustomerID       *string    `json:"customer_id"`
 	BrandCustomerID  *string    `json:"brand_customer_id"`
