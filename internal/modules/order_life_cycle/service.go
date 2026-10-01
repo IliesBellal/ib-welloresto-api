@@ -620,15 +620,28 @@ func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, req
 	return map[string]interface{}{"status": "1"}, nil
 }
 
-func (s *OrdersLifeCycleService) BackToProduction(ctx context.Context, orderID string, req *models.SetDistributedProductsRequest) (map[string]interface{}, error) {
+func (s *OrdersLifeCycleService) BackToProduction(ctx context.Context, orderID string, req *models.BackToProductionRequest) (map[string]interface{}, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 
+	reason, err := normalizeRemakeReason(req.Reason)
+	if err != nil {
+		return nil, err
+	}
+	if len(req.Products) == 0 {
+		return nil, fmt.Errorf("%w: products vide", models.ErrInvalidInput)
+	}
+	for _, p := range req.Products {
+		if strings.TrimSpace(p.OrderItemID) == "" || p.Quantity < 0 {
+			return nil, fmt.Errorf("%w: produit invalide", models.ErrInvalidInput)
+		}
+	}
+
 	log := logger.FromContext(ctx)
 
-	err = s.ordersLifeCycleRepo.MarkProductsBackToProduction(ctx, user.UserID, user.MerchantID, orderID, req.Products)
+	err = s.ordersLifeCycleRepo.MarkProductsBackToProduction(ctx, user.UserID, user.MerchantID, orderID, req.Products, reason)
 	if err != nil {
 		return nil, err
 	}
@@ -638,9 +651,28 @@ func (s *OrdersLifeCycleService) BackToProduction(ctx context.Context, orderID s
 		log.Info("🧠🚫 Order deleted from Redis cache 🚫🧠 (key: " + key + ")")
 	}
 
+	// Les écrans de production des autres appareils rechargent la commande.
+	s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, notification.NotificationTypeOrderUpdate)
+
 	return map[string]interface{}{
 		"status": "1",
 	}, nil
+}
+
+// normalizeRemakeReason : motif optionnel ; vide = aucun motif, sinon il doit
+// appartenir à models.RemakeReasons.
+func normalizeRemakeReason(reason *string) (*string, error) {
+	if reason == nil {
+		return nil, nil
+	}
+	value := strings.ToUpper(strings.TrimSpace(*reason))
+	if value == "" {
+		return nil, nil
+	}
+	if !models.RemakeReasons[value] {
+		return nil, fmt.Errorf("%w: motif %q inconnu", models.ErrInvalidInput, value)
+	}
+	return &value, nil
 }
 
 func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, MerchantID, orderID string) (*models.HandlerDefaultResponseModelSet, error) {

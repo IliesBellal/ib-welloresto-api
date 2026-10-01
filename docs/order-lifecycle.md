@@ -75,7 +75,7 @@
 | `order_life_cycle/repository.go:587-589` | `MarkOrderAsDeliveryStarted` | `'EN_ROUTE_TO_DROPOFF'` | Démarrage mono-livraison |
 | `order_life_cycle/repository.go:621` | `DenyOrderLocal` | `'DENIED'` | Refus restaurateur |
 | `order_life_cycle/repository.go:384-390` | `SetDistributedProducts` | CASE : `'READY_FOR_HANDOFF'` / `'READY_FOR_TAKE_AWAY'` / `'DONE'` (IN) / `'PENDING'` (partiel) | Distribution produits |
-| `order_life_cycle/repository.go:496-502` | `MarkProductsBackToProduction` | CASE : `'READY_FOR_HANDOFF'` / `'READY_FOR_TAKE_AWAY'` / `'CLOSED'` (IN) / `'PENDING'` | Retour en production |
+| `order_life_cycle/repository.go` | `MarkProductsBackToProduction` | `'PENDING'` si l'état courant est `'READY_FOR_HANDOFF'` / `'READY_FOR_TAKE_AWAY'` / `'DONE'`, sinon inchangé | Retour en production (voir section dédiée) |
 | `order_life_cycle/repository.go:671-676` | `SetReadyForDistribution` | `'READY_FOR_HANDOFF'` (DELIVERY) / `'READY_FOR_TAKE_AWAY'` (TAKE_AWAY) | Prêt à distribuer |
 | `order_life_cycle/repository.go:755` | `DeleteOrderLocal` | `'CANCELED'` | Suppression staff |
 | `order_life_cycle/repository.go:833` | `SetDeliveredLocal` | `'CLOSED'` | Clôture fiscale |
@@ -647,13 +647,9 @@ Auparavant, la clôture manager écrivait `brand_status='DONE', state='CLOSED'` 
 
 `brand_status='DONE'` reste produit par d'autres chemins (`SetDistributedProducts` pour les commandes IN, voir P6), donc une requête cherchant les commandes livrées **toutes catégories** doit toujours inclure les deux valeurs : `brand_status IN ('CLOSED', 'DONE')`. Les queries de stats (`stats/repository.go:253, 361, 477`) font déjà ce double-check. Les données historiques antérieures au correctif portent encore `'DONE'` sans hash.
 
-### P6 — `SetDistributedProducts` vs `MarkProductsBackToProduction` : valeurs inconsistantes pour les commandes IN
+### P6 — ~~`SetDistributedProducts` vs `MarkProductsBackToProduction` : valeurs inconsistantes pour les commandes IN~~ (résolu)
 
-Pour une commande IN entièrement distribuée :
-- `SetDistributedProducts` (`repository.go:384-390`) → `brand_status='DONE'`
-- `MarkProductsBackToProduction` (`repository.go:496-502`) → `brand_status='CLOSED'`
-
-Même condition sémantique, deux valeurs différentes. `'CLOSED'` via `MarkProductsBackToProduction` est sémantiquement incohérent ("retour en production" qui résulte en un état "clôturé").
+**Résolu (2026-10-01).** `MarkProductsBackToProduction` a été réécrit et branché (`PATCH /orders/{id}/back-to-production`, voir « Retour en production » ci-dessous). Il n'écrit plus jamais `'CLOSED'` : un retour en production ne peut que faire redescendre la commande en `'PENDING'`.
 
 ### P7 — Le webhook Stripe écrase `merchant_approval='ACCEPTED'`
 
@@ -674,6 +670,36 @@ Toutes les valeurs de `brand_status` sont des chaînes brutes dans le SQL. La se
 ### P11 — Valeurs `merchant_approval` potentiellement attendues côté client sous les mauvaises formes
 
 Le backend écrit exclusivement `"PENDING_APPROVAL"` (jamais `"PENDING"`) et `"DENIED"` (jamais `"REFUSED"`). Aucune occurrence de ces variantes alternatives n'a été trouvée dans `internal/`. Si un client (app mobile, frontend) compare `merchant_approval == "PENDING"` ou `== "REFUSED"`, ces comparaisons ne matcheront jamais.
+
+---
+
+## Retour en production
+
+Renvoie en production des unités **déjà servies** (plat tombé, erreur de préparation, réclamation client), depuis la caisse (appui sur le bouton de distribution) ou depuis l'écran de production (commandes récemment terminées).
+
+```
+PATCH /orders/{order_id}/back-to-production
+{ "products": [{ "order_item_id": "123", "quantity": 1 }], "reason": "DROPPED" }
+```
+
+- `quantity` : unités à renvoyer pour la ligne ; `0` ou absent = toutes les unités servies. Une valeur supérieure aux unités servies est ramenée à celles-ci.
+- `reason` : optionnel, parmi `PREPARATION_ERROR`, `DROPPED`, `CUSTOMER_COMPLAINT`, `OTHER`.
+
+Effet (transaction unique, `MarkProductsBackToProduction`) :
+
+| Table | Écriture |
+|---|---|
+| `orderitems` | `distributed_quantity -= n`, `ready_for_distribution_quantity` = nouvelle `distributed_quantity`, `remake_quantity += n`, `isDistributed = FALSE`, `production_status = 'TODO'`, `production_status_done_quantity = 0` |
+| `order_item_remakes` | une ligne par ligne de commande renvoyée (quantité, motif, auteur) |
+| `orders` | `isDistributed = FALSE` ; `brand_status` → `'PENDING'` seulement depuis `'READY_FOR_HANDOFF'` / `'READY_FOR_TAKE_AWAY'` / `'DONE'` (une livraison en route garde son état) |
+
+Puis purge du cache Redis de la commande et notification `OrderUpdate` (websocket + push) aux appareils du marchand.
+
+**Aucun impact caisse ni fiscal** : aucune ligne n'est créée, prix et quantités vendues sont inchangés. La production affiche `quantity - distributed_quantity`, donc exactement les `n` unités à refaire ; la distribution suivante (`SetDistributedProducts`) remet `distributed_quantity = quantity` et `remake_quantity = 0`. `remake_quantity` ne sert qu'au badge « REFAIRE » côté production. L'écran client (CDS) voit la commande redescendre « en préparation », c'est voulu.
+
+**Commandes clôturées — hors V1** : refusées (`ErrOrderClosed`). Cas visé pour plus tard : un client à emporter revient après la clôture. Piste retenue : **réouvrir la commande** (`PATCH /orders/{id}/reopen`, permission `POSTicketReopen`, chaînage fiscal géré par `ReopenClosedOrder`) **puis** retour en production, enchaînés côté serveur dans un même appel pour que la cuisine ne voie jamais une commande rouverte sans rien à produire.
+
+**Plateformes** : une commande Uber Eats / Deliveroo encore ouverte peut être renvoyée ; la re-distribution rappelle `SetOrderReady` / `ReadyForCollection` chez la plateforme (appel asynchrone, erreur seulement journalisée).
 
 ---
 

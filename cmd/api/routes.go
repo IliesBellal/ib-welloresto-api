@@ -1612,6 +1612,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			r.Patch("/{order_id}/delivery-start", ordersLifeCycleH.StartDelivery)
 			r.Patch("/{order_id}/distributed", ordersLifeCycleH.SetReadyForDistribution)
 			r.Patch("/{order_id}/distributed-products", ordersLifeCycleH.SetDistributedProducts)
+			r.Patch("/{order_id}/back-to-production", ordersLifeCycleH.BackToProduction)
 			r.Patch("/multiple-production-status", ordersLifeCycleH.UpdateProductionStatus)
 
 			// Sous-route paiements (en écriture)

@@ -453,6 +453,7 @@ opérationnelle quotidienne (écran d'historique de l'app Flutter), pas du repor
 | PATCH | `/orders/{order_id}/delivery-start` | authMiddleware | aucun |
 | PATCH | `/orders/{order_id}/distributed` | authMiddleware | aucun |
 | PATCH | `/orders/{order_id}/distributed-products` | authMiddleware | aucun |
+| PATCH | `/orders/{order_id}/back-to-production` | authMiddleware | aucun |
 | PATCH | `/orders/multiple-production-status` | authMiddleware | aucun |
 | POST | `/orders/{order_id}/payments/create` | authMiddleware | aucun |
 | DELETE | `/orders/{order_id}/payments/{payment_id}` | authMiddleware | `pos.refund` |

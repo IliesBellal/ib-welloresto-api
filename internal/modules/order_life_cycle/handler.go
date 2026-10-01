@@ -164,7 +164,7 @@ func (h *OrdersLifeCycleHandler) BackToProduction(w http.ResponseWriter, r *http
 	ctx := r.Context()
 	orderID := chi.URLParam(r, "order_id")
 
-	var req models.SetDistributedProductsRequest
+	var req models.BackToProductionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "back_to_production", map[string]string{"error": "invalid_body"})
 		return

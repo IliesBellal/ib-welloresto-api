@@ -317,3 +317,20 @@ type SetDistributedProductsRequest struct {
 	OrderID  string               `json:"order_id"`
 	Products []DistributedProduct `json:"products"`
 }
+
+// BackToProductionRequest : unités déjà servies à refaire. Quantity est le
+// nombre d'unités à renvoyer pour la ligne (0 = toutes les unités servies).
+// Reason est optionnel, parmi RemakeReasons.
+type BackToProductionRequest struct {
+	Products []DistributedProduct `json:"products"`
+	Reason   *string              `json:"reason,omitempty"`
+}
+
+// RemakeReasons : motifs acceptés pour un retour en production (colonne
+// order_item_remakes.reason, contrainte CHECK côté base).
+var RemakeReasons = map[string]bool{
+	"PREPARATION_ERROR":  true,
+	"DROPPED":            true,
+	"CUSTOMER_COMPLAINT": true,
+	"OTHER":              true,
+}

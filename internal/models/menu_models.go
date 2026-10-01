@@ -85,6 +85,7 @@ type ProductEntry struct {
 	PaidQuantity                 *int                   `json:"paid_quantity,omitempty"`
 	DistributedQuantity          *int                   `json:"distributed_quantity,omitempty"`
 	ReadyForDistributionQuantity *int                   `json:"ready_for_distribution_quantity,omitempty"`
+	RemakeQuantity               int                    `json:"remake_quantity,omitempty"` // orderitems.remake_quantity : unités renvoyées en production, remis à 0 à la distribution
 	IsPaid                       *bool                  `json:"isPaid,omitempty"`
 	IsDistributed                *bool                  `json:"isDistributed,omitempty"`
 	IsUpsell                     bool                   `json:"is_upsell,omitempty"` // orderitems.is_upsell ; absent quand false, donc jamais dans les réponses menu

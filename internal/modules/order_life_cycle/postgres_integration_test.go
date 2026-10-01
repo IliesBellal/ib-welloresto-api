@@ -4,6 +4,7 @@ package order_life_cycle
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"testing"
 
@@ -29,6 +30,7 @@ func TestOrderLifeCycleRepository_Postgres(t *testing.T) {
 		}
 		for _, q := range []string{
 			`DELETE FROM restaurant_ticket WHERE merchant_id = $1`,
+			`DELETE FROM order_item_remakes WHERE merchant_id = $1`,
 			`DELETE FROM stripe_payments WHERE order_id IN (SELECT order_id FROM orders WHERE merchant_id = $1)`,
 			`DELETE FROM payments WHERE merchant_id = $1`,
 			`DELETE FROM order_comments WHERE order_id IN (SELECT order_id FROM orders WHERE merchant_id = $1)`,
@@ -271,8 +273,44 @@ func TestOrderLifeCycleRepository_Postgres(t *testing.T) {
 	if brandStatus != "PENDING" { // 1 item sur 2 -> pas totalement distribué
 		t.Fatalf("brand_status après distribution partielle = %q", brandStatus)
 	}
-	if err := repo.MarkProductsBackToProduction(ctx, createdBy, merchantID, orderID, []models.DistributedProduct{{OrderItemID: existingItemID}}); err != nil {
+	// retour en production : 1 unité sur les 3 servies, avec motif
+	dropped := "DROPPED"
+	if err := repo.MarkProductsBackToProduction(ctx, createdBy, merchantID, orderID, []models.DistributedProduct{{OrderItemID: existingItemID, Quantity: 1}}, &dropped); err != nil {
 		t.Fatalf("MarkProductsBackToProduction: %v", err)
+	}
+	var distributedQty, remakeQty int
+	var itemDistributed bool
+	var productionStatus string
+	_ = db.QueryRowContext(ctx, `SELECT distributed_quantity, remake_quantity, isDistributed, production_status FROM orderitems WHERE order_item_id = $1`, existingItemID).Scan(&distributedQty, &remakeQty, &itemDistributed, &productionStatus)
+	if distributedQty != 2 || remakeQty != 1 || itemDistributed || productionStatus != "TODO" {
+		t.Fatalf("après retour en production = distributed %d, remake %d, isDistributed %v, status %q ; want 2/1/false/TODO", distributedQty, remakeQty, itemDistributed, productionStatus)
+	}
+	var nRemakes int
+	var remakeReason string
+	_ = db.QueryRowContext(ctx, `SELECT COUNT(*), MAX(reason) FROM order_item_remakes WHERE order_id = $1 AND quantity = 1`, orderID).Scan(&nRemakes, &remakeReason)
+	if nRemakes != 1 || remakeReason != dropped {
+		t.Fatalf("order_item_remakes = %d (%q), want 1 (DROPPED)", nRemakes, remakeReason)
+	}
+	// quantité demandée > unités servies : ramenée aux 2 restantes ; puis plus rien à renvoyer
+	if err := repo.MarkProductsBackToProduction(ctx, createdBy, merchantID, orderID, []models.DistributedProduct{{OrderItemID: existingItemID, Quantity: 5}}, nil); err != nil {
+		t.Fatalf("MarkProductsBackToProduction(plafonné): %v", err)
+	}
+	_ = db.QueryRowContext(ctx, `SELECT distributed_quantity, remake_quantity FROM orderitems WHERE order_item_id = $1`, existingItemID).Scan(&distributedQty, &remakeQty)
+	if distributedQty != 0 || remakeQty != 3 {
+		t.Fatalf("après retour plafonné = distributed %d, remake %d ; want 0/3", distributedQty, remakeQty)
+	}
+	if err := repo.MarkProductsBackToProduction(ctx, createdBy, merchantID, orderID, []models.DistributedProduct{{OrderItemID: existingItemID}}, nil); !errors.Is(err, models.ErrInvalidInput) {
+		t.Fatalf("MarkProductsBackToProduction(rien de servi) = %v, want ErrInvalidInput", err)
+	}
+	// la re-distribution remet la ligne à quantity et efface le badge
+	if err := repo.SetDistributedProducts(ctx, createdBy, merchantID, &models.SetDistributedProductsRequest{
+		OrderID: orderID, Products: []models.DistributedProduct{{OrderItemID: existingItemID}},
+	}); err != nil {
+		t.Fatalf("SetDistributedProducts(après retour): %v", err)
+	}
+	_ = db.QueryRowContext(ctx, `SELECT distributed_quantity, remake_quantity FROM orderitems WHERE order_item_id = $1`, existingItemID).Scan(&distributedQty, &remakeQty)
+	if distributedQty != 3 || remakeQty != 0 {
+		t.Fatalf("après re-distribution = distributed %d, remake %d ; want 3/0", distributedQty, remakeQty)
 	}
 	if _, err := repo.UpdateProductionStatus(ctx, merchantID, &UpdateProductionStatusRequest{
 		Products: []ProductionStatusProduct{{OrderItemID: existingItemID, OrderID: orderID, ProductionStatus: "DONE"}},
@@ -326,6 +364,9 @@ func TestOrderLifeCycleRepository_Postgres(t *testing.T) {
 	}
 	if open, _ := repo.OrderStillOpen(ctx, orderID); open {
 		t.Fatalf("OrderStillOpen après clôture")
+	}
+	if err := repo.MarkProductsBackToProduction(ctx, createdBy, merchantID, orderID, []models.DistributedProduct{{OrderItemID: existingItemID}}, nil); !errors.Is(err, models.ErrOrderClosed) {
+		t.Fatalf("MarkProductsBackToProduction(clôturée) = %v, want ErrOrderClosed", err)
 	}
 	if err := repo.ReopenClosedOrder(ctx, merchantID, orderID, createdBy); err != nil {
 		t.Fatalf("ReopenClosedOrder: %v", err)

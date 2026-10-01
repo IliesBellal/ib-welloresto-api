@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/models"
 
 	"github.com/stripe/stripe-go/v84"
 	"github.com/stripe/stripe-go/v84/checkout/session"
@@ -37,31 +39,12 @@ func (c *StripeManager) CreateCheckoutSession(req CheckoutSessionRequestObject) 
 	for _, p := range products {
 		product := p
 
-		description := product.ProductName
-		var configurationPrice int = 0
+		options := selectedOptions(product.Config)
 
-		if product.Config != nil {
-			if product.Config.Attributes != nil {
-				for _, a := range product.Config.Attributes {
-					attr := a
-					for _, o := range attr.Options {
-						option := o
-
-						if !option.Selected {
-							continue
-						}
-
-						if option.Label != nil {
-							description += *option.Label
-						}
-
-						if option.ExtraPrice > 0 {
-							description += fmt.Sprintf("(+%.2f EUR)", float64(option.ExtraPrice)/100)
-							configurationPrice += option.ExtraPrice
-						}
-						description += ", "
-					}
-				}
+		configurationPrice := 0
+		for _, option := range options {
+			if option.ExtraPrice > 0 {
+				configurationPrice += option.ExtraPrice
 			}
 		}
 
@@ -80,7 +63,7 @@ func (c *StripeManager) CreateCheckoutSession(req CheckoutSessionRequestObject) 
 				Currency: stripe.String(string(stripe.CurrencyEUR)),
 				ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
 					Name:        &product.ProductName,
-					Description: &description,
+					Description: optionsDescription(options),
 				},
 				UnitAmount: stripe.Int64(int64((unitAmount + configurationPrice))),
 			},
@@ -145,6 +128,51 @@ func (c *StripeManager) CreateCheckoutSession(req CheckoutSessionRequestObject) 
 	params.SetStripeAccount(*merchant.AccountID)
 
 	return c.client.CheckoutSessions.New(params)
+}
+
+// selectedOptions renvoie les options cochées de la configuration d'un produit.
+func selectedOptions(config *models.ProductConfiguration) []models.ConfigurationOption {
+	if config == nil {
+		return nil
+	}
+
+	var selected []models.ConfigurationOption
+	for _, attr := range config.Attributes {
+		for _, option := range attr.Options {
+			if option.Selected {
+				selected = append(selected, option)
+			}
+		}
+	}
+	return selected
+}
+
+// optionsDescription liste les options choisies avec leur supplément éventuel,
+// ex. "Frites, Coca (+1,50 €)". Renvoie nil sans option à afficher : Stripe
+// refuse une description vide.
+func optionsDescription(options []models.ConfigurationOption) *string {
+	parts := make([]string, 0, len(options))
+	for _, option := range options {
+		if option.Label == nil || strings.TrimSpace(*option.Label) == "" {
+			continue
+		}
+
+		part := strings.TrimSpace(*option.Label)
+		if option.ExtraPrice > 0 {
+			part += " (+" + formatEuros(option.ExtraPrice) + ")"
+		}
+		parts = append(parts, part)
+	}
+
+	if len(parts) == 0 {
+		return nil
+	}
+	return stripe.String(strings.Join(parts, ", "))
+}
+
+// formatEuros formate un montant en centimes à la française : 150 -> "1,50 €".
+func formatEuros(cents int) string {
+	return strings.Replace(fmt.Sprintf("%.2f €", float64(cents)/100), ".", ",", 1)
 }
 
 func (c *StripeManager) CreateCheckoutSessionOld(req map[string]interface{}) (*stripe.CheckoutSession, error) {

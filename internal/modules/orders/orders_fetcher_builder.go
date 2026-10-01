@@ -413,7 +413,8 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		       oi.distributed_quantity, tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away, oi.delay_id, oc.content, oc.user_id, oc.creation_date,
 		p.price_take_away, p.price_delivery, p.image_url, oi.production_status, oi.production_status_done_quantity, p.production_color,
 		p.available_in, p.available_take_away, p.available_delivery,
-		       CASE WHEN oi.is_upsell THEN 1 ELSE 0 END AS is_upsell
+		       CASE WHEN oi.is_upsell THEN 1 ELSE 0 END AS is_upsell,
+		       COALESCE(oi.remake_quantity, 0) AS remake_quantity
 		FROM orders o
 		INNER JOIN orderitems oi ON o.order_id = oi.order_id AND oi.merchant_id = o.merchant_id
 		INNER JOIN products p ON oi.product_id = p.product_id AND oi.merchant_id = p.merchant_id
@@ -433,7 +434,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var quantity, paidQuantity, price, isPaid, isDistributed, basePrice, discountID, readyForDistribution, distributedQuantity, priceTakeAway, priceDelivery, productionDoneQty, isUpsell sql.NullInt64
+			var quantity, paidQuantity, price, isPaid, isDistributed, basePrice, discountID, readyForDistribution, distributedQuantity, priceTakeAway, priceDelivery, productionDoneQty, isUpsell, remakeQty sql.NullInt64
 			var productID, name, productDesc, categName, orderItemID, discountName, delayID, commentContent, commentUserID, imageURL, productionStatus, productionColor, orderID sql.NullString
 			var tvaIn, tvaDelivery, tvaTakeAway sql.NullFloat64
 			var orderedOn, commentCreation sql.NullTime
@@ -446,7 +447,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				&tvaIn, &tvaDelivery, &tvaTakeAway, &delayID, &commentContent, &commentUserID,
 				&commentCreation, &priceTakeAway, &priceDelivery, &imageURL, &productionStatus,
 				&productionDoneQty, &productionColor, &availableIn, &availableTakeAway,
-				&availableDelivery, &isUpsell,
+				&availableDelivery, &isUpsell, &remakeQty,
 			)
 
 			if scanErr != nil {
@@ -468,7 +469,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 					&tvaIn, &tvaDelivery, &tvaTakeAway, &delayID, &commentContent, &commentUserID,
 					&commentCreation, &priceTakeAway, &priceDelivery, &imageURL, &productionStatus,
 					&productionDoneQty, &productionColor, &availableIn, &availableTakeAway,
-					&availableDelivery, &isUpsell,
+					&availableDelivery, &isUpsell, &remakeQty,
 				}
 
 				fmt.Println("➡️ Types attendus par Go pour chaque champ :")
@@ -507,6 +508,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				IsPaid:                       helpers.BoolPtr(isPaid.Int64 != 0),
 				IsDistributed:                helpers.BoolPtr(isDistributed.Int64 != 0),
 				IsUpsell:                     isUpsell.Int64 != 0,
+				RemakeQuantity:               int(remakeQty.Int64),
 				Price:                        price.Int64,
 				PriceTakeAway:                &priceTakeAway.Int64,
 				PriceDelivery:                &priceDelivery.Int64,

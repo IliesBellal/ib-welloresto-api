@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 	"welloresto-api/internal/modules/customers"
 	"welloresto-api/internal/modules/deliverytime"
 	"welloresto-api/internal/modules/distributiontime"
+	"welloresto-api/internal/utils/dbutils"
 	"welloresto-api/internal/utils/security"
 
 	"go.uber.org/zap"
@@ -436,6 +438,7 @@ func (r *OrdersLifeCycleRepository) SetDistributedProducts(ctx context.Context, 
 			SET isDistributed = TRUE,
 			    distributed_quantity = quantity,
 			    ready_for_distribution_quantity = quantity,
+			    remake_quantity = 0,
 			    distributed_on = ?
 			WHERE order_id = ? AND order_item_id = ?`, now, orderID, p.OrderItemID)
 	}
@@ -492,89 +495,105 @@ func (r *OrdersLifeCycleRepository) SetDistributedProducts(ctx context.Context, 
 	return nil
 }
 
-func (r *OrdersLifeCycleRepository) MarkProductsBackToProduction(ctx context.Context, userID, merchantID, orderID string, products []models.DistributedProduct) error {
-	db := dbx.GetDB(ctx, r.database)
-	log := logger.FromContext(ctx)
+// MarkProductsBackToProduction renvoie en production des unités déjà servies
+// (plat tombé, erreur, réclamation) sans toucher à la vente : aucune ligne
+// n'est créée, seule distributed_quantity baisse de n. La production affiche
+// quantity - distributed_quantity, donc exactement les n unités à refaire ;
+// la prochaine distribution (SetDistributedProducts) remet la ligne à
+// quantity. remake_quantity porte le badge « REFAIRE » côté production et
+// chaque renvoi est historisé dans order_item_remakes (motif, auteur).
+//
+// Seules les commandes OPEN sont acceptées (V1 — la réouverture d'une
+// commande clôturée suivie d'un retour en production est documentée dans
+// docs/order-lifecycle.md). Une quantité demandée supérieure aux unités
+// servies est ramenée à celles-ci (données client périmées) ; si aucune
+// unité n'est finalement renvoyée, ErrInvalidInput.
+func (r *OrdersLifeCycleRepository) MarkProductsBackToProduction(ctx context.Context, userID, merchantID, orderID string, products []models.DistributedProduct, reason *string) error {
+	return dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
+		db := dbx.GetDB(txCtx, r.database)
 
-	for _, p := range products {
-
-		_, err := db.ExecContext(ctx, `
-            UPDATE orderitems
-            SET
-                isDistributed = FALSE,
-
-                distributed_quantity = CASE
-                    WHEN isDistributed = TRUE AND ready_for_distribution_quantity = 0 THEN quantity
-                    WHEN isDistributed = TRUE AND ready_for_distribution_quantity > 0 THEN ready_for_distribution_quantity
-                    ELSE 0
-                END,
-
-                ready_for_distribution_quantity = CASE
-                    WHEN isDistributed = FALSE THEN 0
-                    WHEN ready_for_distribution_quantity = 0 THEN quantity
-                    ELSE ready_for_distribution_quantity
-                END,
-
-                distributed_on = `+dbx.UTCNow()+`
-
-            WHERE order_id = ?
-            AND order_item_id = ?
-            AND merchant_id = ?
-        `, orderID, p.OrderItemID, merchantID)
-		if err != nil {
-			log.Error(err.Error())
-			return err
+		var state string
+		err := db.QueryRowContext(txCtx, `
+			SELECT state FROM orders
+			WHERE order_id = ? AND merchant_id = ?
+			FOR UPDATE`, orderID, merchantID).Scan(&state)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: order %s", models.ErrNotFound, orderID)
 		}
-	}
+		if err != nil {
+			return fmt.Errorf("back to production: lock order: %w", err)
+		}
+		if state != "OPEN" {
+			return models.ErrOrderClosed
+		}
 
-	// Check if any undistributed items left
-	var remaining int
-	err := db.QueryRowContext(ctx, `
-        SELECT COUNT(*)
-        FROM orderitems
-        WHERE order_id = ? AND isDistributed = FALSE
-    `, orderID).Scan(&remaining)
-	if err != nil {
-		log.Error(err.Error())
-		return err
-	}
+		sentBack := 0
+		for _, p := range products {
+			var productID string
+			var distributed int
+			err := db.QueryRowContext(txCtx, `
+				SELECT product_id, distributed_quantity FROM orderitems
+				WHERE order_id = ? AND order_item_id = ? AND merchant_id = ?
+				FOR UPDATE`, orderID, p.OrderItemID, merchantID).Scan(&productID, &distributed)
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("%w: order_item %s", models.ErrNotFound, p.OrderItemID)
+			}
+			if err != nil {
+				return fmt.Errorf("back to production: lock order item: %w", err)
+			}
 
-	fullyDistributed := remaining == 0
+			n := p.Quantity
+			if n <= 0 || n > distributed {
+				n = distributed
+			}
+			if n == 0 {
+				continue
+			}
 
-	// Update orders table
-	_, err = db.ExecContext(ctx, `
-        UPDATE orders
-        SET 
-            isDistributed = ?,
+			remaining := distributed - n
+			if _, err := db.ExecContext(txCtx, `
+				UPDATE orderitems
+				SET distributed_quantity = ?,
+				    ready_for_distribution_quantity = ?,
+				    remake_quantity = remake_quantity + ?,
+				    isDistributed = FALSE,
+				    production_status = 'TODO',
+				    production_status_done_quantity = 0
+				WHERE order_id = ? AND order_item_id = ? AND merchant_id = ?`,
+				remaining, remaining, n, orderID, p.OrderItemID, merchantID); err != nil {
+				return fmt.Errorf("back to production: update order item: %w", err)
+			}
 
-            delivered_on = CASE
-                WHEN ? = FALSE OR order_type = 'DELIVERY' THEN delivered_on
-                ELSE `+dbx.UTCNow()+`
-            END,
+			if _, err := db.ExecContext(txCtx, `
+				INSERT INTO order_item_remakes (merchant_id, order_id, order_item_id, product_id, quantity, reason, created_by)
+				VALUES (?, ?, ?, ?, ?, ?, ?)`,
+				merchantID, orderID, p.OrderItemID, productID, n, reason, userID); err != nil {
+				return fmt.Errorf("back to production: insert remake: %w", err)
+			}
+			sentBack += n
+		}
 
-            brand_status = CASE
-                WHEN order_type = 'DELIVERY' AND ? = TRUE THEN 'READY_FOR_HANDOFF'
-                WHEN order_type = 'TAKE_AWAY' AND ? = TRUE THEN 'READY_FOR_TAKE_AWAY'
-                WHEN ? = FALSE THEN 'PENDING'
-                ELSE 'CLOSED'
-            END,
+		if sentBack == 0 {
+			return fmt.Errorf("%w: aucune unité servie à renvoyer", models.ErrInvalidInput)
+		}
 
-            last_update = `+dbx.UTCNow()+`
+		// La commande redescend « en préparation » (cuisine, CDS) seulement
+		// depuis un état « prête / servie » : une livraison en route ou une
+		// commande plateforme dans un autre état garde son brand_status.
+		if _, err := db.ExecContext(txCtx, `
+			UPDATE orders
+			SET isDistributed = FALSE,
+			    brand_status = CASE
+			        WHEN brand_status IN ('READY_FOR_HANDOFF', 'READY_FOR_TAKE_AWAY', 'DONE') THEN 'PENDING'
+			        ELSE brand_status
+			    END,
+			    last_update = `+dbx.UTCNow()+`
+			WHERE order_id = ? AND merchant_id = ?`, orderID, merchantID); err != nil {
+			return fmt.Errorf("back to production: update order: %w", err)
+		}
 
-        WHERE order_id = ? AND merchant_id = ?
-    `,
-		fullyDistributed,
-		fullyDistributed,
-		fullyDistributed,
-		fullyDistributed,
-		fullyDistributed,
-		orderID, merchantID)
-	if err != nil {
-		log.Error(err.Error())
-		return err
-	}
-
-	return nil
+		return nil
+	})
 }
 
 func (r *OrdersLifeCycleRepository) GetOrderBrandAndMerchant(ctx context.Context, orderID string) (*models.OrderMeta, error) {
