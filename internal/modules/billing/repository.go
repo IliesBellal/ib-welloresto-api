@@ -123,23 +123,29 @@ func (r *Repository) SetStripeSubscriptionID(ctx context.Context, merchantID, st
 }
 
 // GetMerchantOwnerContact resolves the name/email to put on a newly created
-// Stripe Customer (B2a-2's "nom, email du propriétaire"). "Propriétaire" has
-// no dedicated flag in this schema (same proxy already used and documented
-// for the multi-merchant discount, see subscriptions.Repository.hasMultiMerchantOwner)
+// Stripe Customer (B2a-2's "nom, email du propriétaire"). The name is always
+// merchant.fullname — the Customer is the business being billed, never a
+// person. The email is the owner's: "propriétaire" has no dedicated flag in
+// this schema (same proxy already used and documented for the
+// multi-merchant discount, see subscriptions.Repository.hasMultiMerchantOwner)
 // — the earliest-enabled admin user on the merchant, falling back to the
-// merchant's own listed contact info if it has no admin user at all.
+// merchant's own listed email if it has no admin user at all.
 func (r *Repository) GetMerchantOwnerContact(ctx context.Context, merchantID string) (name, email string, err error) {
 	db := dbx.GetDB(ctx, r.database)
+	var merchantEmail string
+	if err = db.QueryRowContext(ctx, `SELECT COALESCE(fullname, ''), COALESCE(email, '') FROM merchant WHERE id::text = ?`, merchantID).Scan(&name, &merchantEmail); err != nil {
+		return "", "", err
+	}
 	err = db.QueryRowContext(ctx, `
-		SELECT u.name, u.email
+		SELECT u.email
 		FROM users_rights ur
 		JOIN users u ON u.user_id = ur.user_id
 		WHERE ur.merchant_id = ? AND ur.admin = TRUE AND ur.enabled = TRUE
 		ORDER BY u.created_at ASC
 		LIMIT 1
-	`, merchantID).Scan(&name, &email)
+	`, merchantID).Scan(&email)
 	if err == sql.ErrNoRows {
-		err = db.QueryRowContext(ctx, `SELECT fullname, email FROM merchant WHERE id::text = ?`, merchantID).Scan(&name, &email)
+		email, err = merchantEmail, nil
 	}
 	return name, email, err
 }

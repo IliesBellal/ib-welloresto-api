@@ -17,6 +17,7 @@ type ReceiptService interface {
 	GenerateFiscalReceipt(ctx context.Context, order *models.Order, items []models.SnapshotItem, payments []models.SnapshotPayment) error
 	GenerateRefundReceipt(ctx context.Context, merchantID string, orderID string, originalReceipt *models.Receipt, refundAmountNegative int, mop string) error
 	GetReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error)
+	GetSaleReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error)
 }
 
 type receiptService struct {
@@ -155,6 +156,15 @@ func (s *receiptService) GetReceiptByOrderID(ctx context.Context, orderID string
 	if err != nil {
 		// On wrap l'erreur du repo avec un contexte "Service"
 		return nil, fmt.Errorf("receiptService.GetReceiptByOrderID: %w", err)
+	}
+
+	return receipt, nil
+}
+
+func (s *receiptService) GetSaleReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error) {
+	receipt, err := s.repo.GetSaleReceiptByOrderID(ctx, orderID)
+	if err != nil {
+		return nil, fmt.Errorf("receiptService.GetSaleReceiptByOrderID: %w", err)
 	}
 
 	return receipt, nil

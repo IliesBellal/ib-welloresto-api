@@ -1,6 +1,7 @@
 package scannorder
 
 import (
+	"time"
 	"welloresto-api/internal/models"
 )
 
@@ -12,6 +13,9 @@ type MerchantResponse struct {
 
 type Address struct {
 	Address string  `json:"address"`
+	City    string  `json:"city,omitempty"`
+	ZipCode string  `json:"zip_code,omitempty"`
+	Country string  `json:"country,omitempty"`
 	Lat     float64 `json:"lat"`
 	Lng     float64 `json:"lng"`
 }
@@ -52,7 +56,13 @@ type MerchantData struct {
 	AverageDeliverySeconds *int            `json:"average_delivery_seconds,omitempty"`
 	MinimumOrderAmount     float64         `json:"minimum_order_amount"`
 
-	OrderTypes           OrderTypes   `json:"order_types"`
+	// Description / CuisineType : scannorder_settings.seo_description /
+	// seo_cuisine_type, nil quand vides.
+	Description *string      `json:"description,omitempty"`
+	CuisineType *string      `json:"cuisine_type,omitempty"`
+	SEO         *MerchantSEO `json:"seo,omitempty"`
+
+	OrderTypes         OrderTypes   `json:"order_types"`
 	PaymentTypes         PaymentTypes `json:"payment_types"`
 	AdvanceOrdersEnabled bool         `json:"advance_orders_enabled"`
 
@@ -64,6 +74,44 @@ type MerchantData struct {
 		LastWaiterCall *int    `json:"last_waiter_call"`
 		OrderID        *string `json:"order_id"`
 	} `json:"qr_code"`
+}
+
+// MerchantSEO porte ce dont le front a besoin pour le référencement d'une page
+// établissement. Seul le QR principal (ni table ni serveur) est référencé : une
+// page servie sous un autre code doit pointer son canonical vers CanonicalSlug
+// et être exclue de l'index.
+type MerchantSEO struct {
+	// Title : scannorder_settings.seo_title, nil quand vide.
+	Title *string `json:"title,omitempty"`
+	// CanonicalSlug : code du QR principal du merchant, nil s'il n'en a pas.
+	CanonicalSlug *string `json:"canonical_slug"`
+	// Indexable : ScanNOrder activé, abonnement ni suspendu ni résilié, et QR
+	// principal existant.
+	Indexable bool `json:"indexable"`
+}
+
+// MerchantSEORow : lecture brute de GetMerchantSEOInfo.
+type MerchantSEORow struct {
+	City           string
+	ZipCode        string
+	Country        string
+	SEOTitle       string
+	SEODescription string
+	SEOCuisineType string
+	Activated      bool
+	Blocked        bool
+	MainSlug       *string
+}
+
+// SitemapEntry : une page établissement référençable.
+type SitemapEntry struct {
+	Slug string `json:"slug"`
+	// UpdatedAt : merchant_parameters.last_menu_update.
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+}
+
+type SitemapResponse struct {
+	Merchants []SitemapEntry `json:"merchants"`
 }
 
 type SlotsResponse struct {
@@ -271,6 +319,13 @@ type PublicDeliveryMan struct {
 	Lat       *float64 `json:"lat,omitempty"`
 	Lng       *float64 `json:"lng,omitempty"`
 	Status    *string  `json:"status,omitempty"`
+}
+
+// SNOConfigurationOption holds the official (database) values of a configuration option,
+// used to overwrite what the client sent in the order payload.
+type SNOConfigurationOption struct {
+	ExtraPrice int
+	Title      string
 }
 
 // --- Upsell ---

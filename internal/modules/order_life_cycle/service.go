@@ -1362,7 +1362,9 @@ func (s *OrdersLifeCycleService) SendInvoiceByEmail(ctx context.Context, orderID
 		EmailSentTo: email,
 	}
 
-	rcpt, err := s.receiptService.GetReceiptByOrderID(ctx, orderID)
+	// Ticket de vente et non avoir : un remboursement crée un reçu négatif plus
+	// récent rattaché à la même commande.
+	rcpt, err := s.receiptService.GetSaleReceiptByOrderID(ctx, orderID)
 	if err != nil {
 		return response, fmt.Errorf("failed to load fiscal receipt for order %s: %w", orderID, err)
 	}
@@ -1377,7 +1379,10 @@ func (s *OrdersLifeCycleService) SendInvoiceByEmail(ctx context.Context, orderID
 		orderNum = *order.OrderNum
 	}
 
-	pdfBytes, err := buildInvoicePDF(rcpt, header, orderNum)
+	customer := invoiceCustomerFromOrder(&order, customerID, customerName)
+	vatLines := computeInvoiceVATBreakdown(&order, s.deliveryFeesVATRateForInvoice(ctx, &order), int64(rcpt.TotalTTC), int64(rcpt.TotalHT))
+
+	pdfBytes, err := buildInvoicePDF(rcpt, header, orderNum, customer, vatLines)
 	if err != nil {
 		return response, fmt.Errorf("failed to build invoice PDF: %w", err)
 	}
@@ -1388,11 +1393,55 @@ func (s *OrdersLifeCycleService) SendInvoiceByEmail(ctx context.Context, orderID
 	}
 
 	fileName := fmt.Sprintf("facture-%s.pdf", rcpt.ReceiptNumber)
-	if err := s.mailerService.SendInvoiceEmailToCustomer(email, customerName, pdfBytes, fileName); err != nil {
+	if err := s.mailerService.SendInvoiceEmailToCustomer(email, customerName, header.MerchantName, rcpt.ReceiptNumber, pdfBytes, fileName); err != nil {
 		return response, &EmailDeliveryError{Err: err}
 	}
 
 	return response, nil
+}
+
+// invoiceCustomerFromOrder construit l'identité du client de la facture : le nom
+// vient de la fiche que l'on vient de lier, la raison sociale et l'adresse de la
+// fiche portée par la commande — uniquement s'il s'agit du même client, pour ne
+// jamais imprimer l'adresse d'un autre.
+func invoiceCustomerFromOrder(order *models.Order, customerID, customerName string) invoiceCustomer {
+	customer := invoiceCustomer{Name: customerName}
+
+	orderCustomer := order.Customer
+	if orderCustomer == nil || orderCustomer.CustomerID == nil || *orderCustomer.CustomerID != customerID {
+		return customer
+	}
+
+	if orderCustomer.CustomerBusinessName != nil {
+		customer.BusinessName = *orderCustomer.CustomerBusinessName
+	}
+	addressParts := make([]string, 0, 2)
+	for _, part := range []*string{orderCustomer.CustomerAddress, orderCustomer.CustomerAdditionalAddress} {
+		if part != nil && strings.TrimSpace(*part) != "" {
+			addressParts = append(addressParts, strings.TrimSpace(*part))
+		}
+	}
+	customer.Address = strings.Join(addressParts, ", ")
+	return customer
+}
+
+// deliveryFeesVATRateForInvoice ne charge le taux des frais de livraison que si la
+// commande en porte. Un échec n'empêche pas l'envoi : la facture part simplement
+// sans le détail de TVA par taux (cf. computeInvoiceVATBreakdown).
+func (s *OrdersLifeCycleService) deliveryFeesVATRateForInvoice(ctx context.Context, order *models.Order) *float64 {
+	if order.DeliveryFees == nil || *order.DeliveryFees <= 0 {
+		return nil
+	}
+	rate, found, err := s.ordersLifeCycleRepo.GetDeliveryFeesVATRate(ctx)
+	if err != nil {
+		logger.FromContext(ctx).Warn("invoice: delivery fees VAT rate unavailable, VAT breakdown omitted",
+			zap.String("order_id", order.OrderID), zap.Error(err))
+		return nil
+	}
+	if !found {
+		return nil
+	}
+	return &rate
 }
 
 func (s *OrdersLifeCycleService) ComputeEstimatedReady(ctx context.Context, id string) (string, error) {

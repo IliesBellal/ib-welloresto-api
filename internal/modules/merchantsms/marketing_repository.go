@@ -1,15 +1,21 @@
-package messaggio
+package merchantsms
 
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 
 	"welloresto-api/internal/database/dbx"
 )
 
+// defaultSMSUnitPrice reprend le DEFAULT de merchant_marketing_settings.sms_unit_price
+// (centimes), appliqué quand l'établissement n'a pas de ligne de réglages.
+const defaultSMSUnitPrice = 7
+
 type MarketingRepository interface {
 	GetMarketingSettings(ctx context.Context, merchantID string) (*MarketingSettings, error)
+	GetSMSUnitPrice(ctx context.Context, merchantID string) (float64, error)
 	RecordSMSCost(ctx context.Context, merchantID string, count int, unitPrice float64) error
 }
 
@@ -26,8 +32,7 @@ func (r *marketingRepository) GetMarketingSettings(ctx context.Context, merchant
 
 	query := `
 		SELECT mms.sms_enabled,
-			   mms.messaggio_login,
-			   mms.messaggio_from,
+			   mms.sms_sender_name,
 			   mms.tracking_template,
 			   qr.code,
 			   mms.sms_unit_price
@@ -43,13 +48,13 @@ func (r *marketingRepository) GetMarketingSettings(ctx context.Context, merchant
 	row := db.QueryRowContext(ctx, query, merchantID)
 
 	var settings MarketingSettings
-	var smsEnabled bool
+	var smsEnabled sql.NullBool
+	var senderName, trackingTemplate sql.NullString
 
 	err := row.Scan(
 		&smsEnabled,
-		&settings.MessaggioLogin,
-		&settings.MessaggioFrom,
-		&settings.TrackingTemplate,
+		&senderName,
+		&trackingTemplate,
 		&settings.QRCode,
 		&settings.SMSUnitPrice,
 	)
@@ -59,9 +64,30 @@ func (r *marketingRepository) GetMarketingSettings(ctx context.Context, merchant
 	}
 
 	settings.MerchantID = merchantID
-	settings.SMSEnabled = smsEnabled
+	settings.SMSEnabled = smsEnabled.Bool
+	settings.SMSSenderName = senderName.String
+	settings.TrackingTemplate = trackingTemplate.String
 
 	return &settings, nil
+}
+
+// GetSMSUnitPrice renvoie le prix unitaire (centimes) facturé à l'établissement
+// pour un SMS ; le prix par défaut s'applique en l'absence de réglages.
+func (r *marketingRepository) GetSMSUnitPrice(ctx context.Context, merchantID string) (float64, error) {
+	db := dbx.GetDB(ctx, r.db)
+
+	var unitPrice float64
+	err := db.QueryRowContext(ctx,
+		`SELECT sms_unit_price FROM merchant_marketing_settings WHERE merchant_id = ?`,
+		merchantID,
+	).Scan(&unitPrice)
+	if errors.Is(err, sql.ErrNoRows) {
+		return defaultSMSUnitPrice, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return unitPrice, nil
 }
 
 func (r *marketingRepository) RecordSMSCost(

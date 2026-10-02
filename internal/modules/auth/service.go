@@ -621,6 +621,8 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 			Lng:          user.MerchantLng,
 			TimeZone:     user.TimeZone,
 			WebSite:      user.WebSite.String,
+			SIRET:        strings.TrimSpace(user.MerchantSIRET.String),
+			VATNumber:    strings.TrimSpace(user.MerchantVATNumber.String),
 			Currency:     user.Currency,
 			IsOpen:       user.IsOpen,
 			Settings: LoginMerchantSettingsResponse{

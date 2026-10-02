@@ -1,6 +1,6 @@
 //go:build postgres_integration
 
-package messaggio
+package merchantsms
 
 import (
 	"context"
@@ -43,6 +43,14 @@ func TestMarketingRepository_Postgres(t *testing.T) {
 	}
 	if !settings.SMSEnabled || settings.QRCode != "itest-qr-code" || settings.SMSUnitPrice != 7 {
 		t.Fatalf("unexpected settings: %+v", settings)
+	}
+
+	unitPrice, err := repo.GetSMSUnitPrice(ctx, merchantID)
+	if err != nil || unitPrice != 7 {
+		t.Fatalf("GetSMSUnitPrice = (%v, %v), want 7", unitPrice, err)
+	}
+	if unitPrice, err := repo.GetSMSUnitPrice(ctx, "itest-msg-unknown"); err != nil || unitPrice != defaultSMSUnitPrice {
+		t.Fatalf("GetSMSUnitPrice(unknown merchant) = (%v, %v), want the default price", unitPrice, err)
 	}
 
 	// Premier enregistrement : INSERT, puis second : branche DO UPDATE (upsert)

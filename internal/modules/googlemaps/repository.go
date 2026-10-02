@@ -32,7 +32,7 @@ func (r *logRepository) SaveLog(userID, origin, destination string) error {
 }
 
 // RecordGoogleMapsCall upserts the per-merchant, per-calendar-month Google Maps call
-// counter, mirroring messaggio.RecordSMSCost's merchant_sms_monthly pattern.
+// counter, mirroring merchantsms.RecordSMSCost's merchant_sms_monthly pattern.
 func (r *logRepository) RecordGoogleMapsCall(ctx context.Context, merchantID string, count int) error {
 	db := dbx.GetDB(ctx, r.db)
 

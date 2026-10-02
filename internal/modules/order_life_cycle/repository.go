@@ -2781,3 +2781,19 @@ func (r *OrdersLifeCycleRepository) insertPayments(ctx context.Context, req *mod
 	}
 	return nil
 }
+
+// GetDeliveryFeesVATRate renvoie le taux de TVA appliqué aux frais de
+// livraison (tva_categories.tva_id = -1, même convention que le rapport
+// comptable). found=false si la catégorie n'existe pas.
+func (r *OrdersLifeCycleRepository) GetDeliveryFeesVATRate(ctx context.Context) (rate float64, found bool, err error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	err = db.QueryRowContext(ctx, `SELECT tva_rate FROM tva_categories WHERE tva_id = ?`, -1).Scan(&rate)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("GetDeliveryFeesVATRate: %w", err)
+	}
+	return rate, true, nil
+}

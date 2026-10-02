@@ -27,11 +27,18 @@ import (
 const smsSender = "Wello Resto"
 
 type Service struct {
-	mailer   mailer.Service
-	sms      sms.Service
-	baseURL  string
-	outbound outboundRecorder
-	log      *zap.Logger
+	mailer      mailer.Service
+	sms         sms.Service
+	merchantSMS merchantSMSSender
+	baseURL     string
+	outbound    outboundRecorder
+	log         *zap.Logger
+}
+
+// merchantSMSSender envoie un SMS pour le compte d'un établissement et le
+// comptabilise dans son compteur mensuel (merchantsms.Service).
+type merchantSMSSender interface {
+	SendAsync(ctx context.Context, merchantID, senderID, phoneNumber, message string, onSent func(messageID string))
 }
 
 type outboundRecorder interface {
@@ -53,10 +60,32 @@ func New(mail mailer.Service, smsSvc sms.Service, baseURL string, outboundSvc ou
 	return &Service{mailer: mail, sms: smsSvc, baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"), outbound: outboundSvc, log: log}
 }
 
+// SetMerchantSMS fait passer les SMS des messages portant un MerchantID par
+// le compteur SMS de l'établissement. Sans lui (tests), sms.Service est utilisé
+// directement et rien n'est comptabilisé.
+func (s *Service) SetMerchantSMS(merchantSMS merchantSMSSender) {
+	s.merchantSMS = merchantSMS
+}
+
+// sendSMSText envoie le SMS — compté pour merchantID quand c'est possible —
+// puis enregistre le message sortant via onSent (succès uniquement).
+func (s *Service) sendSMSText(ctx context.Context, merchantID, normalizedPhone, text string, onSent func(messageID string)) {
+	if s.merchantSMS != nil && strings.TrimSpace(merchantID) != "" {
+		s.merchantSMS.SendAsync(ctx, merchantID, smsSender, normalizedPhone, text, onSent)
+		return
+	}
+	if trackedSMS, ok := s.sms.(asyncSMSWithMessageID); ok {
+		trackedSMS.SendSMSAsyncWithMessageID(smsSender, normalizedPhone, text, onSent)
+		return
+	}
+	s.sms.SendSMSAsync(smsSender, normalizedPhone, text)
+}
+
 // BookingMessage porte les données primitives nécessaires à l'envoi d'un
 // message lié à une réservation. Construit par l'appelant (bookings,
 // reservation, tasks) à partir de son propre modèle.
 type BookingMessage struct {
+	MerchantID    string // établissement à qui le SMS est comptabilisé
 	BookingID     string // identifiant interne réservation (domain_ref_id outbound)
 	MerchantSlug  string // slug /rsv/{slug} ; vide => pas de lien de gestion
 	MerchantName  string
@@ -129,13 +158,9 @@ func (s *Service) sendSMS(ctx context.Context, m BookingMessage, text string) {
 		return
 	}
 	normalizedPhone := helpers.NormalizePhoneNumber(m.CustomerPhone, "FR")
-	if trackedSMS, ok := s.sms.(asyncSMSWithMessageID); ok {
-		trackedSMS.SendSMSAsyncWithMessageID(smsSender, normalizedPhone, text, func(messageID string) {
-			s.recordOutbound(ctx, outbound.ChannelSMS, messageID, m.BookingID, normalizedPhone)
-		})
-		return
-	}
-	s.sms.SendSMSAsync(smsSender, normalizedPhone, text)
+	s.sendSMSText(ctx, m.MerchantID, normalizedPhone, text, func(messageID string) {
+		s.recordOutbound(ctx, outbound.ChannelSMS, messageID, m.BookingID, normalizedPhone)
+	})
 }
 
 func (s *Service) recordOutbound(ctx context.Context, channel, providerMessageID, domainRefID, recipient string) {
@@ -212,6 +237,7 @@ func (s *Service) SendPostVisit(ctx context.Context, m BookingMessage) {
 // WaitlistMessage porte les données pour la notification "table disponible"
 // envoyée au premier de la liste d'attente.
 type WaitlistMessage struct {
+	MerchantID    string // établissement à qui le SMS est comptabilisé
 	MerchantName  string
 	CustomerName  string
 	CustomerEmail string
@@ -248,12 +274,8 @@ func (s *Service) SendWaitlistAvailable(ctx context.Context, m WaitlistMessage) 
 			m.PartySize, m.MerchantName, m.ExpiryMinutes,
 		)
 		normalizedPhone := helpers.NormalizePhoneNumber(m.CustomerPhone, "FR")
-		if trackedSMS, ok := s.sms.(asyncSMSWithMessageID); ok {
-			trackedSMS.SendSMSAsyncWithMessageID(smsSender, normalizedPhone, text, func(messageID string) {
-				s.recordOutbound(ctx, outbound.ChannelSMS, messageID, "", normalizedPhone)
-			})
-		} else {
-			s.sms.SendSMSAsync(smsSender, normalizedPhone, text)
-		}
+		s.sendSMSText(ctx, m.MerchantID, normalizedPhone, text, func(messageID string) {
+			s.recordOutbound(ctx, outbound.ChannelSMS, messageID, "", normalizedPhone)
+		})
 	}
 }

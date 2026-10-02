@@ -8,7 +8,7 @@ import (
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/modules/messaggio"
+	"welloresto-api/internal/modules/merchantsms"
 	"welloresto-api/internal/modules/notification"
 	"welloresto-api/internal/modules/ubereats"
 
@@ -50,12 +50,12 @@ type DeliverySessionsService struct {
 	deliverySessionsRepo *DeliverySessionsRepository
 	notificationsService *notification.NotificationService
 	orderDeliverer       OrderDeliverer
-	smsService           messaggio.SMSService
+	smsService           merchantsms.SMSService
 	uberSvc              *ubereats.UberEatsService
 	log                  *zap.Logger
 }
 
-func NewDeliverySessionsService(deliverySessionsRepo *DeliverySessionsRepository, notificationsService *notification.NotificationService, orderDeliverer OrderDeliverer, smsService messaggio.SMSService, uberSvc *ubereats.UberEatsService, log *zap.Logger) *DeliverySessionsService {
+func NewDeliverySessionsService(deliverySessionsRepo *DeliverySessionsRepository, notificationsService *notification.NotificationService, orderDeliverer OrderDeliverer, smsService merchantsms.SMSService, uberSvc *ubereats.UberEatsService, log *zap.Logger) *DeliverySessionsService {
 	return &DeliverySessionsService{
 		deliverySessionsRepo: deliverySessionsRepo,
 		notificationsService: notificationsService,

@@ -216,7 +216,47 @@ func (s *Service) computeGetMerchant(ctx context.Context, qr string) (*MerchantR
 	resp.Merchant.QRCode.LocationID = row.LocationID
 	resp.Merchant.QRCode.LocationName = row.LocationName
 
+	// Données de référencement : un échec ne doit pas bloquer la commande, la
+	// page reste servie sans elles.
+	if seo, err := s.repo.GetMerchantSEOInfo(ctx, row.MerchantID); err != nil {
+		logger.FromContext(ctx).Warn("GetMerchantSEOInfo failed", zap.Error(err))
+	} else {
+		applyMerchantSEO(resp.Merchant, seo)
+	}
+
 	return resp, nil
+}
+
+// applyMerchantSEO reporte sur la réponse merchant l'adresse découpée et les
+// champs de référencement. Les champs texte vides restent nil.
+func applyMerchantSEO(m *MerchantData, seo *MerchantSEORow) {
+	m.Address.City = seo.City
+	m.Address.ZipCode = seo.ZipCode
+	m.Address.Country = seo.Country
+	m.Description = nonEmpty(seo.SEODescription)
+	m.CuisineType = nonEmpty(seo.SEOCuisineType)
+	m.SEO = &MerchantSEO{
+		Title:         nonEmpty(seo.SEOTitle),
+		CanonicalSlug: seo.MainSlug,
+		Indexable:     seo.Activated && !seo.Blocked && seo.MainSlug != nil,
+	}
+}
+
+func nonEmpty(s string) *string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// GetSitemap liste les pages établissement référençables (QR principaux).
+func (s *Service) GetSitemap(ctx context.Context) (*SitemapResponse, error) {
+	entries, err := s.repo.GetSitemapEntries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &SitemapResponse{Merchants: entries}, nil
 }
 
 // GetEffectivePrepMinutes renvoie le temps de préparation annoncé au client :
@@ -718,9 +758,9 @@ func (s *Service) validateAndCleanPricingPayload(ctx context.Context, req *model
 		optIDList = append(optIDList, id)
 	}
 
-	officialOptionPrices := make(map[string]int)
+	officialOptions := make(map[string]SNOConfigurationOption)
 	if len(optIDList) > 0 {
-		officialOptionPrices, err = s.repo.GetConfigurationOptionPricesForSNO(ctx, optIDList)
+		officialOptions, err = s.repo.GetConfigurationOptionsForSNO(ctx, optIDList)
 		if err != nil {
 			log.Error("Failed to fetch official option prices", zap.Error(err))
 			return fmt.Errorf("option_pricing_fetch_failed: %w", err)
@@ -728,7 +768,7 @@ func (s *Service) validateAndCleanPricingPayload(ctx context.Context, req *model
 
 		// Validate all options exist in database
 		for _, optionID := range optIDList {
-			if _, exists := officialOptionPrices[optionID]; !exists {
+			if _, exists := officialOptions[optionID]; !exists {
 				log.Warn("SECURITY: Client sent invalid configuration option ID",
 					zap.String("option_id", optionID),
 					zap.String("merchant_id", merchant.MerchantID),
@@ -761,16 +801,22 @@ func (s *Service) validateAndCleanPricingPayload(ctx context.Context, req *model
 			zap.Int("official_price", product.Price),
 		)
 
-		// Overwrite configuration option prices with database values
+		// Overwrite configuration option prices with database values. The client only
+		// sends option IDs: the title is filled here so that downstream consumers (Stripe
+		// Checkout line description) can display the chosen options.
 		if product.Config != nil && product.Config.Attributes != nil {
 			for _, attr := range product.Config.Attributes {
 				for i, opt := range attr.Options {
-					if officialPrice, exists := officialOptionPrices[opt.ID]; exists {
-						attr.Options[i].ExtraPrice = officialPrice
+					if official, exists := officialOptions[opt.ID]; exists {
+						attr.Options[i].ExtraPrice = official.ExtraPrice
+						if official.Title != "" {
+							title := official.Title
+							attr.Options[i].Label = &title
+						}
 
 						log.Debug("Option price normalized from database",
 							zap.String("option_id", opt.ID),
-							zap.Int("official_extra_price", officialPrice),
+							zap.Int("official_extra_price", official.ExtraPrice),
 						)
 					}
 				}

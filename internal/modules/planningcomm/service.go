@@ -28,11 +28,18 @@ type asyncSMSWithMessageID interface {
 }
 
 type Service struct {
-	mailer   mailer.Service
-	sms      sms.Service
-	baseURL  string
-	outbound outboundRecorder
-	log      *zap.Logger
+	mailer      mailer.Service
+	sms         sms.Service
+	merchantSMS merchantSMSSender
+	baseURL     string
+	outbound    outboundRecorder
+	log         *zap.Logger
+}
+
+// merchantSMSSender envoie un SMS pour le compte d'un établissement et le
+// comptabilise dans son compteur mensuel (merchantsms.Service).
+type merchantSMSSender interface {
+	SendAsync(ctx context.Context, merchantID, senderID, phoneNumber, message string, onSent func(messageID string))
 }
 
 type ShiftSummary struct {
@@ -43,6 +50,7 @@ type ShiftSummary struct {
 }
 
 type PublishedWeekMessage struct {
+	MerchantID    string // établissement à qui le SMS est comptabilisé
 	WeekID        string
 	MerchantName  string
 	EmployeeID    string
@@ -58,6 +66,13 @@ type PublishedWeekMessage struct {
 
 func New(mail mailer.Service, smsSvc sms.Service, baseURL string, outboundSvc outboundRecorder, log *zap.Logger) *Service {
 	return &Service{mailer: mail, sms: smsSvc, baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"), outbound: outboundSvc, log: log}
+}
+
+// SetMerchantSMS fait passer les SMS des messages portant un MerchantID par
+// le compteur SMS de l'établissement. Sans lui (tests), sms.Service est utilisé
+// directement et rien n'est comptabilisé.
+func (s *Service) SetMerchantSMS(merchantSMS merchantSMSSender) {
+	s.merchantSMS = merchantSMS
 }
 
 func (s *Service) SendPublishedWeek(ctx context.Context, msg PublishedWeekMessage) {
@@ -103,10 +118,15 @@ func (s *Service) sendSMS(ctx context.Context, msg PublishedWeekMessage) {
 	if msg.SendInlineSMS {
 		text = s.inlineSMS(msg)
 	}
+	onSent := func(messageID string) {
+		s.recordOutbound(ctx, outbound.ChannelSMS, msg.WeekID, messageID, normalizedPhone)
+	}
+	if s.merchantSMS != nil && strings.TrimSpace(msg.MerchantID) != "" {
+		s.merchantSMS.SendAsync(ctx, msg.MerchantID, planningSMSSender, normalizedPhone, text, onSent)
+		return
+	}
 	if trackedSMS, ok := s.sms.(asyncSMSWithMessageID); ok {
-		trackedSMS.SendSMSAsyncWithMessageID(planningSMSSender, normalizedPhone, text, func(messageID string) {
-			s.recordOutbound(ctx, outbound.ChannelSMS, msg.WeekID, messageID, normalizedPhone)
-		})
+		trackedSMS.SendSMSAsyncWithMessageID(planningSMSSender, normalizedPhone, text, onSent)
 		return
 	}
 	s.sms.SendSMSAsync(planningSMSSender, normalizedPhone, text)

@@ -126,6 +126,45 @@ func TestScannorderRepository_Postgres(t *testing.T) {
 		t.Fatalf("GetMerchantIDByQR = (%v, %v)", midPtr, err)
 	}
 
+	// --- GetMerchantSEOInfo : le QR de table n'est jamais le canonical ---
+	seo, err := repo.GetMerchantSEOInfo(ctx, merchantID)
+	if err != nil {
+		t.Fatalf("GetMerchantSEOInfo failed against postgres: %v", err)
+	}
+	if seo.City != "Paris" || seo.ZipCode != "75001" || seo.SEODescription != "d" || seo.SEOCuisineType != "fr" ||
+		!seo.Activated || seo.Blocked || seo.MainSlug == nil || *seo.MainSlug != qrCode {
+		t.Fatalf("unexpected seo row: %+v (main=%v)", seo, seo.MainSlug)
+	}
+
+	// --- GetSitemapEntries : QR principal seul, puis exclu une fois désactivé ---
+	inSitemap := func() (found bool, tableFound bool) {
+		t.Helper()
+		entries, err := repo.GetSitemapEntries(ctx)
+		if err != nil {
+			t.Fatalf("GetSitemapEntries failed against postgres: %v", err)
+		}
+		for _, e := range entries {
+			switch e.Slug {
+			case qrCode:
+				found = true
+				if e.UpdatedAt == nil {
+					t.Fatalf("expected updated_at from last_menu_update")
+				}
+			case tableQRCode:
+				tableFound = true
+			}
+		}
+		return
+	}
+	if found, tableFound := inSitemap(); !found || tableFound {
+		t.Fatalf("sitemap: main=%v table=%v, want main only", found, tableFound)
+	}
+	mustExec("deactivate sno", `UPDATE scannorder_settings SET activated = false WHERE merchant_id = $1`, merchantID)
+	if found, _ := inSitemap(); found {
+		t.Fatalf("sitemap must exclude a merchant with ScanNOrder deactivated")
+	}
+	mustExec("reactivate sno", `UPDATE scannorder_settings SET activated = true WHERE merchant_id = $1`, merchantID)
+
 	// --- GetAvailableSlots (CTE récursif traduit) ---
 	mustExec("hours_of_operation", `
 		INSERT INTO hours_of_operation (id, merchant_id, day_of_week_from, hour_from, day_of_week_to, hour_to, enabled)
@@ -301,9 +340,9 @@ func TestScannorderRepository_Postgres(t *testing.T) {
 		VALUES ('itest-sno-attr', 'Mayo', 60) RETURNING id`).Scan(&optionID); err != nil {
 		t.Fatalf("seed option: %v", err)
 	}
-	optPrices, err := repo.GetConfigurationOptionPricesForSNO(ctx, []string{strconv.FormatInt(optionID, 10)})
-	if err != nil || optPrices[strconv.FormatInt(optionID, 10)] != 60 {
-		t.Fatalf("GetConfigurationOptionPricesForSNO = (%+v, %v)", optPrices, err)
+	opts, err := repo.GetConfigurationOptionsForSNO(ctx, []string{strconv.FormatInt(optionID, 10)})
+	if got := opts[strconv.FormatInt(optionID, 10)]; err != nil || got.ExtraPrice != 60 || got.Title != "Mayo" {
+		t.Fatalf("GetConfigurationOptionsForSNO = (%+v, %v)", opts, err)
 	}
 }
 

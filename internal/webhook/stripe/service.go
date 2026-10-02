@@ -52,6 +52,19 @@ type StripeWebhookService struct {
 	// Distinct du chantier de vérification de signature webhook, hors scope
 	// de cette session.
 	terminal *stripeclient.TerminalService
+	// merchantSMS envoie le SMS de confirmation ScanNOrder en le comptabilisant
+	// dans le compteur SMS de l'établissement (cf. SetMerchantSMS).
+	merchantSMS merchantOrderConfirmationSMS
+}
+
+type merchantOrderConfirmationSMS interface {
+	SendOrderConfirmationSMS(ctx context.Context, merchantID, phoneNumber string, data sms.OrderConfirmationSMSData)
+}
+
+// SetMerchantSMS fait passer le SMS de confirmation de commande par le compteur
+// SMS de l'établissement ; sans lui, sms.Service est utilisé sans comptage.
+func (s *StripeWebhookService) SetMerchantSMS(merchantSMS merchantOrderConfirmationSMS) {
+	s.merchantSMS = merchantSMS
 }
 
 func NewStripeWebhookService(repo Repository, stripeKey string, email mailer.Service, smsService sms.Service, lifecycle *order_life_cycle.OrdersLifeCycleService, notification *notification.NotificationService, redis *redis.Client, db *sql.DB, billingSvc *billing.Service, dunningSvc *dunning.Service, terminal *stripeclient.TerminalService) *StripeWebhookService {
@@ -314,7 +327,11 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 					OrderTotal:   fmt.Sprintf("%.2f", float64(order.Price)/100) + merchant.Currency,
 					TrackingURL:  "https://wello-resto-scannorder-prod.onrender.com/restaurant/" + merchant.Code + "/order/" + order.OrderID,
 				}
-				go s.smsService.SendOrderConfirmationSMS("Wello", session.CustomerDetails.Phone, smsData)
+				if s.merchantSMS != nil {
+					s.merchantSMS.SendOrderConfirmationSMS(ctx, merchantID, session.CustomerDetails.Phone, smsData)
+				} else {
+					go s.smsService.SendOrderConfirmationSMS("Wello", session.CustomerDetails.Phone, smsData)
+				}
 			}
 		}
 	}

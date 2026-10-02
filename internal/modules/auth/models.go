@@ -226,6 +226,10 @@ type UserLoginRow struct {
 	MerchantAddress string
 	MerchantLogo    sql.NullString
 	WebSite         sql.NullString
+	// Mentions légales imprimées sur le ticket : vat_number est nullable et
+	// siret peut être vide ou hors format sur le parc historique.
+	MerchantSIRET     sql.NullString
+	MerchantVATNumber sql.NullString
 
 	// Merchant Parameters
 	DeliveryFees                    int

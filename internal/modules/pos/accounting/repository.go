@@ -87,10 +87,10 @@ func (r *AccountingRepository) GetMerchantHeader(ctx context.Context, merchantID
 			m.fullName,
 			m.merchantTel,
 			m.vat_number,
-			mp.currency,
+			COALESCE(mp.currency, 'EUR'),
 			m.timezone
 		FROM merchant m
-		INNER JOIN merchant_parameters mp ON mp.merchant_id = ` + acctCastChar("m.id") + `
+		LEFT JOIN merchant_parameters mp ON mp.merchant_id = ` + acctCastChar("m.id") + `
 		WHERE m.id = ?
 		LIMIT 1
 	`
@@ -108,15 +108,14 @@ func (r *AccountingRepository) GetMerchantHeader(ctx context.Context, merchantID
 		&header.Timezone,
 	)
 
+	// Mentions légales laissées vides plutôt que remplies de valeurs factices :
+	// ces champs sont imprimés sur les factures et rapports, où un faux SIRET
+	// serait pire qu'une ligne absente.
 	if err == sql.ErrNoRows {
 		log.Error("Merchant not found, returning defaults")
 		return &MerchantHeader{
 			MerchantName: "Nom Établissement",
-			SIRET:        "000 000 000 00000",
-			VATNumber:    nil,
-			Address:      "Adresse inconnue",
 			Currency:     "EUR",
-			Phone:        "N/A",
 			Timezone:     "Europe/Paris",
 		}, nil
 	}

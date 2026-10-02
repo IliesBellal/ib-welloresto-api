@@ -24,13 +24,13 @@ func TestAuthServiceLoginMarksLastLoginAt(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT
     u.user_id,`)).
 		WithArgs("john@example.com", "john@example.com", token).
-		WillReturnRows(sqlmock.NewRows(makeColumns(83)).AddRow(
+		WillReturnRows(sqlmock.NewRows(makeColumns(85)).AddRow(
 			// user (0-11) — is_platform_staff (LOT B PRÉALABLE) inserted right after enabled
 			"user_1", "John Doe", "John", "Doe", "john@example.com", "+33123456789", true, false, nil, true, "ignored", nil,
 			// rights (11-31): ...booleans..., merchant_id, role_id, role_system_key, mfa_type, mfa_status, mfa_verified_at, mfa_otp_sent_at
 			"1", token, true, false, false, false, false, false, false, false, false, false, false, false, "merchant_1", nil, nil, nil, nil, nil, nil,
-			// merchant (35-42)
-			"Merchant A", "+33999999999", 1.0, 2.0, "Europe/Paris", "1 rue", nil, nil,
+			// merchant (35-44): ..., logo, web_site, siret, vat_number
+			"Merchant A", "+33999999999", 1.0, 2.0, "Europe/Paris", "1 rue", nil, nil, "12345678900012", " FR12345678901 ",
 			// merchant params (43-59), currency/is_open (60-61), pos_upsell_enabled (62),
 			// pos_covers_count_required (63), waiter_app_can_cash_in (64)
 			0, 0, 0, true, true, true, false, "", "", false, false, 5, false, false, false, false, nil, "EUR", true, false, false, true,
@@ -64,6 +64,9 @@ func TestAuthServiceLoginMarksLastLoginAt(t *testing.T) {
 	}
 	if resp == nil || resp.Session == nil || resp.Session.Token != token {
 		t.Fatalf("Login() did not return the expected session token")
+	}
+	if resp.Merchant == nil || resp.Merchant.SIRET != "12345678900012" || resp.Merchant.VATNumber != "FR12345678901" {
+		t.Fatalf("Login() merchant legal mentions = %+v, want trimmed SIRET and VAT number", resp.Merchant)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {

@@ -160,12 +160,17 @@ func (b *BrevoMailer) SendPayoutPaidNotification(email string, name string, payo
 }
 
 // SendInvoiceEmailToCustomer sends an invoice PDF as attachment, synchronously (the caller needs to know if it failed)
-func (b *BrevoMailer) SendInvoiceEmailToCustomer(to, customerName string, pdfBytes []byte, fileName string) error {
+func (b *BrevoMailer) SendInvoiceEmailToCustomer(to, customerName, merchantName, receiptNumber string, pdfBytes []byte, fileName string) error {
+	merchantName = strings.TrimSpace(merchantName)
+	if merchantName == "" {
+		merchantName = "Wello Resto"
+	}
+
 	data := mailer.InvoiceEmailData{
-		MerchantName:  "Wello Resto",
-		CustomerName:  customerName,
+		MerchantName:  merchantName,
+		CustomerName:  strings.TrimSpace(customerName),
 		SupportEmail:  mailer.SupportEmail,
-		ReceiptNumber: fileName,
+		ReceiptNumber: receiptNumber,
 	}
 
 	html, err := b.renderTemplate("invoice_email.html", data)
@@ -173,7 +178,8 @@ func (b *BrevoMailer) SendInvoiceEmailToCustomer(to, customerName string, pdfByt
 		return fmt.Errorf("failed to render invoice email template: %w", err)
 	}
 
-	return b.sendEmailViaBrevoWithAttachment("Wello Resto", mailer.InvoiceEmail, to, "Votre facture", html, pdfBytes, fileName)
+	subject := "Votre facture " + merchantName
+	return b.sendEmailViaBrevoWithAttachment(merchantName, mailer.InvoiceEmail, to, subject, html, pdfBytes, fileName)
 }
 
 // TriggerTestEmail sends a test email

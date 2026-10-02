@@ -35,7 +35,7 @@ func (m *mockMailer) SendPayoutPaidNotification(email string, name string, payou
 }
 func (m *mockMailer) SendOTP(data mailer.MfaOTPData)                  {}
 func (m *mockMailer) SendPasswordReset(data mailer.PasswordResetData) {}
-func (m *mockMailer) SendInvoiceEmailToCustomer(to, customerName string, pdfBytes []byte, fileName string) error {
+func (m *mockMailer) SendInvoiceEmailToCustomer(to, customerName, merchantName, receiptNumber string, pdfBytes []byte, fileName string) error {
 	return nil
 }
 func (m *mockMailer) TriggerTestEmail(writer http.ResponseWriter, request *http.Request) {}
@@ -106,5 +106,31 @@ func TestSendPublishedWeek_RecordsOutboundPlanningDomain(t *testing.T) {
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+type mockMerchantSMS struct{ calls []string }
+
+func (m *mockMerchantSMS) SendAsync(ctx context.Context, merchantID, senderID, phoneNumber, message string, onSent func(messageID string)) {
+	m.calls = append(m.calls, merchantID)
+}
+
+func TestSendPublishedWeek_WithMerchantID_IsCounted(t *testing.T) {
+	txt := &mockSMS{}
+	counted := &mockMerchantSMS{}
+	svc := New(&mockMailer{}, txt, "", nil, nil)
+	svc.SetMerchantSMS(counted)
+
+	svc.SendPublishedWeek(context.Background(), PublishedWeekMessage{
+		MerchantID:    "merchant_1",
+		WeekID:        "week-1",
+		MerchantName:  "Le Bistrot",
+		EmployeePhone: "+33612345678",
+		WeekLabel:     "Semaine du 01/06/2026 au 07/06/2026",
+		AllowSMS:      true,
+	})
+
+	if len(counted.calls) != 1 || counted.calls[0] != "merchant_1" || txt.sendSMSCalls != 0 {
+		t.Fatalf("merchant SMS calls = %v / uncounted calls = %d, want [merchant_1] / 0", counted.calls, txt.sendSMSCalls)
 	}
 }

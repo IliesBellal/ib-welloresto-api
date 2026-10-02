@@ -13,7 +13,7 @@ import (
 // api_request_logs. Purement technique (débogage d'intégration), sans valeur
 // probante contrairement à audit_logs (chaînage de hash, non concerné par
 // cette tâche) : 30 jours suffisent.
-const apiRequestLogRetentionDays = 30
+const apiRequestLogRetentionDays = 90
 
 // apiRequestLogPurgeBatchSize borne chaque DELETE pour ne pas tenir un verrou
 // long sur une table de plusieurs centaines de milliers de lignes.

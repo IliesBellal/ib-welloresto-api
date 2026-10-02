@@ -44,6 +44,38 @@ est **inchangé**.
    visible sans le corriger. À revoir avec le point suivant.
 6. `CreateCheckoutSessionOld` (non appelée) n'a pas été touchée.
 
+## Correctif 2026-10-02 : libellés des options jamais renseignés
+
+Constat en test (commande « Tacos 3 viandes ») : la ligne Stripe n'affichait que le nom du
+produit, aucune option. Cause : le front Scan&Order n'envoie pour chaque option que
+`id` / `quantity` / `selected` ; le backend réécrit le prix des options depuis la base
+(`validateAndCleanPricingPayload`) mais ne renseignait jamais `Label`. Le nom du produit,
+lui, vient de la base (`orders.buildSelectedProducts`). Le défaut existait avant le
+nettoyage : l'ancienne description valait `Tacos 3 viandes 🍖🍖🍖, , , , , `.
+
+Correctif (`internal/modules/scannorder`) :
+
+- `GetConfigurationOptionPricesForSNO` → `GetConfigurationOptionsForSNO`, qui lit aussi
+  `COALESCE(title, '')` et renvoie `map[id]SNOConfigurationOption{ExtraPrice, Title}` ;
+- `validateAndCleanPricingPayload` renseigne `Label` depuis `title` (si non vide) au même
+  endroit que le prix. La configuration est partagée par pointeur jusqu'à
+  `CreateCheckoutSession`, donc le libellé y arrive sans autre modification.
+
+Décisions :
+
+7. **Libellé pris en base, pas dans le payload** : cohérent avec le prix (le client n'est
+   pas source de vérité) et ne nécessite aucun changement du front.
+8. **Correctif limité à Scan&Order** plutôt qu'au pricing commun
+   (`orders.applyConfigurationOptionPrices`) : seul ce flux crée une session Checkout, et
+   on évite de changer le pricing des autres canaux.
+9. **Pas d'effet sur le regroupement des produits** (`generateProductKey` sérialise la
+   configuration) : une même option a toujours le même libellé, la clé reste discriminante
+   de la même façon. `Label` n'est lu nulle part ailleurs dans `orders`/`order_life_cycle`.
+10. Titre de base, non traduit (pas de locale côté session Stripe aujourd'hui).
+
+Résultat attendu pour le tacos : `Viande hachée, Kebab, Nuggets, Algérienne, Mayonnaise`
+(ordre des attributs du payload).
+
 ## Point ouvert (non traité)
 
 Le montant Stripe ignore `option.Quantity` et `product.Extra`, alors que le TTC de la
@@ -57,4 +89,10 @@ de montant facturé, hors périmètre d'un nettoyage de libellé).
 - `go build ./...` OK.
 - `go test ./internal/infrastructure/stripe/ -run 'TestOptionsDescription|TestFormatEuros'`
   OK (`checkout_test.go`).
+- 2026-10-02 : `go build ./...`, `go vet` (y compris `-tags postgres_integration`) et
+  `go test ./internal/modules/scannorder/ ./internal/modules/orders/ ./internal/infrastructure/stripe/` OK.
+- Test d'intégration Postgres mis à jour (vérifie aussi `Title == "Mayo"`) mais **non
+  exécuté** : Postgres Docker local éteint, et le test insère des données (pas lancé sur staging).
+- Requête vérifiée en lecture seule sur la base staging avec les options du tacos
+  (1856, 1859, 1860, 1785, 1774) → titres corrects, suppléments à 0.
 - Pas testé contre Stripe (ni staging ni prod).

@@ -41,7 +41,7 @@ func (m *mockMailer) SendPayoutPaidNotification(email string, name string, payou
 }
 func (m *mockMailer) SendOTP(data mailer.MfaOTPData)                  {}
 func (m *mockMailer) SendPasswordReset(data mailer.PasswordResetData) {}
-func (m *mockMailer) SendInvoiceEmailToCustomer(to, customerName string, pdfBytes []byte, fileName string) error {
+func (m *mockMailer) SendInvoiceEmailToCustomer(to, customerName, merchantName, receiptNumber string, pdfBytes []byte, fileName string) error {
 	return nil
 }
 func (m *mockMailer) TriggerTestEmail(writer http.ResponseWriter, request *http.Request) {}
@@ -363,5 +363,66 @@ func TestSendConfirmation_PersistsOutboundMessageWithBookingDomain(t *testing.T)
 	}
 	if mail.sendAsyncCalls != 1 {
 		t.Fatalf("expected email send to still happen, got %d", mail.sendAsyncCalls)
+	}
+}
+
+// mockMerchantSMS capture les envois comptabilisés (merchantsms.Service).
+type mockMerchantSMS struct {
+	calls         []string // merchant IDs
+	nextMessageID string
+}
+
+func (m *mockMerchantSMS) SendAsync(ctx context.Context, merchantID, senderID, phoneNumber, message string, onSent func(messageID string)) {
+	m.calls = append(m.calls, merchantID)
+	if onSent != nil {
+		onSent(m.nextMessageID)
+	}
+}
+
+func TestSendConfirmation_WithMerchantID_SendsThroughMerchantSMSCounter(t *testing.T) {
+	txt := &mockSMS{}
+	counted := &mockMerchantSMS{nextMessageID: "sms-msg-1"}
+	out := &mockOutbound{}
+	svc := New(&mockMailer{}, txt, "https://rsv.welloresto.fr", out, nil)
+	svc.SetMerchantSMS(counted)
+
+	msg := baseMessage(true)
+	msg.MerchantID = "merchant_1"
+	svc.SendConfirmation(context.Background(), msg)
+
+	if len(counted.calls) != 1 || counted.calls[0] != "merchant_1" {
+		t.Fatalf("merchant SMS calls = %v, want one for merchant_1", counted.calls)
+	}
+	if txt.sendSMSCalls != 0 {
+		t.Fatalf("the uncounted SMS service must not be used, got %d call(s)", txt.sendSMSCalls)
+	}
+	var smsOutbound int
+	for _, call := range out.calls {
+		if call.channel == "sms" && call.providerMessageID == "sms-msg-1" {
+			smsOutbound++
+		}
+	}
+	if smsOutbound != 1 {
+		t.Fatalf("expected the SMS to still be tracked in outbound messages, got %+v", out.calls)
+	}
+}
+
+func TestSendWaitlistAvailable_WithMerchantID_IsCounted(t *testing.T) {
+	txt := &mockSMS{}
+	counted := &mockMerchantSMS{}
+	svc := New(nil, txt, "", nil, nil)
+	svc.SetMerchantSMS(counted)
+
+	svc.SendWaitlistAvailable(context.Background(), WaitlistMessage{
+		MerchantID:    "merchant_1",
+		MerchantName:  "Le Bistrot",
+		CustomerPhone: "+33612345678",
+		PartySize:     2,
+		ExpiryMinutes: 15,
+		SMSEnabled:    true,
+	})
+
+	if len(counted.calls) != 1 || txt.sendSMSCalls != 0 {
+		t.Fatalf("merchant SMS calls = %v / uncounted calls = %d, want 1 / 0", counted.calls, txt.sendSMSCalls)
 	}
 }

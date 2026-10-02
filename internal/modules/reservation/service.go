@@ -253,6 +253,7 @@ func (s *reservationService) CreateReservation(ctx context.Context, qr string, i
 	// Confirmation immédiate au client si la réservation est auto-acceptée.
 	if s.comm != nil && merchant.AutoAcceptReserveBookings {
 		s.comm.SendConfirmation(ctx, bookingcomm.BookingMessage{
+			MerchantID:    merchant.MerchantID,
 			BookingID:     stored.BookingID,
 			MerchantSlug:  qr,
 			MerchantName:  merchant.BusinessName,
@@ -371,6 +372,7 @@ func (s *reservationService) UpdateReservation(ctx context.Context, qr string, r
 		name, email, phone, cerr := s.repo.GetBookingCustomerContact(ctx, req.Booking.BookingNumber, merchant.MerchantID)
 		if cerr == nil {
 			s.comm.SendModification(ctx, bookingcomm.BookingMessage{
+				MerchantID:    merchant.MerchantID,
 				BookingID:     stored.BookingID,
 				MerchantSlug:  qr,
 				MerchantName:  merchant.BusinessName,
@@ -426,6 +428,7 @@ func (s *reservationService) CancelReservation(ctx context.Context, qr string, b
 				timeLabel = startTime.Format("15:04")
 			}
 			s.comm.SendCancellation(ctx, bookingcomm.BookingMessage{
+				MerchantID:    merchant.MerchantID,
 				BookingID:     stored.BookingID,
 				MerchantSlug:  qr,
 				MerchantName:  merchant.BusinessName,

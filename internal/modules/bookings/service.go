@@ -721,6 +721,7 @@ func (s *BookingsService) ExpirePendingBookings(ctx context.Context) (int64, err
 
 		if s.comm != nil && (strings.TrimSpace(b.CustomerEmail) != "" || strings.TrimSpace(b.CustomerPhone) != "") {
 			s.comm.SendCancellation(ctx, bookingcomm.BookingMessage{
+				MerchantID:    b.MerchantID,
 				BookingID:     b.BookingID,
 				MerchantSlug:  b.MerchantSlug,
 				MerchantName:  b.MerchantName,

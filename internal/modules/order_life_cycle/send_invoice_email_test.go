@@ -40,6 +40,9 @@ func (f *fakeMerchantHeaderProvider) GetMerchantHeader(ctx context.Context, merc
 type fakeReceiptService struct {
 	receipt *models.Receipt
 	err     error
+	// saleReceipt, s'il est renseigné, est renvoyé par GetSaleReceiptByOrderID à la
+	// place de receipt (le dernier reçu, éventuellement un avoir).
+	saleReceipt *models.Receipt
 }
 
 func (f *fakeReceiptService) GenerateFiscalReceipt(ctx context.Context, order *models.Order, items []models.SnapshotItem, payments []models.SnapshotPayment) error {
@@ -54,6 +57,13 @@ func (f *fakeReceiptService) GetReceiptByOrderID(ctx context.Context, orderID st
 	return f.receipt, f.err
 }
 
+func (f *fakeReceiptService) GetSaleReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error) {
+	if f.saleReceipt != nil {
+		return f.saleReceipt, f.err
+	}
+	return f.receipt, f.err
+}
+
 type fakeAuditService struct {
 	called bool
 }
@@ -64,10 +74,12 @@ func (f *fakeAuditService) LogChange(ctx context.Context, MerchantID, UserID, ac
 }
 
 type fakeMailerService struct {
-	sendErr      error
-	sentTo       string
-	sentName     string
-	sentFileName string
+	sendErr           error
+	sentTo            string
+	sentName          string
+	sentMerchantName  string
+	sentReceiptNumber string
+	sentFileName      string
 }
 
 func (f *fakeMailerService) SendAsync(fromName, fromEmail, to, subject, templateName string, data interface{}) {
@@ -82,9 +94,11 @@ func (f *fakeMailerService) SendPayoutPaidNotification(email, name string, payou
 func (f *fakeMailerService) SendOTP(data mailer.MfaOTPData)                          {}
 func (f *fakeMailerService) SendPasswordReset(data mailer.PasswordResetData)         {}
 func (f *fakeMailerService) TriggerTestEmail(w http.ResponseWriter, r *http.Request) {}
-func (f *fakeMailerService) SendInvoiceEmailToCustomer(to, customerName string, pdfBytes []byte, fileName string) error {
+func (f *fakeMailerService) SendInvoiceEmailToCustomer(to, customerName, merchantName, receiptNumber string, pdfBytes []byte, fileName string) error {
 	f.sentTo = to
 	f.sentName = customerName
+	f.sentMerchantName = merchantName
+	f.sentReceiptNumber = receiptNumber
 	f.sentFileName = fileName
 	return f.sendErr
 }
@@ -262,6 +276,12 @@ func TestSendInvoiceByEmail_CustomerIDProvided_ExistingCustomer_LinksAndSendsEma
 	if mailerSvc.sentName != "Jean Dupont" {
 		t.Fatalf("mailer was called with customerName = %q, want Jean Dupont", mailerSvc.sentName)
 	}
+	if mailerSvc.sentMerchantName != "Brasserie Du Midi" {
+		t.Fatalf("mailer was called with merchantName = %q, want the merchant's name", mailerSvc.sentMerchantName)
+	}
+	if mailerSvc.sentReceiptNumber != "F-2026-000046" {
+		t.Fatalf("mailer was called with receiptNumber = %q, want F-2026-000046 (not the file name)", mailerSvc.sentReceiptNumber)
+	}
 	if !audit.called {
 		t.Fatalf("expected audit.LogChange to be called")
 	}
@@ -384,5 +404,48 @@ func TestSendInvoiceByEmail_BrevoFailure_CustomerStillLinkedAndCommitted(t *test
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations (transaction must commit before attempting the email): %v", err)
+	}
+}
+
+func TestSendInvoiceByEmail_RefundedOrder_SendsSaleReceiptNotCreditNote(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	mailerSvc := &fakeMailerService{}
+	svc := newTestService(db, &fakeOrderFetcher{resp: validOrderResponse()}, &fakeAuditService{}, mailerSvc)
+	creditNote := testReceipt()
+	creditNote.ReceiptNumber = "F-2026-000050"
+	creditNote.TotalTTC = -500
+	creditNote.TotalHT = -500
+	svc.receiptService = &fakeReceiptService{receipt: creditNote, saleReceipt: testReceipt()}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(customerSelectColumns).
+		WithArgs("cus_1", testMerchantID).
+		WillReturnRows(sqlmock.NewRows([]string{"customer_id", "customer_first_name", "customer_last_name", "customer_email"}).
+			AddRow("cus_1", "Jean", "Dupont", "client@example.fr"))
+	mock.ExpectExec("UPDATE customer").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(customerSelectColumns).
+		WithArgs("cus_1", testMerchantID).
+		WillReturnRows(sqlmock.NewRows([]string{"customer_id", "customer_first_name", "customer_last_name", "customer_email"}).
+			AddRow("cus_1", "Jean", "Dupont", "client@example.fr"))
+	mock.ExpectExec("UPDATE orders").
+		WithArgs("cus_1", testOrderID, testMerchantID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	customerID := "cus_1"
+	if _, err := svc.SendInvoiceByEmail(testContext(), testOrderID, &SendInvoiceEmailRequest{Email: "client@example.fr", CustomerID: &customerID}); err != nil {
+		t.Fatalf("SendInvoiceByEmail() error = %v", err)
+	}
+	if mailerSvc.sentReceiptNumber != "F-2026-000046" {
+		t.Fatalf("invoice sent for receipt %q, want the sale receipt F-2026-000046 (not the credit note)", mailerSvc.sentReceiptNumber)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
 	}
 }

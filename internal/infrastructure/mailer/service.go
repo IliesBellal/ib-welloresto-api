@@ -42,7 +42,9 @@ type Service interface {
 
 	// SendInvoiceEmailToCustomer envoie une facture PDF en pièce jointe de façon SYNCHRONE
 	// (contrairement à SendAsync) afin que l'appelant puisse réagir à un échec d'envoi.
-	SendInvoiceEmailToCustomer(to, customerName string, pdfBytes []byte, fileName string) error
+	// merchantName sert de nom d'expéditeur et dans le corps du mail (repli sur
+	// "Wello Resto" s'il est vide) ; receiptNumber est le numéro de facture affiché.
+	SendInvoiceEmailToCustomer(to, customerName, merchantName, receiptNumber string, pdfBytes []byte, fileName string) error
 
 	TriggerTestEmail(writer http.ResponseWriter, request *http.Request)
 }

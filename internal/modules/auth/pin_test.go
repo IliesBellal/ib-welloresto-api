@@ -92,10 +92,10 @@ func seedAnchorInMemRedis(mem *memRedis, token, merchantID, userID string) {
 	mem.store[models.UserCachePrefix+token] = string(data)
 }
 
-// pinColumns returns the 76 column names expected by scanUserLoginRow.
-func pinColumns() []string { return makeColumns(76) }
+// pinColumns returns the 78 column names expected by scanUserLoginRow.
+func pinColumns() []string { return makeColumns(78) }
 
-// pinMinRow returns 76 driver.Value values for a minimal active users_rights row.
+// pinMinRow returns 78 driver.Value values for a minimal active users_rights row.
 // The filter columns (ur.enabled, ur.login_enabled) are in WHERE, not SELECT,
 // so they don't appear here — a non-empty result means the link passed the filter.
 func pinMinRow(userID, token, merchantID string) []driver.Value {
@@ -105,7 +105,7 @@ func pinMinRow(userID, token, merchantID string) []driver.Value {
 		// rights (10-30): ...booleans..., merchant_id, role_id, role_system_key, mfa×4
 		"mr-1", token, false, false, false, false, false, false, false, false, false, false, false, false, merchantID, nil, nil, nil, nil, nil, nil,
 		// merchant
-		"Biz", "+33999999999", 1.0, 2.0, "UTC", "1 rue", nil, nil,
+		"Biz", "+33999999999", 1.0, 2.0, "UTC", "1 rue", nil, nil, nil, nil,
 		// params, currency/is_open/pos_upsell_enabled,
 		// pos_covers_count_required/waiter_app_can_cash_in
 		0, 0, 0, true, true, true, false, false, false, false, nil, "EUR", true, false, false, true,
@@ -513,7 +513,7 @@ func loginMinRow(userID, token, merchantID string) []driver.Value {
 		// rights: mr_id, token, 12 bool rights, merchant_id, role_id, role_system_key, mfa×4
 		"mr-1", token, false, false, false, false, false, false, false, false, false, false, false, false, merchantID, nil, nil, nil, nil, nil, nil,
 		// merchant
-		"Biz", "+33999999999", 1.0, 2.0, "UTC", "1 rue", nil, nil,
+		"Biz", "+33999999999", 1.0, 2.0, "UTC", "1 rue", nil, nil, nil, nil,
 		// params: 12 base fields + kitchen_distribution_mode, production_display_mode,
 		//         pager_number_required, pos_auto_lock_enabled, pos_auto_lock_delay_minutes,
 		//         service_required_for_ordering, cash_register_required_for_ordering, ...
@@ -568,7 +568,7 @@ func TestAuthenticatePIN_DelegatesLoginWithEmployeeToken(t *testing.T) {
     u.user_id,
     u.name,`)).
 		WithArgs("", "", empToken).
-		WillReturnRows(sqlmock.NewRows(makeColumns(83)).AddRow(loginMinRow(empUserID, empToken, merchantID)...))
+		WillReturnRows(sqlmock.NewRows(makeColumns(85)).AddRow(loginMinRow(empUserID, empToken, merchantID)...))
 
 	// Step 3: Login else-branch effects (MFAType=nil → IsMFAVerificationRequired=false).
 	mock.ExpectExec(regexp.QuoteMeta(`UPDATE users SET mfa_status = ? WHERE user_id = ?`)).

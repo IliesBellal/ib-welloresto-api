@@ -179,6 +179,7 @@ func (s *Service) publishWeekAndNotify(ctx context.Context, merchantID string, w
 		}
 		lastActivity := recipient.LastActivityAt()
 		s.publisher.SendPublishedWeek(ctx, planningcommpkg.PublishedWeekMessage{
+			MerchantID:    merchantID,
 			WeekID:        publishedWeek.ID,
 			MerchantName:  merchantName,
 			EmployeeID:    employeeID,

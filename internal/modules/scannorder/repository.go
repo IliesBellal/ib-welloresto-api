@@ -275,6 +275,99 @@ func (r *Repository) GetMerchantIDAndTZFromMerchantID(ctx context.Context, merch
 	return merchantID, tz, nil
 }
 
+// snoMainQRCondition : QR principal du merchant (ni table ni serveur), même
+// définition que integrations / kiosk.getMerchantSlug. alias = alias de qrcodes.
+func snoMainQRCondition(alias string) string {
+	return fmt.Sprintf(`%[1]s.location_id IS NULL AND %[1]s.user_id IS NULL AND %[1]s.deleted = false AND %[1]s.enabled = true`, alias)
+}
+
+// snoSubscriptionBlocked : vrai quand l'abonnement du merchant coupe ou retire
+// ScanNOrder (suspendu, résilié, module désactivé). merchantIDExpr = expression
+// varchar du merchant_id.
+func snoSubscriptionBlocked(merchantIDExpr string) string {
+	return fmt.Sprintf(`EXISTS (
+		SELECT 1 FROM subscriptions sub
+		WHERE sub.merchant_id = %s
+		  AND (sub.status IN ('suspended', 'canceled') OR sub.scannorder_enabled = false)
+	)`, merchantIDExpr)
+}
+
+// GetMerchantSEOInfo lit les données de référencement d'un merchant : adresse
+// découpée, champs seo_* de scannorder_settings, activation, blocage par
+// l'abonnement et code du QR principal.
+func (r *Repository) GetMerchantSEOInfo(ctx context.Context, merchantID string) (*MerchantSEORow, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	query := fmt.Sprintf(`
+	SELECT m.city, m.zip_code, m.country,
+	       snos.seo_title, snos.seo_description, snos.seo_cuisine_type,
+	       snos.activated,
+	       %[2]s,
+	       (SELECT qr.code FROM qrcodes qr
+	         WHERE qr.merchant_id = snos.merchant_id AND %[3]s
+	         ORDER BY qr.qr_id
+	         LIMIT 1)
+	FROM merchant m
+	INNER JOIN scannorder_settings snos ON snos.merchant_id = %[1]s
+	WHERE m.id = ?`, snoMerchantJoinCast(), snoSubscriptionBlocked("snos.merchant_id"), snoMainQRCondition("qr"))
+
+	row := MerchantSEORow{}
+	var mainSlug sql.NullString
+	err := db.QueryRowContext(ctx, query, merchantID).Scan(
+		&row.City, &row.ZipCode, &row.Country,
+		&row.SEOTitle, &row.SEODescription, &row.SEOCuisineType,
+		&row.Activated, &row.Blocked, &mainSlug,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if mainSlug.Valid {
+		row.MainSlug = &mainSlug.String
+	}
+	return &row, nil
+}
+
+// GetSitemapEntries liste les QR principaux des merchants référençables
+// (ScanNOrder activé, abonnement non bloquant).
+func (r *Repository) GetSitemapEntries(ctx context.Context) ([]SitemapEntry, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	query := fmt.Sprintf(`
+	SELECT qr.code, mp.last_menu_update
+	FROM qrcodes qr
+	INNER JOIN scannorder_settings snos ON snos.merchant_id = qr.merchant_id
+	LEFT JOIN merchant_parameters mp ON mp.merchant_id = qr.merchant_id
+	WHERE qr.qr_id = (
+	        -- un seul QR principal par merchant, le même que GetMerchantSEOInfo
+	        SELECT MIN(main.qr_id) FROM qrcodes main
+	        WHERE main.merchant_id = qr.merchant_id AND %s
+	      )
+	  AND snos.activated = true
+	  AND NOT %s
+	ORDER BY qr.code`, snoMainQRCondition("main"), snoSubscriptionBlocked("qr.merchant_id"))
+
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	entries := []SitemapEntry{}
+	for rows.Next() {
+		var e SitemapEntry
+		var updatedAt sql.NullTime
+		if err := rows.Scan(&e.Slug, &updatedAt); err != nil {
+			return nil, err
+		}
+		if updatedAt.Valid {
+			t := updatedAt.Time.UTC()
+			e.UpdatedAt = &t
+		}
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
 func (r *Repository) GetLoyaltyPrograms(ctx context.Context, merchantID, orderType string) ([]LoyaltyProgram, error) {
 	db := dbx.GetDB(ctx, r.database)
 
@@ -1105,12 +1198,12 @@ func (r *Repository) GetProductPricesForSNO(ctx context.Context, merchantID stri
 	return result, nil
 }
 
-// GetConfigurationOptionPricesForSNO retrieves official configuration option prices from database
-// Returns a map of optionID -> extra_price
+// GetConfigurationOptionsForSNO retrieves official configuration option prices and titles from database
+// Returns a map of optionID -> option (extra_price, title)
 // Ensures client cannot manipulate option prices
-func (r *Repository) GetConfigurationOptionPricesForSNO(ctx context.Context, optionIDs []string) (map[string]int, error) {
+func (r *Repository) GetConfigurationOptionsForSNO(ctx context.Context, optionIDs []string) (map[string]SNOConfigurationOption, error) {
 	if len(optionIDs) == 0 {
-		return make(map[string]int), nil
+		return make(map[string]SNOConfigurationOption), nil
 	}
 
 	db := dbx.GetDB(ctx, r.database)
@@ -1127,7 +1220,7 @@ func (r *Repository) GetConfigurationOptionPricesForSNO(ctx context.Context, opt
 	}
 
 	query := fmt.Sprintf(`
-		SELECT id, extra_price
+		SELECT id, extra_price, COALESCE(title, '')
 		FROM configurable_attribute_options
 		WHERE id IN (%s)
 	`, placeholders)
@@ -1138,16 +1231,16 @@ func (r *Repository) GetConfigurationOptionPricesForSNO(ctx context.Context, opt
 	}
 	defer rows.Close()
 
-	result := make(map[string]int)
+	result := make(map[string]SNOConfigurationOption)
 	for rows.Next() {
 		var optionID string
-		var extraPrice int
+		var option SNOConfigurationOption
 
-		if err := rows.Scan(&optionID, &extraPrice); err != nil {
+		if err := rows.Scan(&optionID, &option.ExtraPrice, &option.Title); err != nil {
 			return nil, fmt.Errorf("failed to scan option price: %w", err)
 		}
 
-		result[optionID] = extraPrice
+		result[optionID] = option
 	}
 
 	if err := rows.Err(); err != nil {

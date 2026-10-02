@@ -51,10 +51,8 @@ func (r *OrdersRepository) GetPendingOrderIDs(ctx context.Context, merchantID, a
 	}
 
 	// 2. Requête pour récupérer UNIQUEMENT les IDs
-	qIDs := `SELECT DISTINCT o.order_id
+	qIDs := `SELECT o.order_id
              FROM orders o
-             LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
-             LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id AND ds.status = 'active'
              WHERE o.merchant_id = ? ` + criteria
 
 	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, qIDs, merchantID)

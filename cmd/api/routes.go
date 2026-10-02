@@ -59,7 +59,7 @@ import (
 	locModule "welloresto-api/internal/modules/locations"
 	menuModule "welloresto-api/internal/modules/menu"
 	importerModule "welloresto-api/internal/modules/menu/importer"
-	messaggioModule "welloresto-api/internal/modules/messaggio"
+	merchantsmsModule "welloresto-api/internal/modules/merchantsms"
 	notificationModule "welloresto-api/internal/modules/notification"
 	onboardingModule "welloresto-api/internal/modules/onboarding"
 	ordersLCModule "welloresto-api/internal/modules/order_life_cycle"
@@ -338,7 +338,16 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	bookingEventsRepo := bookingEventsModule.NewRepository(selectedDB)
 	outboundRepo := outboundModule.NewRepository(selectedDB)
 	outboundService := outboundModule.NewService(outboundRepo, log)
+	// SMS envoyés pour le compte d'un établissement (suivi de livraison,
+	// réservations, planning, confirmation ScanNOrder) : envoi Brevo +
+	// comptage dans merchant_sms_monthly. OTP et relances restent hors compteur.
+	merchantSMSSender, ok := smsService.(merchantsmsModule.Sender)
+	if !ok {
+		log.Error("Brevo SMS service does not support synchronous sends: merchant SMS disabled")
+	}
+	merchantSMSService := merchantsmsModule.NewService(merchantsmsModule.NewMarketingRepository(selectedDB), merchantSMSSender, log)
 	bookingCommService := bookingcommModule.New(mailService, smsService, cfg.Reservation.PublicBaseURL, outboundService, log)
+	bookingCommService.SetMerchantSMS(merchantSMSService)
 	bookingsRepo := bookingsModule.NewBookingsRepository(selectedDB, log)
 	bookingsService := bookingsModule.NewBookingsService(bookingsRepo, selectedDB, mailService, smsService, bookingEventsRepo, notificationService, bookingCommService, log)
 
@@ -366,10 +375,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	)
 
 	// ---- Delivery Sessions ----
-	messaggioMarketingRepo := messaggioModule.NewMarketingRepository(selectedDB)
-	messaggioClient := messaggioModule.NewMessaggioClient()
-	messaggioSMSService := messaggioModule.NewSMSService(messaggioMarketingRepo, messaggioClient)
-	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, notificationService, ordersLifeCycleService, messaggioSMSService, uberService, log)
+	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, notificationService, ordersLifeCycleService, merchantSMSService, uberService, log)
 
 	// ---- ScanNOrder ----
 	scannRepo := scannorder.NewRepository(selectedDB)
@@ -442,6 +448,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		dunningService,
 		terminalService,
 	)
+	stripeWebhookService.SetMerchantSMS(merchantSMSService)
 	stripeWebhookHandler := webhookstripe.NewHandler(stripeWebhookService)
 
 	// WH
@@ -587,6 +594,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// ---- Planning ----
 	planningRepo := planningModule.NewRepository(selectedDB)
 	planningCommService := planningcommModule.New(mailService, smsService, cfg.Planning.PublicBaseURL, outboundService, log)
+	planningCommService.SetMerchantSMS(merchantSMSService)
 	planningService := planningModule.NewService(planningRepo, r2PrivateClient, auditService, planningCommService)
 
 	// ---- Kiosk ----
@@ -1016,6 +1024,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- SCANNORDER ---
 	r.Route("/scannorder", func(r chi.Router) {
 		r.Get("/brands/{brand_slug}", scannHandler.GetBrand)
+		r.Get("/sitemap", scannHandler.GetSitemap)
 		r.Get("/{merchant_slug}", scannHandler.GetMerchant)
 		r.Get("/{merchant_slug}/slots", scannHandler.GetSlots)
 

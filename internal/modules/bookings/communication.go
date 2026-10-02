@@ -64,6 +64,7 @@ func (s *BookingsService) notifyBookingMessage(ctx context.Context, merchantID s
 		settings = nil
 	}
 	msg := s.buildBookingMessage(booking, settings)
+	msg.MerchantID = merchantID
 	if strings.TrimSpace(msg.CustomerEmail) == "" && strings.TrimSpace(msg.CustomerPhone) == "" {
 		return
 	}

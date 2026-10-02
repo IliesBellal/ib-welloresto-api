@@ -1,6 +1,7 @@
 package sms
 
 import (
+	"fmt"
 	"net/http"
 )
 
@@ -27,4 +28,15 @@ type OrderConfirmationSMSData struct {
 	OrderID      string
 	OrderTotal   string
 	TrackingURL  string
+}
+
+// OrderConfirmationMessage formats the order confirmation SMS body.
+func OrderConfirmationMessage(data OrderConfirmationSMSData) string {
+	return fmt.Sprintf(
+		"Bonjour,\n\nVotre commande #%s chez %s d'un montant de %s a été confirmée.\n\nSuivez votre commande: %s",
+		data.OrderID,
+		data.MerchantName,
+		data.OrderTotal,
+		data.TrackingURL,
+	)
 }

@@ -66,16 +66,15 @@ func (b *BrevoSMS) SendSMSAsyncWithMessageID(senderID, phoneNumber, message stri
 	}()
 }
 
+// SendSMS sends an SMS synchronously and returns the Brevo messageId, so the
+// caller knows whether it was accepted (merchantsms counts only accepted SMS).
+func (b *BrevoSMS) SendSMS(senderID, phoneNumber, message string) (string, error) {
+	return b.sendSMSViaBrevo(senderID, phoneNumber, message)
+}
+
 // SendOrderConfirmationSMS sends an order confirmation SMS
 func (b *BrevoSMS) SendOrderConfirmationSMS(senderID, phoneNumber string, data sms.OrderConfirmationSMSData) {
-	message := fmt.Sprintf(
-		"Bonjour,\n\nVotre commande #%s chez %s d'un montant de %s a été confirmée.\n\nSuivez votre commande: %s",
-		data.OrderID,
-		data.MerchantName,
-		data.OrderTotal,
-		data.TrackingURL,
-	)
-	b.SendSMSAsync(senderID, phoneNumber, message)
+	b.SendSMSAsync(senderID, phoneNumber, sms.OrderConfirmationMessage(data))
 }
 
 // TriggerTestSMS sends a test SMS

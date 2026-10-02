@@ -12,6 +12,7 @@ type ReceiptRepository interface {
 	GetLastReceiptData(ctx context.Context, merchantID string) (lastNumber string, lastHash string, err error)
 	InsertReceipt(ctx context.Context, receipt *models.Receipt) error
 	GetReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error)
+	GetSaleReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error)
 }
 
 type receiptRepository struct {
@@ -68,15 +69,27 @@ func (r *receiptRepository) InsertReceipt(ctx context.Context, receipt *models.R
 }
 
 func (r *receiptRepository) GetReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error) {
+	return r.getLatestReceiptByOrderID(ctx, orderID, "")
+}
+
+// GetSaleReceiptByOrderID renvoie le dernier ticket de vente de la commande, en
+// ignorant les avoirs (GenerateRefundReceipt les rattache à la même commande
+// avec un total négatif) : c'est lui, et non l'avoir le plus récent, que la
+// facture client doit reprendre.
+func (r *receiptRepository) GetSaleReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error) {
+	return r.getLatestReceiptByOrderID(ctx, orderID, " AND total_ttc >= 0")
+}
+
+func (r *receiptRepository) getLatestReceiptByOrderID(ctx context.Context, orderID, extraWhere string) (*models.Receipt, error) {
 	db := dbx.GetDB(ctx, r.database)
 
 	query := `
-		SELECT 
-			receipt_id, merchant_id, order_id, receipt_number, 
-			total_ttc, total_ht, tax_details, items_snapshot, 
+		SELECT
+			receipt_id, merchant_id, order_id, receipt_number,
+			total_ttc, total_ht, tax_details, items_snapshot,
 			payments_snapshot, created_at, prev_hash, hash, signature
 		FROM receipts
-		WHERE order_id = ?
+		WHERE order_id = ?` + extraWhere + `
 		ORDER BY created_at DESC
 		LIMIT 1
 	`

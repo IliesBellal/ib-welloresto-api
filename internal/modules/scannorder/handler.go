@@ -34,6 +34,21 @@ func (h *Handler) GetMerchant(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "scannorder", "get_merchant", merchantData)
 }
 
+// GetSitemap liste les slugs des pages établissement à référencer — consommé
+// par le serveur du front ScanNOrder pour générer /sitemap.xml.
+func (h *Handler) GetSitemap(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	resp, err := h.service.GetSitemap(ctx)
+	if err != nil {
+		logger.FromContext(ctx).Error("GetSitemap failed", zap.Error(err))
+		models.SendErrorJSON(w, "scannorder", "get_sitemap", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "scannorder", "get_sitemap", resp)
+}
+
 func (h *Handler) GetMenu(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)

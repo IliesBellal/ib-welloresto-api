@@ -74,6 +74,8 @@ type LoginMerchantResponse struct {
 	Lng          float64                       `json:"lng"`
 	TimeZone     string                        `json:"timezone"`
 	WebSite      string                        `json:"web_site"`
+	SIRET        string                        `json:"siret"`
+	VATNumber    string                        `json:"vat_number"`
 	Currency     string                        `json:"currency"`
 	IsOpen       bool                          `json:"is_open"`
 	Settings     LoginMerchantSettingsResponse `json:"settings"`

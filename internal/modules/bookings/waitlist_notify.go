@@ -147,6 +147,7 @@ func (s *BookingsService) notifyWaitlistEntry(ctx context.Context, merchantID st
 
 	if s.comm != nil {
 		s.comm.SendWaitlistAvailable(ctx, bookingcomm.WaitlistMessage{
+			MerchantID:    merchantID,
 			MerchantName:  merchantName,
 			CustomerName:  entry.CustomerName,
 			CustomerEmail: email,

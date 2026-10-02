@@ -90,6 +90,8 @@ SELECT
     CONCAT(m.street_number,' ',m.street,', ',m.zip_code,' ',m.city,', ',m.country),
     m.logo,
     m.web_site,
+    m.siret,
+    m.vat_number,
 
     mp.delivery_fees,
     mp.delivery_fees_limit,
@@ -185,6 +187,7 @@ func scanUserLoginRow(row *sql.Row) (*UserLoginRow, error) {
 
 		&data.MerchantName, &data.MerchantTel, &data.MerchantLat, &data.MerchantLng, &data.TimeZone,
 		&data.MerchantAddress, &data.MerchantLogo, &data.WebSite,
+		&data.MerchantSIRET, &data.MerchantVATNumber,
 
 		&data.DeliveryFees, &data.DeliveryFeesLimit, &data.DeliveryDistanceLimit,
 		&data.ManageOnSite, &data.ManageTakeAway, &data.ManageDelivery,
@@ -264,6 +267,8 @@ SELECT
     CONCAT(m.street_number,' ',m.street,', ',m.zip_code,' ',m.city,', ',m.country),
     m.logo,
     m.web_site,
+    m.siret,
+    m.vat_number,
 
     mp.delivery_fees,
     mp.delivery_fees_limit,
@@ -362,6 +367,7 @@ LIMIT 1;
 
 		&data.MerchantName, &data.MerchantTel, &data.MerchantLat, &data.MerchantLng, &data.TimeZone,
 		&data.MerchantAddress, &data.MerchantLogo, &data.WebSite,
+		&data.MerchantSIRET, &data.MerchantVATNumber,
 
 		&data.DeliveryFees, &data.DeliveryFeesLimit, &data.DeliveryDistanceLimit,
 		&data.ManageOnSite, &data.ManageTakeAway, &data.ManageDelivery,
@@ -748,6 +754,8 @@ SELECT
     CONCAT(m.street_number,' ',m.street,', ',m.zip_code,' ',m.city,', ',m.country),
     m.logo,
     m.web_site,
+    m.siret,
+    m.vat_number,
 
     mp.delivery_fees,
     mp.delivery_fees_limit,
