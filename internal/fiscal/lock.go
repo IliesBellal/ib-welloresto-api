@@ -33,7 +33,8 @@ var ErrNoTransaction = errors.New("fiscal: chain write outside a transaction")
 // mutation de commande tient la ligne de la commande avant d'écrire son audit,
 // un encaissement tient la chaîne avant de mettre la commande à jour. Les
 // chaînes sont toujours prises dans l'ordre payments, orders, receipts,
-// cash_registers, audit_logs (l'audit en dernier) : aucun cycle entre elles.
+// cash_registers, audit_logs, fiscal_closures : aucun cycle entre elles (la
+// clôture fiscale, seule dans sa transaction, ne prend aucune autre chaîne).
 func LockChain(ctx context.Context, chain Chain, merchantID string) error {
 	tx := dbutils.ExtractTx(ctx)
 	if tx == nil {

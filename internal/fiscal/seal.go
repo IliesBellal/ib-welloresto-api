@@ -29,7 +29,25 @@ const (
 	ChainReceipts      Chain = "receipts"
 	ChainCashRegisters Chain = "cash_registers"
 	ChainAuditLogs     Chain = "audit_logs"
+	// ChainFiscalClosures : clôtures journalières, mensuelles et annuelles
+	// (lot B). Prise en dernier, après toutes les autres chaînes.
+	ChainFiscalClosures Chain = "fiscal_closures"
 )
+
+// Fingerprint est l'empreinte (non signée) d'une donnée scellée à l'intérieur
+// d'une autre : par exemple chaque commande dans sa clôture journalière. Même
+// sérialisation que Seal, sans parent ni clé.
+func Fingerprint(kind string, data any) (string, error) {
+	b, err := json.Marshal(struct {
+		Kind string `json:"kind"`
+		V    int    `json:"v"`
+		Data any    `json:"data"`
+	}{kind, HashVersion, data})
+	if err != nil {
+		return "", fmt.Errorf("fiscal: marshal %s fingerprint: %w", kind, err)
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(b)), nil
+}
 
 // PrevOrGenesis remplace un parent absent par GenesisHash.
 func PrevOrGenesis(prev string) string {

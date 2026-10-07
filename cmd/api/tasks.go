@@ -81,6 +81,12 @@ func SetupTasks(
 	add("@hourly", taskManager.RunDunningCascade)
 	add("@hourly", taskManager.RunTrialExpiryCheck)
 
+	// ── Conformité caisse (lot B) ────────────────────────────────────────────
+	// Clôtures fiscales journalières, mensuelles et annuelles scellées
+	// (docs/attestation-conformite-02-lot-B-brief.md). Idempotent entre
+	// instances ; rattrapage initial : cmd/backfill_fiscal_closures.
+	add("@hourly", taskManager.RunFiscalClosures)
+
 	// ── RBAC ─────────────────────────────────────────────────────────────────
 	// Réconcilie le rôle admin de chaque établissement avec le catalogue de
 	// permissions — un ajout au catalogue n'a plus besoin d'un lancement manuel
