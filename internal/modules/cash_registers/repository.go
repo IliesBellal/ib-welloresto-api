@@ -80,7 +80,27 @@ func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *mode
 		return nil, err
 	}
 
-	// 2) Nouveau registre principal.
+	// 2) Mode de clôture en vigueur à la date d'ouverture (calendrier de
+	// l'établissement), inscrit sur le registre : un registre ouvert le 31 au
+	// soir et fermé le 1er garde le mode du 31 (cf. closing_mode.go).
+	// Établissement absent de la table merchant : on n'empêche pas l'ouverture
+	// d'une caisse pour un fuseau, repli sur Europe/Paris (seuls les endpoints
+	// /admin refusent un établissement inconnu).
+	loc, err := r.MerchantLocation(ctx, merchantID)
+	if errors.Is(err, ErrClosingModeMerchantUnknown) {
+		loc, err = time.LoadLocation("Europe/Paris")
+	}
+	if err != nil {
+		log.Error("Erreur lors de la lecture du fuseau de l'établissement", zap.Error(err))
+		return nil, err
+	}
+	closingMode, err := r.ResolveClosingMode(ctx, merchantID, localDay(time.Now(), loc))
+	if err != nil {
+		log.Error("Erreur lors de la résolution du mode de clôture", zap.Error(err))
+		return nil, err
+	}
+
+	// 3) Nouveau registre principal.
 	// closure_comment est NOT NULL sans défaut : MySQL non-strict insérait ''
 	// implicitement, Postgres refuse l'omission — '' explicite, comportement
 	// identique. cash_fund est une colonne integer alimentée par un float64
@@ -88,14 +108,15 @@ func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *mode
 	// un float64 sur int4).
 	lai, err := db.InsertReturningID(ctx, fmt.Sprintf(`
 		INSERT INTO cash_registers
-		(cash_desk_id, device_id, user_id, merchant_id, cash_fund, start_date, closure_comment)
-		VALUES (?, ?, ?, ?, ?, %s, '')
+		(cash_desk_id, device_id, user_id, merchant_id, cash_fund, start_date, closure_comment, closing_mode)
+		VALUES (?, ?, ?, ?, ?, %s, '', ?)
 	`, dbx.UTCNow()), "cash_register_id",
 		req.CashRegister.CashDeskID,
 		req.DeviceID,
 		req.CashRegister.UserID,
 		merchantID,
 		int(math.Round(req.CashRegister.CashFund)),
+		closingMode,
 	)
 	if err != nil {
 		log.Error("Erreur lors de l'insertion du registre", zap.Error(err))
@@ -108,91 +129,13 @@ func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *mode
 		Status: "cash_register_created",
 		CashRegister: &models.CashRegisterOpen{
 			CashRegisterId: cashRegisterID,
+			ClosingMode:    closingMode,
 		},
 	}, nil
 }
 
-// Traduction SQL inline de l'ex-procédure stockée MySQL GET_CASH_REGISTER_REPORT
-// (jamais versionnée dans ce repo — corps récupéré depuis la base, voir
-// docs/migration-postgres/22-cash-register-procedures-translation.md).
-// Compatible MySQL et Postgres :
-//   - IFNULL → COALESCE ;
-//   - ROUND(x, 0) exige un numeric en Postgres → CAST(... AS DECIMAL(20,6)) ;
-//   - GROUP BY explicites (MySQL tolérait des colonnes non agrégées, pas Postgres) ;
-//     l'agrégat interne est groupé par tva.tva_id (PK) au lieu de
-//     (tva_title, delivery_type) — déterministe et équivalent tant que les
-//     libellés de catégories ne sont pas dupliqués ;
-//   - la jointure INNER JOIN merchant (purement restrictive, aucune colonne
-//     projetée) est supprimée : merchant.id est resté integer face à
-//     orders.merchant_id varchar(64) en Postgres, et orders.merchant_id
-//     référence toujours un merchant existant.
-//
-// Le paramètre (répété dans chaque branche de l'UNION) est l'id numérique du
-// registre, comparé à orders.cash_register_id (varchar dans les deux
-// dialectes) — passer la forme string.
-//
-// L'exclusion brand_status couvre aussi DELIVERY_CANCELED/DELIVERY_FAILED en
-// plus de CANCELED/DELETED, même raison que pos/accounting.GetTVAData : une
-// commande peut rester state='CLOSED' avec ce brand_status sans jamais avoir
-// été payée (cf. docs/diagnostic-rapport-comptable-croq-o-pizzas.sql).
-const cashRegisterReportSQL = `
-SELECT all_tva.delivery_type,
-       l.label,
-       all_tva.tva_title,
-       all_tva.tva_rate,
-       COALESCE(ROUND(CAST(cash_report.ht  AS DECIMAL(20,6)), 0), 0) AS ht,
-       COALESCE(ROUND(CAST(cash_report.ttc AS DECIMAL(20,6)), 0), 0) AS ttc,
-       COALESCE(ROUND(CAST(cash_report.tva AS DECIMAL(20,6)), 0), 0) AS tva
-FROM tva_categories all_tva
-LEFT JOIN (
-    SELECT tva.tva_id,
-           SUM(oi.price * oi.quantity / (1 + tva.tva_rate / 100)) AS ht,
-           SUM(oi.price * oi.quantity) AS ttc,
-           SUM(oi.price * oi.quantity) - SUM(oi.price * oi.quantity / (1 + tva.tva_rate / 100)) AS tva
-    FROM orders o
-    INNER JOIN orderitems oi ON oi.order_id = o.order_id
-    INNER JOIN products p ON p.product_id = oi.product_id
-    INNER JOIN tva_categories tva ON tva.tva_id = (CASE
-            WHEN o.order_type = 'DELIVERY' THEN p.tva_delivery_id
-            WHEN o.order_type = 'TAKE_AWAY' THEN p.tva_take_away_id
-            ELSE p.tva_in_id
-        END)
-    WHERE o.cash_register_id = ?
-      AND o.state IN ('CLOSED')
-      AND o.brand_status NOT IN ('CANCELED','DELETED','DELIVERY_CANCELED','DELIVERY_FAILED')
-    GROUP BY tva.tva_id
-) cash_report ON cash_report.tva_id = all_tva.tva_id
-LEFT JOIN labels l ON l.label_value = all_tva.delivery_type
-    AND l.lang = 'FR'
-    AND l.label_type = 'delivery_type'
-WHERE all_tva.show_in_report IS TRUE
-
-UNION
-
-SELECT all_tva.delivery_type,
-       l.label,
-       all_tva.tva_title,
-       all_tva.tva_rate,
-       COALESCE(ROUND(CAST(SUM(cash_fees.ht)  AS DECIMAL(20,6)), 0), 0) AS ht,
-       COALESCE(ROUND(CAST(SUM(cash_fees.ttc) AS DECIMAL(20,6)), 0), 0) AS ttc,
-       COALESCE(ROUND(CAST(SUM(cash_fees.tva) AS DECIMAL(20,6)), 0), 0) AS tva
-FROM tva_categories all_tva
-LEFT JOIN (
-    SELECT -1 AS tva_id,
-           SUM(o_fees.delivery_fees * (100 - tva_fees.tva_rate) / 100) AS ht,
-           SUM(o_fees.delivery_fees) AS ttc,
-           SUM(o_fees.delivery_fees * tva_fees.tva_rate / 100) AS tva
-    FROM orders o_fees
-    INNER JOIN tva_categories tva_fees ON tva_fees.tva_id = -1
-    WHERE o_fees.cash_register_id = ?
-      AND o_fees.state IN ('CLOSED')
-      AND o_fees.brand_status NOT IN ('CANCELED','DELETED','DELIVERY_CANCELED','DELIVERY_FAILED')
-) cash_fees ON cash_fees.tva_id = all_tva.tva_id
-LEFT JOIN labels l ON l.label_value = all_tva.delivery_type
-    AND l.lang = 'FR'
-    AND l.label_type = 'delivery_type'
-WHERE all_tva.tva_id = -1
-GROUP BY all_tva.tva_id, all_tva.delivery_type, all_tva.tva_title, all_tva.tva_rate, l.label`
+// La ventilation TVA du registre (ex-procédure GET_CASH_REGISTER_REPORT) est
+// calculée par computeRegisterVAT (register_vat.go).
 
 // Traduction SQL inline de l'ex-procédure stockée MySQL
 // GET_CASH_REGISTER_REPORT_MOP. Le corps d'origine portait deux filtres
@@ -202,6 +145,12 @@ GROUP BY all_tva.tva_id, all_tva.delivery_type, all_tva.tva_title, all_tva.tva_r
 // SUM(...) est re-casté en DECIMAL(20,0) : p.amount est un entier (centimes),
 // mais round(numeric, 2) Postgres produirait un "123.00" que database/sql ne
 // sait pas scanner dans un int Go.
+// Filtre brand_status volontairement inchangé (pas de DENIED) : cette requête
+// produit l'instantané figé cash_registers_items, comparé ensuite au recalcul
+// live de pos/accounting.GetTrustedEnclosedRegisterIDs ; changer le filtre
+// d'un seul côté ferait dériver les registres déjà enclosed. Les paiements
+// d'une commande DENIED sont désactivés au refus (DisablePayments) et donc
+// déjà exclus par p.enabled.
 const cashRegisterReportMOPSQL = `
 SELECT p.mop, CAST(SUM(ROUND(p.amount, 2)) AS DECIMAL(20,0)) AS amount
 FROM orders o
@@ -210,34 +159,6 @@ WHERE p.cash_register_id = ?
   AND o.brand_status NOT IN ('DELETED','CANCELED','DELIVERY_CANCELED','DELIVERY_FAILED')
   AND p.enabled IS TRUE
 GROUP BY p.mop`
-
-func (r *CashRegisterRepository) queryCashRegisterReportLines(ctx context.Context, cashRegisterID string) ([]models.CashReportLine, error) {
-	db := dbx.GetDB(ctx, r.database)
-
-	rows, err := db.QueryContext(ctx, cashRegisterReportSQL, cashRegisterID, cashRegisterID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var lines []models.CashReportLine
-	for rows.Next() {
-		var line models.CashReportLine
-		if err := rows.Scan(
-			&line.DeliveryType,
-			&line.Label,
-			&line.TVATitle,
-			&line.Rate,
-			&line.HT,
-			&line.TTC,
-			&line.TVA,
-		); err != nil {
-			return nil, err
-		}
-		lines = append(lines, line)
-	}
-	return lines, rows.Err()
-}
 
 func (r *CashRegisterRepository) queryCashRegisterReportMOP(ctx context.Context, cashRegisterID string) ([]models.MOPLine, error) {
 	db := dbx.GetDB(ctx, r.database)
@@ -292,10 +213,11 @@ func (r *CashRegisterRepository) GetCashRegisterReport(ctx context.Context, cash
 	// --------------------------------------------------------------
 	// 2) Ventilation TVA (ex CALL GET_CASH_REGISTER_REPORT)
 	// --------------------------------------------------------------
-	reportRows, err := r.queryCashRegisterReportLines(ctx, cashRegisterID)
+	vat, err := r.computeRegisterVAT(ctx, cashRegisterID)
 	if err != nil {
 		return nil, err
 	}
+	reportRows := vat.Lines
 
 	var (
 		HT_CR  int
@@ -382,7 +304,13 @@ func (r *CashRegisterRepository) GetCashRegisterReport(ctx context.Context, cash
 		HT:             HT_CR,
 		TTC:            TTC_CR,
 		TVA:            TVA_CR,
+		GrossTTC:       vat.GrossTTC,
+		Discounts:      vat.Discounts,
 		CashReport:     cashReport,
+		// MOP alimente l'instantané figé cash_registers_items à la fermeture :
+		// remises comprises, inchangé (le contrôle de dérive de l'export
+		// comptable le compare à un recalcul en direct). Elles sont écartées à
+		// l'affichage (résumé, détail TVA, historique).
 		MOP:            mopList,
 		CashReportType: "Z",
 	}
@@ -596,20 +524,33 @@ func (r *CashRegisterRepository) closeCashRegister(ctx context.Context, cashRegi
 	return false, nil
 }
 
+// isCashRegisterClosedForMerchant indique si le registre est déjà fermé, pour
+// l'établissement donné. Un registre introuvable pour cet établissement
+// (inexistant, ou d'un autre établissement) compte comme déjà fermé : la
+// fermeture est alors un no-op, au lieu de fermer le registre d'un autre
+// établissement et d'y rattacher les paiements de l'appelant (comportement
+// d'avant 2026-10-04, cf. CashRegisterBelongsToMerchant).
 func (r *CashRegisterRepository) isCashRegisterClosedForMerchant(ctx context.Context, cashRegisterID, merchantID string) (bool, error) {
+	owned, err := r.CashRegisterBelongsToMerchant(ctx, cashRegisterID, merchantID)
+	if err != nil {
+		return false, err
+	}
+	if !owned {
+		return true, nil
+	}
+
 	db := dbx.GetDB(ctx, r.database)
 
 	var closed bool
-	err := db.QueryRowContext(ctx, `
+	err = db.QueryRowContext(ctx, `
 		SELECT closed
 		FROM cash_registers
 		WHERE cash_register_id = ?
-		  AND merchant_id = ?
 		LIMIT 1
-	`, cashRegisterID, merchantID).Scan(&closed)
+	`, cashRegisterID).Scan(&closed)
 
 	if err == sql.ErrNoRows {
-		return false, nil
+		return true, nil
 	}
 	if err != nil {
 		return false, err
@@ -635,6 +576,7 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 			cd.cash_desk_id, cd.name,
 			cr.cash_fund, cr.final_cash_fund,
 			cr.closed, cr.enclosed, cr.closure_comment,
+			COALESCE(cr.closing_mode, 'MANUAL'),
 			u.user_id, u.first_name, u.last_name,
 			mp.currency,
 			cb.user_id as closed_by_user_id,
@@ -663,6 +605,7 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 		&closed,
 		&enclosed,
 		&cr.ClosureComment,
+		&cr.ClosingMode,
 		&cr.OpenedBy.UserID,
 		&cr.OpenedBy.FirstName,
 		&cr.OpenedBy.LastName,
@@ -711,6 +654,13 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 		}
 
 		it.Currency = cr.Currency
+		// Remises de caisse : figées dans l'instantané (contrôle de dérive de
+		// l'export comptable) mais ce ne sont pas des encaissements — hors du
+		// théorique, totalisées à part (cf. register_vat.go).
+		if models.IsDiscountMOP(it.MOP) {
+			cr.Discounts += int(math.Round(it.Amount))
+			continue
+		}
 		cr.Items = append(cr.Items, it)
 	}
 
@@ -742,6 +692,12 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 			return nil, err
 		}
 		ci.Currency = cr.Currency
+		// Une remise recopiée dans le relevé (avant la phase 4, le théorique
+		// la proposait) n'est pas de l'argent compté : hors du réel, comme
+		// elle est hors du théorique, l'écart reste le même.
+		if models.IsDiscountPaymentLabel(ci.MOP) || models.IsDiscountPaymentLabel(ci.Label) {
+			continue
+		}
 		cr.CustomItems = append(cr.CustomItems, ci)
 	}
 
@@ -822,6 +778,9 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 		}
 
 		p.Currency = cr.Currency
+		if models.IsDiscountMOP(p.MOP) {
+			continue
+		}
 		cr.Payments = append(cr.Payments, p)
 	}
 
@@ -1084,6 +1043,7 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 	       cd.name,
 		 cr.enclosed,
 		 cr.closed,
+		 COALESCE(cr.closing_mode, 'MANUAL') AS closing_mode,
 		 cr.hash,
 		 COALESCE(pstats.transaction_count, 0) AS transaction_count,
 		 COALESCE(pstats.total_revenu, 0) AS total_revenu
@@ -1096,6 +1056,7 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 			       COALESCE(SUM(p.amount), 0) AS total_revenu
 			FROM payments p
 			WHERE p.enabled = TRUE
+			  AND p.mop NOT IN `+models.DiscountMOPsSQL+`
 			GROUP BY p.cash_register_id
 		) pstats ON pstats.cash_register_id = %s
         WHERE cr.cash_register_id IN (%s)
@@ -1131,6 +1092,7 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 			&h.CashDesk.CashDeskName,
 			&h.Enclosed,
 			&h.Closed,
+			&h.ClosingMode,
 			&hash,
 			&transactionCount,
 			&totalRevenu,
@@ -1201,6 +1163,7 @@ func (r *CashRegisterRepository) GetCashRegisterHistory(ctx context.Context, mer
 		  AND l.lang = 'FR'
 		  AND l.label_type = 'mop'
 		WHERE cri.cash_register_id IN (%s)
+		  AND cri.mop NOT IN `+models.DiscountMOPsSQL+`
 		ORDER BY cri.id ASC
 	`, strings.Join(inParts, ","))
 
@@ -1273,12 +1236,13 @@ func (r *CashRegisterRepository) GetCashRegisterTVADetails(ctx context.Context, 
 		return nil, err
 	}
 
-	// 2. Ventilation TVA (ex CALL GET_CASH_REGISTER_REPORT)
-	items, err := r.queryCashRegisterReportLines(ctx, cashRegisterID)
+	// 2. Ventilation TVA, remises déduites (cf. register_vat.go)
+	vat, err := r.computeRegisterVAT(ctx, cashRegisterID)
 	if err != nil {
 		log.Error(err.Error())
 		return nil, err
 	}
+	items := vat.Lines
 
 	var totalHT, totalTTC, totalTVA int
 	for _, line := range items {
@@ -1287,11 +1251,18 @@ func (r *CashRegisterRepository) GetCashRegisterTVADetails(ctx context.Context, 
 		totalTVA += line.TVA
 	}
 
-	// 3. Ventilation MOP (ex CALL GET_CASH_REGISTER_REPORT_MOP)
-	mops, err := r.queryCashRegisterReportMOP(ctx, cashRegisterID)
+	// 3. Ventilation MOP (ex CALL GET_CASH_REGISTER_REPORT_MOP), remises
+	// exclues : ce ne sont pas des moyens de paiement.
+	allMops, err := r.queryCashRegisterReportMOP(ctx, cashRegisterID)
 	if err != nil {
 		log.Error(err.Error())
 		return nil, err
+	}
+	mops := make([]models.MOPLine, 0, len(allMops))
+	for _, m := range allMops {
+		if !models.IsDiscountMOP(m.MOP) {
+			mops = append(mops, m)
+		}
 	}
 
 	// 4. Group by delivery_type like PHP
@@ -1332,6 +1303,8 @@ func (r *CashRegisterRepository) GetCashRegisterTVADetails(ctx context.Context, 
 		HT:             totalHT,
 		TTC:            totalTTC,
 		TVA:            totalTVA,
+		GrossTTC:       vat.GrossTTC,
+		Discounts:      vat.Discounts,
 		CashReport:     report,
 		MOP:            mops,
 		CashReportType: "Z",

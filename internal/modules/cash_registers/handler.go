@@ -2,6 +2,7 @@ package cash_registers
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -68,23 +69,94 @@ func (h *CashRegisterHandler) CloseCashRegister(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	alreadyClosed, err := h.cashRegisterService.CloseCashRegister(ctx, token, cashRegisterID, &req)
+	result, err := h.cashRegisterService.CloseCashRegister(ctx, token, cashRegisterID, &req)
 	if err != nil {
 		models.SendErrorJSON(w, "cash_register", "close", err)
 		return
 	}
 
-	if alreadyClosed {
-		models.SendJSON(w, http.StatusOK, "cash_register", "close", map[string]string{
-			"status":  "success",
-			"message": "Le registre de caisse est deja ferme.",
+	// closing_mode / enclosed : en AUTO, le registre est déjà validé — l'app
+	// passe directement à la suite, sans écran de relevé de caisse.
+	if result.AlreadyClosed {
+		models.SendJSON(w, http.StatusOK, "cash_register", "close", map[string]interface{}{
+			"status":       "success",
+			"message":      "Le registre de caisse est deja ferme.",
+			"closing_mode": result.ClosingMode,
+			"enclosed":     result.Enclosed,
 		})
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "cash_register", "close", models.HandlerDefaultResponseModelSet{
-		Status: "cash_register_closed",
+	models.SendJSON(w, http.StatusOK, "cash_register", "close", map[string]interface{}{
+		"status":       "cash_register_closed",
+		"closing_mode": result.ClosingMode,
+		"enclosed":     result.Enclosed,
 	})
+}
+
+// closingModeErrorResponse traduit une erreur de mode de clôture en réponse
+// explicite pour l'équipe WelloResto (endpoints /admin) ; ok=false si l'erreur
+// n'en est pas une.
+func closingModeErrorResponse(err error) (status int, code string, message string, ok bool) {
+	switch {
+	case errors.Is(err, ErrClosingModeInvalidMode):
+		return http.StatusBadRequest, "closing_mode_invalid_mode", "Mode inconnu : MANUAL ou AUTO attendu.", true
+	case errors.Is(err, ErrClosingModeInvalidDate):
+		return http.StatusBadRequest, "closing_mode_invalid_date", "Date invalide : format YYYY-MM-DD attendu.", true
+	case errors.Is(err, ErrClosingModeNotMonthStart):
+		return http.StatusBadRequest, "closing_mode_not_month_start", "Un changement de mode prend effet le 1er d'un mois.", true
+	case errors.Is(err, ErrClosingModeRetroactive):
+		return http.StatusBadRequest, "closing_mode_retroactive", "Pas de changement rétroactif : au plus tôt le 1er du mois prochain (calendrier de l'établissement) ; un changement déjà en vigueur ne peut pas être annulé.", true
+	case errors.Is(err, ErrClosingModeAlreadyInEffect):
+		return http.StatusConflict, "closing_mode_already_in_effect", "Ce mode est déjà celui en vigueur à cette date.", true
+	case errors.Is(err, ErrClosingModeAlreadyPlanned):
+		return http.StatusConflict, "closing_mode_already_planned", "Un changement est déjà planifié à cette date : l'annuler d'abord.", true
+	case errors.Is(err, ErrClosingModeNotFound):
+		return http.StatusNotFound, "closing_mode_not_found", "Aucun changement planifié à cette date.", true
+	case errors.Is(err, ErrClosingModeMerchantUnknown):
+		return http.StatusNotFound, "merchant_not_found", "Établissement inconnu.", true
+	}
+	return 0, "", "", false
+}
+
+func (h *CashRegisterHandler) sendClosingModeResult(w http.ResponseWriter, fnName string, overview *ClosingModesOverview, err error) {
+	if err != nil {
+		if status, code, message, ok := closingModeErrorResponse(err); ok {
+			models.SendJSON(w, status, "cash_register", fnName, map[string]string{"status": code, "message": message, "error": message})
+			return
+		}
+		models.SendErrorJSON(w, "cash_register", fnName, err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "cash_register", fnName, overview)
+}
+
+// GetClosingModes GET /admin/merchants/{id}/cash-register-closing-modes —
+// mode de clôture en vigueur et historique (équipe WelloResto uniquement).
+func (h *CashRegisterHandler) GetClosingModes(w http.ResponseWriter, r *http.Request) {
+	overview, err := h.cashRegisterService.GetClosingModes(r.Context(), chi.URLParam(r, "id"))
+	h.sendClosingModeResult(w, "get_closing_modes", overview, err)
+}
+
+// ScheduleClosingMode POST /admin/merchants/{id}/cash-register-closing-modes
+// {"mode": "MANUAL"|"AUTO", "effective_from": "YYYY-MM-01"} — planifie un
+// changement au 1er d'un mois futur (équipe WelloResto uniquement).
+func (h *CashRegisterHandler) ScheduleClosingMode(w http.ResponseWriter, r *http.Request) {
+	var req ScheduleClosingModeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "cash_register", "schedule_closing_mode", models.ErrInvalidRequestBody)
+		return
+	}
+	overview, err := h.cashRegisterService.ScheduleClosingMode(r.Context(), chi.URLParam(r, "id"), req)
+	h.sendClosingModeResult(w, "schedule_closing_mode", overview, err)
+}
+
+// CancelClosingMode DELETE /admin/merchants/{id}/cash-register-closing-modes/{effective_from}
+// — annule un changement planifié pas encore en vigueur (équipe WelloResto
+// uniquement).
+func (h *CashRegisterHandler) CancelClosingMode(w http.ResponseWriter, r *http.Request) {
+	overview, err := h.cashRegisterService.CancelClosingMode(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "effective_from"))
+	h.sendClosingModeResult(w, "cancel_closing_mode", overview, err)
 }
 
 func (h *CashRegisterHandler) GetCashRegisterSummary(w http.ResponseWriter, r *http.Request) {

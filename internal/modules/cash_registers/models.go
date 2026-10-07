@@ -12,6 +12,7 @@ type CashRegisterHistoryItem struct {
 	ClosedByName     *string             `json:"closed_by_name,omitempty"`
 	Closed           bool                `json:"closed"`   // correspond à la colonne closed
 	Enclosed         bool                `json:"enclosed"` // correspond à la colonne enclosed
+	ClosingMode      string              `json:"closing_mode"` // MANUAL / AUTO, cf. closing_mode.go
 	TotalRevenu      int                 `json:"total_revenu"`
 	TransactionCount int                 `json:"transaction_count"`
 	PaymentMethods   []MOPLine           `json:"payment_methods"`

@@ -3,7 +3,10 @@ package accounting
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/csv"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -27,8 +30,13 @@ func NewAccountingService(repo *AccountingRepository, cashRegistersRepo *cashreg
 	return &AccountingService{repo: repo, cashRegistersRepo: cashRegistersRepo}
 }
 
-// ExportAccountingReport génère un rapport comptable en PDF et l'upload vers R2
-func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, dateFrom, dateTo string, r2Client *r2.Client) (*ExportAccountingResponse, error) {
+// ExportAccountingReport génère un rapport comptable en PDF et l'upload vers R2.
+// Le contenu dépend du mode de clôture de l'établissement sur la période
+// (docs/EXPORT_COMPTABLE_MODES_CLOTURE.md) : en MANUAL, le rapport historique
+// (TVA sur les lignes, remises déduites ; encaissements = réel des registres
+// validés), non filtrable ; en AUTO, TVA ventilée à partir des paiements,
+// filtrable par canal (channels : valeurs de orders.order_source, vide = tous).
+func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, dateFrom, dateTo string, channels []string, r2Client *r2.Client) (*ExportAccountingResponse, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, models.ErrUnauthorized
@@ -100,37 +108,57 @@ func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, d
 		}, nil
 	}
 
-	tvaRows, err := s.repo.GetTVAData(ctx, user.MerchantID, fromLocal, toExclusive)
+	// Mode de clôture de la période : celui en vigueur au premier jour, sans
+	// changement de mode à l'intérieur de la période.
+	closingMode, err := s.periodClosingMode(ctx, user.MerchantID, fromLocal, lastDayLocal)
 	if err != nil {
+		var straddle *closingModeStraddleError
+		if errors.As(err, &straddle) {
+			return &ExportAccountingResponse{
+				Status: "0",
+				Error: fmt.Sprintf("La période chevauche un changement de mode de clôture le %s : générez un export avant et un export à partir de cette date.",
+					straddle.effectiveFrom.Format("02/01/2006")),
+			}, nil
+		}
 		return &ExportAccountingResponse{
 			Status: "0",
-			Error:  "Erreur lors de la récupération des données TVA",
+			Error:  "Erreur lors de la récupération du mode de clôture",
 		}, nil
 	}
 
-	// Section Encaissements : réel des registres de caisse enclosed
-	// uniquement (cf. docs/decisions.md) — pas de repli sur le théorique
-	// (payments) dans ce rapport. Un merchant sans registre correctement
-	// clôturé sur la période affiche une table vide, voir buildPDFReport.
-	trustedRegisterIDs, err := s.repo.GetTrustedEnclosedRegisterIDs(ctx, user.MerchantID, fromLocal, toExclusive)
+	sources, err := normalizeOrderSources(channels)
 	if err != nil {
+		return &ExportAccountingResponse{Status: "0", Error: err.Error()}, nil
+	}
+	if closingMode == cashregisters.ClosingModeManual && len(channels) > 0 {
 		return &ExportAccountingResponse{
 			Status: "0",
-			Error:  "Erreur lors de la récupération des registres de caisse",
+			Error:  "Le filtre par canal de commande n'est disponible qu'en clôture automatique.",
 		}, nil
 	}
 
-	payments, err := s.repo.GetRealPaymentsData(ctx, trustedRegisterIDs)
+	var (
+		tvaRows      []TVARow
+		payments     []PaymentRow
+		discounts    DiscountSummary
+		emptyMessage string
+	)
+	if closingMode == cashregisters.ClosingModeAuto {
+		tvaRows, payments, discounts, err = s.buildAutoSections(ctx, user.MerchantID, fromLocal, toExclusive, orderScope{sources: sources})
+		emptyMessage = "Aucun encaissement sur cette période."
+	} else {
+		tvaRows, payments, discounts, err = s.buildManualSections(ctx, user.MerchantID, fromLocal, toExclusive)
+		emptyMessage = "Aucune clôture de caisse validée sur cette période."
+	}
 	if err != nil {
 		return &ExportAccountingResponse{
 			Status: "0",
-			Error:  "Erreur lors de la récupération des paiements",
+			Error:  "Erreur lors de la récupération des données comptables",
 		}, nil
 	}
-	payments = filterExcludedPaymentLabels(payments)
 
 	// Construire le PDF
-	pdfBytes, err := s.buildPDFReport(year, month, header, tvaRows, payments, fromLocal, toLocal, tzName)
+	pdfBytes, err := s.buildPDFReport(year, month, header, tvaRows, payments, discounts, emptyMessage, fromLocal, toLocal, tzName)
 	if err != nil {
 		return &ExportAccountingResponse{
 			Status: "0",
@@ -138,20 +166,50 @@ func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, d
 		}, nil
 	}
 
-	filename := fmt.Sprintf("WR_rapport_comptable_%d_%02d.pdf", year, month)
-
-	// Uploader vers R2
+	// Archivage (migration 166) : bucket R2 privé, nom unique horodaté — un
+	// export régénéré n'écrase jamais celui déjà envoyé —, référence en base
+	// avec l'empreinte du fichier, téléchargement par lien signé.
+	generatedAt := time.Now().UTC()
+	filename := accountingExportFilename(fromLocal, lastDayLocal, sources, generatedAt)
 	key := fmt.Sprintf("wello_resto_accounting/merchants/%s/reports/%s", user.MerchantID, filename)
-	downloadURL, err := r2Client.UploadFile(ctx, key, bytes.NewReader(pdfBytes), "application/pdf")
-	if err != nil {
+	if _, err := r2Client.UploadPrivateFile(ctx, key, bytes.NewReader(pdfBytes), "application/pdf"); err != nil {
 		return &ExportAccountingResponse{
 			Status: "0",
 			Error:  "Erreur lors de l'upload du PDF vers R2",
 		}, nil
 	}
 
+	digest := sha256.Sum256(pdfBytes)
+	exportID, err := s.repo.InsertAccountingExport(ctx, user.MerchantID, AccountingExport{
+		PeriodFrom:  fromLocal.Format("2006-01-02"),
+		PeriodTo:    lastDayLocal.Format("2006-01-02"),
+		ClosingMode: closingMode,
+		Channels:    sources,
+		Filename:    filename,
+		SHA256:      hex.EncodeToString(digest[:]),
+		SizeBytes:   len(pdfBytes),
+		GeneratedBy: user.UserID,
+		GeneratedAt: generatedAt,
+		r2Key:       key,
+	})
+	if err != nil {
+		return &ExportAccountingResponse{
+			Status: "0",
+			Error:  "Erreur lors de l'enregistrement de l'export",
+		}, nil
+	}
+
+	downloadURL, err := r2Client.GenerateSignedURL(ctx, key, accountingExportLinkTTL)
+	if err != nil {
+		return &ExportAccountingResponse{
+			Status: "0",
+			Error:  "Erreur lors de la création du lien de téléchargement",
+		}, nil
+	}
+
 	return &ExportAccountingResponse{
 		Status:      "1",
+		ExportID:    exportID,
 		Filename:    filename,
 		DownloadURL: downloadURL,
 	}, nil
@@ -163,6 +221,9 @@ func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, d
 // texte ne matche pas les codes MOP bruts déjà filtrés par
 // accountingExcludedChannelMOPs côté repository). Ces canaux externes ont leur
 // propre gestion de TVA à venir, cf. docs/decisions.md.
+// S'y ajoutent les remises accordées en caisse (models.IsDiscountPaymentLabel) :
+// ce n'est pas de l'argent encaissé, et elles sont déjà déduites de la base
+// TVA (buildManualVAT).
 var accountingExcludedPaymentLabels = []string{"UBER EATS", "DELIVEROO", "SCANNORDER"}
 
 // filterExcludedPaymentLabels retire du "réel" les encaissements dont le
@@ -172,7 +233,7 @@ func filterExcludedPaymentLabels(payments []PaymentRow) []PaymentRow {
 	filtered := make([]PaymentRow, 0, len(payments))
 	for _, payment := range payments {
 		upperLabel := strings.ToUpper(strings.TrimSpace(payment.Label))
-		excluded := false
+		excluded := models.IsDiscountPaymentLabel(payment.Label)
 		for _, excludedLabel := range accountingExcludedPaymentLabels {
 			if upperLabel == excludedLabel {
 				excluded = true
@@ -187,8 +248,11 @@ func filterExcludedPaymentLabels(payments []PaymentRow) []PaymentRow {
 	return filtered
 }
 
-// buildPDFReport génère le PDF avec les données comptables
-func (s *AccountingService) buildPDFReport(year, month int, header *MerchantHeader, tvaRows []TVARow, payments []PaymentRow, fromLocal, toLocal time.Time, tzName string) ([]byte, error) {
+// buildPDFReport génère le PDF avec les données comptables. discounts alimente
+// la ligne d'information placée sous le tableau TVA, hors de tout total (rien
+// si aucune remise) ; emptyPaymentsMessage s'affiche quand aucun encaissement
+// n'est à lister (message propre à chaque mode de clôture).
+func (s *AccountingService) buildPDFReport(year, month int, header *MerchantHeader, tvaRows []TVARow, payments []PaymentRow, discounts DiscountSummary, emptyPaymentsMessage string, fromLocal, toLocal time.Time, tzName string) ([]byte, error) {
 	pdf := gofpdf.New("P", "mm", "A4", "")
 	translate := pdf.UnicodeTranslatorFromDescriptor("cp1252")
 	pdf.AddPage()
@@ -209,6 +273,7 @@ func (s *AccountingService) buildPDFReport(year, month int, header *MerchantHead
 	)
 	drawPDFHeader(pdf, translate, "Rapport comptable", header.MerchantName, fmt.Sprintf("%02d/%d", month, year), infoText)
 	drawTVATable(pdf, translate, tvaRows, header.Currency)
+	drawDiscountSummary(pdf, translate, discounts, header.Currency)
 
 	// --- PAYMENTS ---
 	pdf.Ln(8)
@@ -227,7 +292,7 @@ func (s *AccountingService) buildPDFReport(year, month int, header *MerchantHead
 	}
 	if paymentRowsDrawn == 0 {
 		pdf.SetFont("Arial", "I", 10)
-		pdf.MultiCell(190, 6, translate("Aucune clôture de caisse validée sur cette période."), "", "L", false)
+		pdf.MultiCell(190, 6, translate(emptyPaymentsMessage), "", "L", false)
 	}
 
 	drawPDFFooter(pdf, translate)
@@ -270,6 +335,23 @@ func drawPDFHeader(pdf *gofpdf.Fpdf, translate func(string) string, title, merch
 
 // drawTVATable dessine le tableau TVA (Taux/HT/TVA/TTC), commun au rapport
 // mensuel et au PDF d'un registre unique.
+// drawDiscountSummary affiche sous le tableau TVA, en information et hors de
+// tout total, le CA avant remises, les remises accordées et le CA TTC. Rien si
+// aucune remise sur la période.
+func drawDiscountSummary(pdf *gofpdf.Fpdf, translate func(string) string, discounts DiscountSummary, currency string) {
+	if discounts.Discounts == 0 {
+		return
+	}
+	pdf.Ln(2)
+	pdf.SetFont("Arial", "I", 9)
+	pdf.MultiCell(190, 5, translate(fmt.Sprintf(
+		"CA TTC avant remises : %.2f %s  ·  Remises accordées : %.2f %s  ·  CA TTC : %.2f %s",
+		float64(discounts.TTCBeforeDiscounts)/100, currency,
+		float64(discounts.Discounts)/100, currency,
+		float64(discounts.TTC)/100, currency,
+	)), "", "L", false)
+}
+
 func drawTVATable(pdf *gofpdf.Fpdf, translate func(string) string, tvaRows []TVARow, currency string) {
 	pdf.Ln(5)
 	pdf.SetFont("Arial", "B", 12)
@@ -353,6 +435,7 @@ func (s *AccountingService) buildRegisterPDFReport(
 	periodFrom, periodTo time.Time,
 	cashFundInitial, cashFundFinal int64,
 	tvaRows []TVARow,
+	discounts DiscountSummary,
 	comparisonRows []RegisterComparisonRow,
 	tzName string,
 ) ([]byte, error) {
@@ -374,6 +457,7 @@ func (s *AccountingService) buildRegisterPDFReport(
 	)
 	drawPDFHeader(pdf, translate, "Registre de caisse", header.MerchantName, fmt.Sprintf("#%s", registerNumber), infoText)
 	drawTVATable(pdf, translate, tvaRows, header.Currency)
+	drawDiscountSummary(pdf, translate, discounts, header.Currency)
 	drawComparisonTable(pdf, translate, comparisonRows, header.Currency)
 	drawPDFFooter(pdf, translate)
 
@@ -449,6 +533,13 @@ func (s *AccountingService) ExportRegisterPDF(ctx context.Context, registerID st
 		int64(summary.CashFund),
 		int64(summary.FinalCashFund),
 		buildRegisterTVARows(details),
+		// Ventes brutes − remises = ventes nettes (TVA sur le net) ; le
+		// théorique / réel comparé exclut déjà les remises (résumé du registre).
+		DiscountSummary{
+			TTCBeforeDiscounts: int64(details.GrossTTC),
+			Discounts:          int64(details.Discounts),
+			TTC:                int64(details.GrossTTC - details.Discounts),
+		},
 		buildComparisonRows(summary.Items, summary.CustomItems),
 		tzName,
 	)
@@ -610,36 +701,50 @@ func parseUTCDateTime(raw string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("invalid datetime format: %s", value)
 }
 
+// CalculateVAT calcule la déclaration de TVA de la période (dates de
+// calendrier dans le fuseau de l'établissement, bornes incluses), alignée sur
+// l'export comptable — cf. vat_declaration.go. Channels : valeurs de
+// orders.order_source (ou anciennes valeurs restaurant / scannorder / ubereats
+// / deliveroo) ; OrderTypes : in / take_away / delivery ; vides = tout.
 func (s *AccountingService) CalculateVAT(ctx context.Context, req VATCalculateRequest) (*VATCalculateResponse, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, models.ErrUnauthorized
 	}
 
-	fromUTC, err := parseUTCDateTime(req.StartDate)
+	loc, err := s.cashRegistersRepo.MerchantLocation(ctx, user.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+	fromLocal, err := parseCalendarDate(req.StartDate, loc)
 	if err != nil {
 		return nil, models.ErrInvalidInput
 	}
-	toUTC, err := parseUTCDateTime(req.EndDate)
+	lastDayLocal, err := parseCalendarDate(req.EndDate, loc)
 	if err != nil {
 		return nil, models.ErrInvalidInput
 	}
-
-	if toUTC.Before(fromUTC) {
+	if lastDayLocal.Before(fromLocal) {
 		return nil, models.ErrInvalidInput
 	}
+	toExclusive := lastDayLocal.AddDate(0, 0, 1)
 
-	channels, err := normalizeChannels(req.Channels)
+	sources, channelKeys, err := normalizeDeclarationChannels(req.Channels)
 	if err != nil {
-		return nil, models.ErrInvalidInput
+		return nil, err
 	}
-
 	orderTypes, err := normalizeOrderTypes(req.OrderTypes)
 	if err != nil {
 		return nil, models.ErrInvalidInput
 	}
+	var orderTypeFilter []string
+	if len(orderTypes) < 3 {
+		for _, t := range orderTypes {
+			orderTypeFilter = append(orderTypeFilter, strings.ToUpper(t))
+		}
+	}
 
-	rows, err := s.repo.GetVATAggregationRows(ctx, user.MerchantID, fromUTC, toUTC, channels, orderTypes)
+	rows, err := s.vatDeclarationRows(ctx, user.MerchantID, fromLocal, toExclusive, orderScope{sources: sources, orderTypes: orderTypeFilter})
 	if err != nil {
 		return nil, err
 	}
@@ -666,8 +771,9 @@ func (s *AccountingService) CalculateVAT(ctx context.Context, req VATCalculateRe
 		monthAgg := monthlyMap[row.Month]
 		if monthAgg == nil {
 			monthAgg = &VATMonthlyBreakdown{
-				Month:     row.Month,
-				VATByRate: map[string]int64{},
+				Month:       row.Month,
+				ClosingMode: row.ClosingMode,
+				VATByRate:   map[string]int64{},
 			}
 			monthlyMap[row.Month] = monthAgg
 		}
@@ -691,7 +797,7 @@ func (s *AccountingService) CalculateVAT(ctx context.Context, req VATCalculateRe
 		resp.MonthlyBreakdown = append(resp.MonthlyBreakdown, *monthlyMap[month])
 	}
 
-	for _, channel := range channels {
+	for _, channel := range channelKeys {
 		vat := channelVAT[channel]
 		resp.ByChannel[channel] = VATShare{
 			VAT:        vat,
@@ -769,35 +875,6 @@ func (s *AccountingService) ExportVATCSV(ctx context.Context, req VATCalculateRe
 	return buffer.Bytes(), filename, nil
 }
 
-func normalizeChannels(values []string) ([]string, error) {
-	allowed := map[string]struct{}{
-		"restaurant": {},
-		"scannorder": {},
-		"ubereats":   {},
-		"deliveroo":  {},
-	}
-
-	if len(values) == 0 {
-		return []string{"restaurant", "scannorder", "ubereats", "deliveroo"}, nil
-	}
-
-	seen := map[string]struct{}{}
-	out := make([]string, 0, len(values))
-	for _, raw := range values {
-		v := strings.ToLower(strings.TrimSpace(raw))
-		if _, ok := allowed[v]; !ok {
-			return nil, fmt.Errorf("invalid channel: %s", raw)
-		}
-		if _, exists := seen[v]; exists {
-			continue
-		}
-		seen[v] = struct{}{}
-		out = append(out, v)
-	}
-
-	return out, nil
-}
-
 func normalizeOrderTypes(values []string) ([]string, error) {
 	allowed := map[string]struct{}{
 		"in":        {},
@@ -853,8 +930,10 @@ func computePercentage(part, total int64) int64 {
 	return int64(math.Round((float64(part) * 100.0) / float64(total)))
 }
 
+// formatCSVAmount écrit un montant en centimes en euros (jusqu'au 2026-10-05,
+// le CSV affichait les centimes comme des euros : 12,34 € sortait « 1234.00 »).
 func formatCSVAmount(v int64) string {
-	return fmt.Sprintf("%.2f", float64(v))
+	return fmt.Sprintf("%.2f", float64(v)/100)
 }
 
 func formatPeriodFR(monthKey string) string {

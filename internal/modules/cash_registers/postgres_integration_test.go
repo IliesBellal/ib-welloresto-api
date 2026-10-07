@@ -92,6 +92,7 @@ func TestGetCashRegisterReport_Postgres(t *testing.T) {
 
 	cleanup := func() {
 		_, _ = db.ExecContext(ctx, `DELETE FROM payments WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM extra WHERE merchant_id = $1`, merchantID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM orderitems WHERE merchant_id = $1`, merchantID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM orders WHERE merchant_id = $1`, merchantID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM products WHERE merchant_Id = $1`, merchantID)
@@ -186,17 +187,32 @@ func TestGetCashRegisterReport_Postgres(t *testing.T) {
 	order2 := newOrder("TAKE_AWAY", "CLOSED", "ACCEPTED", 300)
 	order3 := newOrder("EAT_IN", "OPEN", "ACCEPTED", 100)   // exclue : state OPEN
 	order4 := newOrder("EAT_IN", "CLOSED", "CANCELED", 100) // exclue : brand_status CANCELED
+	order5 := newOrder("EAT_IN", "CLOSED", "DENIED", 100)   // exclue : refusée à l'arrivée (DenyOrderLocal)
+	order6 := newOrder("EAT_IN", "CLOSED", "denied", 0)     // exclue : même statut en minuscules (upper)
 
-	addItem := func(orderID, productID int64, qty, price int) {
+	addItem := func(orderID, productID int64, qty, price int) int64 {
 		t.Helper()
-		mustExec("orderitem",
+		var id int64
+		if err := db.QueryRowContext(ctx,
 			`INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, price)
-			 VALUES ($1, $2, $3, $4, $5)`, orderID, productID, merchantID, qty, price)
+			 VALUES ($1, $2, $3, $4, $5) RETURNING order_item_id`, orderID, productID, merchantID, qty, price).Scan(&id); err != nil {
+			t.Fatalf("seed orderitem: %v", err)
+		}
+		return id
 	}
-	addItem(order1, productA, 2, 1000)
+	// Commande 1 : 2 × (10 € + 1 € de supplément) = 22 € brut, 2 € de remise
+	// de caisse (payée « Réduction montant ») → 20 € net, réglés 20 € en
+	// espèces. Le supplément compte dans le chiffre (l'ancienne requête
+	// l'oubliait), la remise est déduite de la base TVA (phase 4).
+	order1Item := addItem(order1, productA, 2, 1000)
+	mustExec("extra",
+		`INSERT INTO extra (order_item_id, order_id, component_id, product_id, quantity, price, merchant_id)
+		 VALUES ($1, $2, 1, $3, 1, 100, $4)`, order1Item, order1, productA, merchantID)
 	addItem(order2, productB, 3, 500)
 	addItem(order3, productA, 1, 700) // ne doit pas compter
 	addItem(order4, productA, 1, 900) // ne doit pas compter
+	addItem(order5, productA, 1, 600) // ne doit pas compter
+	addItem(order6, productA, 1, 400) // ne doit pas compter
 
 	addPayment := func(orderID int64, mop string, amount int, cashRegisterID interface{}, enabled bool) {
 		t.Helper()
@@ -205,11 +221,13 @@ func TestGetCashRegisterReport_Postgres(t *testing.T) {
 			 VALUES ($1, $2, $3, $4, $5, $6, $7)`, merchantID, userID, orderID, amount, mop, cashRegisterID, enabled)
 	}
 	addPayment(order1, "ES", 2000, regIDStr, true)
+	addPayment(order1, "CURRENCY", 200, regIDStr, true) // remise de caisse
 	addPayment(order2, "CB", 1000, regIDStr, true)
 	addPayment(order2, "CB", 500, regIDStr, true)
 	addPayment(order1, "ES", 999, regIDStr, false) // exclue : enabled=false
 	addPayment(order1, "ES", 888, nil, true)       // exclue : pas de registre
 	addPayment(order4, "CB", 777, regIDStr, true)  // exclue : commande CANCELED
+	addPayment(order5, "CB", 700, regIDStr, false) // exclue : désactivé au refus (DisablePayments)
 
 	repo := NewCashRegisterRepository(db)
 
@@ -218,13 +236,13 @@ func TestGetCashRegisterReport_Postgres(t *testing.T) {
 		t.Fatalf("GetCashRegisterReport failed against postgres: %v", err)
 	}
 
-	// Frais de livraison (commande 2, 300) : HT et TVA arrondis
-	// indépendamment côté SQL (pas de HT = TTC - TVA), on reproduit donc le
-	// même arrondi ici plutôt que de le dériver, pour matcher exactement
-	// cashRegisterReportSQL quel que soit le taux effectif de tva_id=-1.
+	// Frais de livraison (commande 2, 300) : HT = TTC × 100 / (100 + taux),
+	// TVA = TTC − HT (computeRegisterVAT) — l'ancienne requête calculait
+	// TTC × (100 − taux) / 100. Taux effectif de tva_id=-1 : le nôtre, ou
+	// celui déjà en base.
 	const deliveryFeesTTC = 300
-	deliveryHT := int(math.Round(deliveryFeesTTC * (100 - deliveryRate) / 100))
-	deliveryTVAAmount := int(math.Round(deliveryFeesTTC * deliveryRate / 100))
+	deliveryHT := int(math.Round(deliveryFeesTTC * 100 / (100 + deliveryRate)))
+	deliveryTVAAmount := deliveryFeesTTC - deliveryHT
 
 	// -------- Totaux --------
 	// TTC est indépendant du taux de TVA appliqué (somme des montants bruts) ;
@@ -238,6 +256,10 @@ func TestGetCashRegisterReport_Postgres(t *testing.T) {
 	}
 	if report.CashFund != 10000 {
 		t.Errorf("cash_fund: got %v, want 10000", report.CashFund)
+	}
+	// Ventes brutes − remises = ventes nettes (TTC) : 2200 + 1500 + 300 − 200.
+	if report.GrossTTC != 2200+1500+deliveryFeesTTC || report.Discounts != 200 {
+		t.Errorf("brut / remises: got %d / %d, want %d / 200", report.GrossTTC, report.Discounts, 2200+1500+deliveryFeesTTC)
 	}
 
 	// -------- Ventilation TVA --------
@@ -285,7 +307,9 @@ func TestGetCashRegisterReport_Postgres(t *testing.T) {
 	for _, line := range report.MOP {
 		gotMOP[line.MOP] = line.Amount
 	}
-	wantMOP := map[string]int{"ES": 2000, "CB": 1500}
+	// Instantané de clôture : remise comprise (contrôle de dérive de l'export
+	// comptable) ; elle est écartée à l'affichage (détail TVA ci-dessous).
+	wantMOP := map[string]int{"ES": 2000, "CB": 1500, "CURRENCY": 200}
 	if len(gotMOP) != len(wantMOP) {
 		t.Errorf("MOP: got %v, want %v", gotMOP, wantMOP)
 	}
@@ -305,6 +329,14 @@ func TestGetCashRegisterReport_Postgres(t *testing.T) {
 	}
 	if details.HT != wantHT || details.TTC != wantTTC || details.TVA != wantTVA {
 		t.Errorf("details totaux: got HT=%d TTC=%d TVA=%d, want HT=%d TTC=%d TVA=%d", details.HT, details.TTC, details.TVA, wantHT, wantTTC, wantTVA)
+	}
+	if details.GrossTTC != report.GrossTTC || details.Discounts != 200 {
+		t.Errorf("details brut / remises: got %d / %d, want %d / 200", details.GrossTTC, details.Discounts, report.GrossTTC)
+	}
+	for _, line := range details.MOP {
+		if line.MOP == "CURRENCY" {
+			t.Errorf("details MOP: la remise ne doit pas figurer parmi les moyens de paiement (%+v)", details.MOP)
+		}
 	}
 
 	// Registre inexistant pour ce merchant → nil, nil
@@ -410,6 +442,7 @@ func TestCashRegisterLifecycle_Postgres(t *testing.T) {
 	addPayment("KIOSK", 700, nil)            // étape 3bis (NULL)
 	addPayment("KIOSK", 800, "KIOSK")        // étape 3bis (sentinelle KIOSK)
 	addPayment("CB", 200, nil)               // non rattaché : seul 'KIOSK' est requalifié
+	addPayment("CURRENCY", 300, regID)       // remise de caisse : hors encaissements à l'affichage
 
 	// --- CloseCashRegister ---
 	// Deux fermetures simultanées du même registre (double appui, deux
@@ -478,8 +511,8 @@ func TestCashRegisterLifecycle_Postgres(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM payments WHERE merchant_id = $1 AND cash_register_id = $2`, merchantID, regID).Scan(&requalified); err != nil {
 		t.Fatalf("count requalified payments: %v", err)
 	}
-	if requalified != 5 {
-		t.Fatalf("expected 5 payments attached to the register after close (CB sans caisse exclu), got %d", requalified)
+	if requalified != 6 {
+		t.Fatalf("expected 6 payments attached to the register after close (5 encaissements + 1 remise, CB sans caisse exclu), got %d", requalified)
 	}
 
 	var closed bool
@@ -529,7 +562,20 @@ func TestCashRegisterLifecycle_Postgres(t *testing.T) {
 		t.Fatalf("unexpected summary: %+v", cr)
 	}
 	if len(cr.Payments) != 5 || len(cr.Orders) != 1 {
-		t.Fatalf("expected 5 payments / 1 order in summary, got %d / %d", len(cr.Payments), len(cr.Orders))
+		t.Fatalf("expected 5 payments (remise exclue) / 1 order in summary, got %d / %d", len(cr.Payments), len(cr.Orders))
+	}
+	// Remise : hors du théorique (Items) et des paiements, totalisée à part.
+	if cr.Discounts != 300 {
+		t.Fatalf("summary discounts = %d, want 300", cr.Discounts)
+	}
+	for _, it := range cr.Items {
+		if it.MOP == "CURRENCY" {
+			t.Fatalf("la remise ne doit pas figurer dans le théorique du résumé: %+v", cr.Items)
+		}
+	}
+	var frozenDiscount int
+	if err := db.QueryRowContext(ctx, `SELECT COALESCE(SUM(amount), 0) FROM cash_registers_items WHERE cash_register_id = $1 AND mop = 'CURRENCY'`, regID).Scan(&frozenDiscount); err != nil || frozenDiscount != 300 {
+		t.Fatalf("instantané figé : remise = %d (%v), want 300 (inchangé, contrôle de dérive)", frozenDiscount, err)
 	}
 	if len(cr.Items) == 0 || len(cr.CustomItems) != 1 {
 		t.Fatalf("expected MOP items + 1 custom item, got %d / %d", len(cr.Items), len(cr.CustomItems))

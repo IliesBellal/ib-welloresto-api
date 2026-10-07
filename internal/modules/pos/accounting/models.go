@@ -5,16 +5,23 @@ package accounting
 // l'établissement (merchant.timezone) : premier jour inclus à 00:00:00 local,
 // dernier jour inclus jusqu'à 23:59:59 local. Ne pas envoyer de dates converties
 // en UTC, cela décalerait la période d'un jour.
+//
+// Channels filtre les commandes par canal (valeurs de orders.order_source :
+// WELLO_RESTO_POS, KIOSK, SCANNORDER, UBER_EATS, DELIVEROO) — uniquement pour
+// un établissement en clôture automatique ; vide = tous les canaux. Refusé en
+// clôture manuelle (rapport historique non configurable).
 type ExportAccountingRequest struct {
-	DateFrom string `json:"date_from"` // Format: YYYY-MM-DD (heure locale établissement)
-	DateTo   string `json:"date_to"`   // Format: YYYY-MM-DD (heure locale établissement)
+	DateFrom string   `json:"date_from"`          // Format: YYYY-MM-DD (heure locale établissement)
+	DateTo   string   `json:"date_to"`            // Format: YYYY-MM-DD (heure locale établissement)
+	Channels []string `json:"channels,omitempty"` // canaux (clôture automatique uniquement)
 }
 
 // ExportAccountingResponse structure de réponse
 type ExportAccountingResponse struct {
 	Status      string `json:"status"`
+	ExportID    int64  `json:"export_id,omitempty"` // id dans accounting_exports, pour retélécharger plus tard
 	Filename    string `json:"filename"`
-	DownloadURL string `json:"download_url"` // URL R2 pour télécharger le PDF
+	DownloadURL string `json:"download_url"` // lien signé (bucket R2 privé), valable une heure
 	Error       string `json:"error,omitempty"`
 }
 
@@ -67,7 +74,10 @@ type VATRateBreakdown struct {
 }
 
 type VATMonthlyBreakdown struct {
-	Month      string           `json:"month"`
+	Month string `json:"month"`
+	// ClosingMode : mode de clôture du mois (MANUAL : TVA sur les lignes,
+	// remises déduites ; AUTO : TVA ventilée à partir des encaissements).
+	ClosingMode string           `json:"closing_mode"`
 	RevenueHT  int64            `json:"revenue_ht"`
 	VATByRate  map[string]int64 `json:"vat_by_rate"`
 	VATTotal   int64            `json:"vat_total"`
@@ -85,14 +95,4 @@ type VATCalculateResponse struct {
 	MonthlyBreakdown []VATMonthlyBreakdown       `json:"monthly_breakdown"`
 	ByChannel        map[string]VATShare         `json:"by_channel"`
 	ByOrderType      map[string]VATShare         `json:"by_order_type"`
-}
-
-type VATAggregationRow struct {
-	Month     string
-	Channel   string
-	OrderType string
-	Rate      float64
-	TTCCents  int64
-	HTCents   int64
-	VATCents  int64
 }

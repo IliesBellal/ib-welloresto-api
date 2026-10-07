@@ -6,10 +6,13 @@ import (
 	"bytes"
 	"compress/zlib"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -83,6 +86,7 @@ func TestPOSAccountingReports_Postgres(t *testing.T) {
 			`DELETE FROM orders WHERE merchant_id = $1`,
 			`DELETE FROM products WHERE merchant_Id = $1`,
 			`DELETE FROM merchant_parameters WHERE merchant_id = $1`,
+			`DELETE FROM merchant_closing_modes WHERE merchant_id = $1`,
 			`DELETE FROM merchant WHERE id = $1`,
 		} {
 			_, _ = db.ExecContext(ctx, q, mid)
@@ -107,6 +111,14 @@ func TestPOSAccountingReports_Postgres(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `INSERT INTO merchant_parameters (merchant_id, last_menu_update, currency) VALUES ($1, now(), 'EUR')`, merchantID); err != nil {
 		t.Fatalf("seed merchant_parameters: %v", err)
 	}
+	// Clôture manuelle (comme les établissements existants) : la déclaration
+	// de TVA calcule alors sur les lignes — les commandes de contrôle de ce
+	// test ne sont pas toutes payées.
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO merchant_closing_modes (merchant_id, mode, effective_from, created_by)
+		VALUES ($1, 'MANUAL', DATE '1970-01-01', 'itest')`, merchantID); err != nil {
+		t.Fatalf("seed merchant_closing_modes: %v", err)
+	}
 
 	var tvaID int64
 	if err := db.QueryRowContext(ctx, `
@@ -124,8 +136,8 @@ func TestPOSAccountingReports_Postgres(t *testing.T) {
 
 	var orderID int64
 	if err := db.QueryRowContext(ctx, `
-		INSERT INTO orders (merchant_id, order_num, brand, brand_status, order_type, state, price, TVA, HT, created_by, delivery_fees)
-		VALUES ($1, 1, 'WELLO_RESTO', 'CLOSED', 'IN', 'CLOSED', 2200, 200, 2000, 'itest-acct-cashier', 0)
+		INSERT INTO orders (merchant_id, order_num, brand, brand_status, order_type, state, price, TVA, HT, created_by, delivery_fees, order_source)
+		VALUES ($1, 1, 'WELLO_RESTO', 'CLOSED', 'IN', 'CLOSED', 2200, 200, 2000, 'itest-acct-cashier', 0, 'WELLO_RESTO_POS')
 		RETURNING order_id`, merchantID).Scan(&orderID); err != nil {
 		t.Fatalf("seed order: %v", err)
 	}
@@ -167,6 +179,7 @@ func TestPOSAccountingReports_Postgres(t *testing.T) {
 
 	// --- accounting ---
 	acctRepo := NewAccountingRepository(db)
+	vatSvc := NewAccountingService(acctRepo, cash_registers.NewCashRegisterRepository(db))
 
 	header, err := acctRepo.GetMerchantHeader(ctx, merchantID)
 	if err != nil || header.MerchantName != "ITest Acct Merchant" || header.VATNumber == nil || *header.VATNumber != "FR123" {
@@ -196,19 +209,19 @@ func TestPOSAccountingReports_Postgres(t *testing.T) {
 		t.Fatalf("GetPaymentsData = (%+v, %v)", payRows, err)
 	}
 
-	nowUTC := time.Now().UTC()
-	vatRows, err := acctRepo.GetVATAggregationRows(ctx, merchantID, nowUTC, nowUTC, []string{"restaurant"}, []string{"in"})
+	// Déclaration de TVA (vat_declaration.go), filtre caisse + borne, sur place.
+	vatRows, err := vatSvc.vatDeclarationRows(ctx, merchantID, dayStart, dayEnd, orderScope{sources: []string{"WELLO_RESTO_POS", "KIOSK"}, orderTypes: []string{"IN"}})
 	if err != nil || len(vatRows) != 1 {
-		t.Fatalf("GetVATAggregationRows = (%+v, %v), want 1 ligne", vatRows, err)
+		t.Fatalf("vatDeclarationRows = (%+v, %v), want 1 ligne", vatRows, err)
 	}
 	r0 := vatRows[0]
-	if r0.Channel != "restaurant" || r0.OrderType != "in" || r0.TTCCents != 2200 || r0.HTCents != 2000 || r0.VATCents != 200 {
-		t.Fatalf("GetVATAggregationRows row = %+v", r0)
+	if r0.Channel != "WELLO_RESTO_POS" || r0.OrderType != "in" || r0.ClosingMode != "MANUAL" || r0.TTCCents != 2200 || r0.HTCents != 2000 || r0.VATCents != 200 {
+		t.Fatalf("vatDeclarationRows row = %+v", r0)
 	}
 	// filtre excluant -> aucune ligne
-	vatRows, err = acctRepo.GetVATAggregationRows(ctx, merchantID, nowUTC, nowUTC, []string{"ubereats"}, nil)
+	vatRows, err = vatSvc.vatDeclarationRows(ctx, merchantID, dayStart, dayEnd, orderScope{sources: []string{"UBER_EATS"}})
 	if err != nil || len(vatRows) != 0 {
-		t.Fatalf("GetVATAggregationRows(filtre ubereats) = (%+v, %v), want 0", vatRows, err)
+		t.Fatalf("vatDeclarationRows(filtre Uber Eats) = (%+v, %v), want 0", vatRows, err)
 	}
 
 	// --- bornes de journée en fuseau établissement ---
@@ -291,6 +304,145 @@ func TestPOSAccountingReports_Postgres(t *testing.T) {
 	sepPay, err := acctRepo.GetPaymentsData(ctx, merchantID, augEnd, sepEnd)
 	if err != nil || len(sepPay) != 0 {
 		t.Fatalf("GetPaymentsData(septembre 2025) = (%+v, %v), want 0 ligne", sepPay, err)
+	}
+
+	// --- commandes refusées (DENIED) ---
+	// Une commande refusée à l'arrivée est close (state='CLOSED') sans avoir
+	// été vendue : ni ses lignes ni ses frais de livraison ne doivent entrer
+	// dans la TVA, quelle que soit la casse du brand_status. Journée fixe
+	// (15/06/2025) pour ne pas interférer avec les assertions ci-dessus.
+	seedOrderWithStatus := func(label, brandStatus string, orderNum, price, deliveryFees int, creationUTC time.Time) int64 {
+		var id int64
+		if err := db.QueryRowContext(ctx, `
+			INSERT INTO orders (merchant_id, order_num, brand, brand_status, order_type, state, price, TVA, HT, created_by, delivery_fees, creation_date)
+			VALUES ($1, $2, 'WELLO_RESTO', $3, 'IN', 'CLOSED', $4, 0, 0, 'itest-acct-cashier', $5, $6)
+			RETURNING order_id`, merchantID, orderNum, brandStatus, price+deliveryFees, deliveryFees, creationUTC).Scan(&id); err != nil {
+			t.Fatalf("seed order %s: %v", label, err)
+		}
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, price)
+			VALUES ($1, $2, $3, 1, $4)`, id, productID, merchantID, price); err != nil {
+			t.Fatalf("seed orderitem %s: %v", label, err)
+		}
+		return id
+	}
+	deniedDayUTC := time.Date(2025, 6, 15, 10, 0, 0, 0, time.UTC)
+	controlOrder := seedOrderWithStatus("témoin", "CLOSED", 4, 700, 0, deniedDayUTC)
+	seedOrderWithStatus("DENIED", "DENIED", 5, 1000, 500, deniedDayUTC)
+	lowercaseDenied := seedOrderWithStatus("denied (minuscules)", "denied", 6, 300, 0, deniedDayUTC)
+	// Paiement actif sur la commande refusée : normalement désactivé au refus
+	// (DisablePayments), laissé actif ici pour vérifier que le rapport
+	// journalier exclut aussi les paiements au niveau de la commande.
+	for _, p := range []struct {
+		orderID int64
+		amount  int
+	}{{controlOrder, 700}, {lowercaseDenied, 300}} {
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO payments (merchant_id, user_id, order_id, amount, mop, enabled)
+			VALUES ($1, 'itest-acct-cashier', $2, $3, 'ITESTMOP', true)`, merchantID, p.orderID, p.amount); err != nil {
+			t.Fatalf("seed payment (order %d): %v", p.orderID, err)
+		}
+	}
+
+	deniedDayStart := time.Date(2025, 6, 15, 0, 0, 0, 0, paris)
+	deniedRows, err := acctRepo.GetTVAData(ctx, merchantID, deniedDayStart, deniedDayStart.AddDate(0, 0, 1))
+	if err != nil {
+		t.Fatalf("GetTVAData(15/06/2025) = %v", err)
+	}
+	if got := sumTTC(deniedRows); got != 700 {
+		t.Fatalf("TTC 15/06/2025 = %v, want 700 (commande témoin seule, DENIED/denied exclues)", got)
+	}
+
+	deniedVAT, err := vatSvc.vatDeclarationRows(ctx, merchantID, deniedDayStart, deniedDayStart.AddDate(0, 0, 1), orderScope{})
+	if err != nil {
+		t.Fatalf("vatDeclarationRows(15/06/2025) = %v", err)
+	}
+	var deniedVATTTC int64
+	for _, row := range deniedVAT {
+		deniedVATTTC += row.TTCCents
+	}
+	if deniedVATTTC != 700 {
+		t.Fatalf("vatDeclarationRows TTC 15/06/2025 = %d, want 700 (commande témoin seule, DENIED/denied exclues) — lignes : %+v", deniedVATTTC, deniedVAT)
+	}
+
+	// Rapport TVA journalier du back-office (pos/reports) : même exclusion,
+	// côté TVA comme côté paiements.
+	deniedRepRepo := reports.NewReportsRepository(db)
+	deniedDayReports, err := deniedRepRepo.GetTVAReportData(ctx, merchantID, "2025-06-15", "2025-06-15")
+	if err != nil || len(deniedDayReports) != 1 || deniedDayReports[0].TTCSum != 700 {
+		t.Fatalf("GetTVAReportData(15/06/2025) = (%+v, %v), want 1 jour à TTC 700 (DENIED/denied exclues)", deniedDayReports, err)
+	}
+	deniedPayReports, err := deniedRepRepo.GetPaymentsReportData(ctx, merchantID, "2025-06-15", "2025-06-15")
+	if err != nil || len(deniedPayReports) != 1 || len(deniedPayReports[0].Payments) != 1 || deniedPayReports[0].Payments[0].Amount != 700 {
+		t.Fatalf("GetPaymentsReportData(15/06/2025) = (%+v, %v), want 1 paiement à 700 (paiement de la commande denied exclu)", deniedPayReports, err)
+	}
+
+	// --- TVA figée sur la ligne (migration 164) ---
+	// Une ligne dont la catégorie figée à la vente diffère de celle du produit
+	// aujourd'hui doit être comptée avec sa catégorie figée, de même pour le
+	// taux figé des frais de livraison. Journée fixe (15/05/2025).
+	var tva20ID int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO tva_categories (delivery_type, tva_title, tva_desc, tva_rate)
+		VALUES ('0', 'itest-acct-tva20', 'd', 20) RETURNING tva_id`).Scan(&tva20ID); err != nil {
+		t.Fatalf("seed tva_categories tva20: %v", err)
+	}
+	frozenDayUTC := time.Date(2025, 5, 15, 10, 0, 0, 0, time.UTC)
+	frozenOrder := seedOrderWithStatus("TVA figée", "CLOSED", 7, 900, 200, frozenDayUTC)
+	if _, err := db.ExecContext(ctx, `UPDATE orderitems SET tva_id = $1, tva_rate = 20 WHERE order_id = $2`, tva20ID, frozenOrder); err != nil {
+		t.Fatalf("freeze line: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE orders SET delivery_fees_tva_rate = 5.5 WHERE order_id = $1`, frozenOrder); err != nil {
+		t.Fatalf("freeze fees rate: %v", err)
+	}
+	var feesCategoryExists bool
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM tva_categories WHERE tva_id = -1)`).Scan(&feesCategoryExists); err != nil {
+		t.Fatalf("check category -1: %v", err)
+	}
+
+	frozenDayStart := time.Date(2025, 5, 15, 0, 0, 0, 0, paris)
+	frozenRows, err := acctRepo.GetTVAData(ctx, merchantID, frozenDayStart, frozenDayStart.AddDate(0, 0, 1))
+	if err != nil {
+		t.Fatalf("GetTVAData(15/05/2025) = %v", err)
+	}
+	byTitle := map[string]TVARow{}
+	for _, row := range frozenRows {
+		byTitle[row.TVATitle] = row
+	}
+	if got := byTitle["itest-acct-tva20"]; got.TTC != 900 || got.Rate != 20 {
+		t.Fatalf("GetTVAData(15/05/2025) ligne figée = %+v, want itest-acct-tva20 TTC 900 taux 20 (lignes : %+v)", got, frozenRows)
+	}
+	if _, found := byTitle["itest-acct-tva10"]; found {
+		t.Fatalf("GetTVAData(15/05/2025) : la catégorie actuelle du produit ne doit plus apparaître (lignes : %+v)", frozenRows)
+	}
+
+	frozenVAT, err := vatSvc.vatDeclarationRows(ctx, merchantID, frozenDayStart, frozenDayStart.AddDate(0, 0, 1), orderScope{})
+	if err != nil {
+		t.Fatalf("vatDeclarationRows(15/05/2025) = %v", err)
+	}
+	ttcByRate := map[float64]int64{}
+	for _, row := range frozenVAT {
+		ttcByRate[row.Rate] += row.TTCCents
+	}
+	if ttcByRate[20] != 900 || ttcByRate[10] != 0 {
+		t.Fatalf("vatDeclarationRows(15/05/2025) TTC par taux = %v, want 900 à 20 %% et rien à 10 %%", ttcByRate)
+	}
+	if feesCategoryExists && ttcByRate[float64(float32(5.5))] != 200 {
+		t.Fatalf("vatDeclarationRows(15/05/2025) frais de livraison = %v, want 200 au taux figé 5,5 %%", ttcByRate)
+	}
+
+	frozenDayReports, err := reports.NewReportsRepository(db).GetTVAReportData(ctx, merchantID, "2025-05-15", "2025-05-15")
+	if err != nil || len(frozenDayReports) != 1 {
+		t.Fatalf("GetTVAReportData(15/05/2025) = (%+v, %v), want 1 jour", frozenDayReports, err)
+	}
+	var reportFrozenTTC int64
+	for _, item := range frozenDayReports[0].VATData {
+		if item.TVATitle == "itest-acct-tva20" {
+			reportFrozenTTC += item.TTC
+		}
+	}
+	if reportFrozenTTC != 900 {
+		t.Fatalf("GetTVAReportData(15/05/2025) TTC itest-acct-tva20 = %d, want 900 (lignes : %+v)", reportFrozenTTC, frozenDayReports[0].VATData)
 	}
 
 	// --- reports ---
@@ -494,9 +646,9 @@ func TestGetRealPaymentsData_Postgres(t *testing.T) {
 	// (a) suite : le PDF doit afficher le message placeholder plutôt qu'un
 	// tableau vide silencieux — assertion sur le rendu réel (stream PDF
 	// décompressé), pas seulement sur les données en amont.
-	svc := NewAccountingService(acctRepo)
+	svc := NewAccountingService(acctRepo, cash_registers.NewCashRegisterRepository(db))
 	header := &MerchantHeader{MerchantName: "ITest Real Merchant", SIRET: "000", Currency: "EUR", Timezone: "Europe/Paris"}
-	emptyPDF, err := svc.buildPDFReport(2025, 6, header, nil, realNone, periodStart, periodEnd.Add(-time.Second), "Europe/Paris")
+	emptyPDF, err := svc.buildPDFReport(2025, 6, header, nil, realNone, DiscountSummary{}, "Aucune clôture de caisse validée sur cette période.", periodStart, periodEnd.Add(-time.Second), "Europe/Paris")
 	if err != nil {
 		t.Fatalf("buildPDFReport (aucun paiement réel): %v", err)
 	}
@@ -598,7 +750,7 @@ func TestGetRealPaymentsData_Postgres(t *testing.T) {
 
 	// (a) contrepreuve : avec du réel présent, le placeholder ne doit pas
 	// apparaître et les montants doivent être lisibles dans le rendu.
-	filledPDF, err := svc.buildPDFReport(2025, 6, header, nil, realA, periodStart, periodEnd.Add(-time.Second), "Europe/Paris")
+	filledPDF, err := svc.buildPDFReport(2025, 6, header, nil, realA, DiscountSummary{}, "Aucune clôture de caisse validée sur cette période.", periodStart, periodEnd.Add(-time.Second), "Europe/Paris")
 	if err != nil {
 		t.Fatalf("buildPDFReport (avec réel): %v", err)
 	}
@@ -660,7 +812,7 @@ func TestExportAccountingReport_Postgres(t *testing.T) {
 
 	acctRepo := NewAccountingRepository(db)
 	crRepo := cash_registers.NewCashRegisterRepository(db)
-	svc := NewAccountingService(acctRepo)
+	svc := NewAccountingService(acctRepo, crRepo)
 
 	paris, err := time.LoadLocation("Europe/Paris")
 	if err != nil {
@@ -678,6 +830,8 @@ func TestExportAccountingReport_Postgres(t *testing.T) {
 		_, _ = db.ExecContext(ctx, `DELETE FROM cash_registers WHERE merchant_id = $1`, merchantID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM cash_desks WHERE merchant_id = $1`, merchantID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM merchant_parameters WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM merchant_closing_modes WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM accounting_exports WHERE merchant_id = $1`, merchantID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM merchant WHERE id = $1`, merchantID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM users WHERE user_id = $1`, userID)
 	}
@@ -694,6 +848,13 @@ func TestExportAccountingReport_Postgres(t *testing.T) {
 
 	if _, err := db.ExecContext(ctx, `INSERT INTO merchant_parameters (merchant_id, last_menu_update, currency) VALUES ($1, now(), 'EUR')`, merchantID); err != nil {
 		t.Fatalf("seed merchant_parameters: %v", err)
+	}
+	// Ce test vérifie le réel du mode de clôture manuel : un établissement neuf
+	// serait en clôture automatique par défaut (migration 165).
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO merchant_closing_modes (merchant_id, mode, effective_from, created_by)
+		VALUES ($1, 'MANUAL', DATE '1970-01-01', 'itest')`, merchantID); err != nil {
+		t.Fatalf("seed merchant_closing_modes: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO users (user_id, name, first_name, last_name, password, email, token)
@@ -782,7 +943,7 @@ func TestExportAccountingReport_Postgres(t *testing.T) {
 
 	authedCtx := middleware.WithUser(ctx, &auth.UserLoginRow{UserID: userID, MerchantID: merchantID})
 
-	resp, err := svc.ExportAccountingReport(authedCtx, "itest-token", "2025-06-01", "2025-06-30", r2Client)
+	resp, err := svc.ExportAccountingReport(authedCtx, "itest-token", "2025-06-01", "2025-06-30", nil, r2Client)
 	if err != nil {
 		t.Fatalf("ExportAccountingReport error: %v", err)
 	}
@@ -799,5 +960,35 @@ func TestExportAccountingReport_Postgres(t *testing.T) {
 	}
 	if !bytes.Contains([]byte(text), []byte("ITESTE2E")) || !bytes.Contains([]byte(text), []byte("6.50")) {
 		t.Fatalf("PDF généré par ExportAccountingReport : libellé/montant ITESTE2E=650 absents du rendu (%d octets de texte extrait) — le call site service.go semble ne pas utiliser GetTrustedEnclosedRegisterIDs/GetRealPaymentsData", len(text))
+	}
+
+	// Archivage (migration 166) : export référencé, nom unique horodaté,
+	// empreinte du PDF déposé, mode de la période ; un second export de la
+	// même période ne réécrit pas le premier.
+	if resp.ExportID == 0 || !strings.HasPrefix(resp.Filename, "WR_rapport_comptable_20250601_20250630_") || !strings.HasSuffix(uploadedPath, resp.Filename) {
+		t.Fatalf("export archivé : id=%d filename=%q path=%q", resp.ExportID, resp.Filename, uploadedPath)
+	}
+	var storedSHA, storedMode string
+	if err := db.QueryRowContext(ctx, `SELECT sha256, closing_mode FROM accounting_exports WHERE id = $1 AND merchant_id = $2`, resp.ExportID, merchantID).Scan(&storedSHA, &storedMode); err != nil {
+		t.Fatalf("lecture accounting_exports: %v", err)
+	}
+	digest := sha256.Sum256(uploadedPDF)
+	if storedSHA != hex.EncodeToString(digest[:]) || storedMode != "MANUAL" {
+		t.Fatalf("accounting_exports : sha256=%s mode=%s, want l'empreinte du PDF déposé et MANUAL", storedSHA, storedMode)
+	}
+	time.Sleep(1100 * time.Millisecond) // horodatage du nom à la seconde
+	resp2, err := svc.ExportAccountingReport(authedCtx, "itest-token", "2025-06-01", "2025-06-30", nil, r2Client)
+	if err != nil || resp2.Status != "1" || resp2.ExportID == resp.ExportID || resp2.Filename == resp.Filename {
+		t.Fatalf("second export = (%+v, %v), want un nouvel export distinct de %d / %s", resp2, err, resp.ExportID, resp.Filename)
+	}
+	listed, err := acctRepo.ListAccountingExports(ctx, merchantID)
+	if err != nil || len(listed) != 2 || listed[0].ID != resp2.ExportID {
+		t.Fatalf("ListAccountingExports = (%+v, %v), want les 2 exports, le plus récent en premier", listed, err)
+	}
+
+	// Le filtre par canal est refusé en clôture manuelle.
+	refused, err := svc.ExportAccountingReport(authedCtx, "itest-token", "2025-06-01", "2025-06-30", []string{"KIOSK"}, r2Client)
+	if err != nil || refused.Status != "0" {
+		t.Fatalf("export filtré en clôture manuelle = (%+v, %v), want refus", refused, err)
 	}
 }

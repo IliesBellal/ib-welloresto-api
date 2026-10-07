@@ -9,6 +9,7 @@ import (
 	"time"
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/logger"
+	"welloresto-api/internal/models"
 )
 
 // acctCastChar caste une expression en texte selon le dialecte (jointures
@@ -175,41 +176,113 @@ func (r *AccountingRepository) IsMonthClosed(ctx context.Context, merchantID str
 	return true, nil
 }
 
-// GetTVAData récupère les données de TVA groupées par taux sur [from, toExclusive[.
-// Les deux bornes sont des instants absolus (déjà résolus dans le fuseau de
-// l'établissement par l'appelant) ; la borne haute est exclusive afin d'inclure
-// la dernière seconde du dernier jour et ses fractions.
+// GetTVAData récupère les données de TVA groupées par taux sur [from, toExclusive[,
+// dans le périmètre du mode de clôture manuel, catégories affichées seulement
+// et sans correction des remises (l'export les applique via buildManualVAT).
+// Délègue à GetOrderVATLines. Les deux bornes sont des instants absolus (déjà
+// résolus dans le fuseau de l'établissement par l'appelant) ; la borne haute
+// est exclusive afin d'inclure la dernière seconde du dernier jour et ses
+// fractions. Frais de livraison nuls ignorés (plus de ligne « frais » à 0 €).
 //
-// L'exclusion brand_status couvre aussi DELIVERY_CANCELED/DELIVERY_FAILED en
-// plus de DELETED/CANCELED : terminalizeDeliveryStop (delivery_sessions)
-// laisse normalement orders.state='OPEN' après ces transitions (commande
-// re-dispatchable), mais une commande peut être close par un autre chemin
-// sans jamais avoir été payée en gardant ce brand_status — cas réel trouvé
-// en prod (Croq'Ô'Pizzas, commande #33026, TVA comptée sans encaissement
-// correspondant ; cf. docs/diagnostic-rapport-comptable-croq-o-pizzas.sql).
+// L'exclusion brand_status (models.VoidOrderBrandStatusesSQL) couvre aussi
+// DELIVERY_CANCELED/DELIVERY_FAILED en plus de DELETED/CANCELED :
+// terminalizeDeliveryStop (delivery_sessions) laisse normalement
+// orders.state='OPEN' après ces transitions (commande re-dispatchable), mais
+// une commande peut être close par un autre chemin sans jamais avoir été payée
+// en gardant ce brand_status — cas réel trouvé en prod (Croq'Ô'Pizzas,
+// commande #33026, TVA comptée sans encaissement correspondant ; cf.
+// docs/diagnostic-rapport-comptable-croq-o-pizzas.sql). Et DENIED : une
+// commande refusée à l'arrivée est close (state='CLOSED') sans avoir été
+// vendue, ses paiements désactivés — cf. docs/decisions.md, « Rapport
+// comptable — commandes refusées (DENIED) exclues de la TVA ».
 func (r *AccountingRepository) GetTVAData(ctx context.Context, merchantID string, from, toExclusive time.Time) ([]TVARow, error) {
+	lines, err := r.GetOrderVATLines(ctx, merchantID, from, toExclusive, manualOrderScope())
+	if err != nil {
+		return nil, err
+	}
+	totals := map[vatBucketKey]int64{}
+	for _, l := range lines {
+		if l.Reported {
+			totals[vatBucketKey{title: l.Title, rate: l.Rate, reported: true}] += l.TTC
+		}
+	}
+	return vatRowsFromTotals(totals), nil
+}
+
+// accountingOrderSources liste les canaux de commande filtrables en clôture
+// automatique : les valeurs de orders.order_source (contrainte
+// chk_orders_order_source, migration 114) — caisse, borne, ScanNOrder, Uber
+// Eats, Deliveroo.
+var accountingOrderSources = []string{"WELLO_RESTO_POS", "KIOSK", "SCANNORDER", models.BrandUberEats, models.BrandDeliveroo}
+
+// orderScope est le périmètre de commandes d'un export comptable, en plus des
+// filtres communs (établissement, période sur la date de création, commande
+// close et vendue).
+type orderScope struct {
+	// manual : périmètre historique du mode de clôture manuel, inchangé —
+	// commandes WELLO_RESTO hors ScanNOrder (la borne et la caisse y entrent).
+	manual bool
+	// sources : canaux retenus (orders.order_source) ; vide = tous les canaux,
+	// y compris les rares commandes sans canal connu. Ignoré en manuel.
+	sources []string
+	// orderTypes : types de commande retenus (orders.order_type, en
+	// majuscules : IN, TAKE_AWAY, DELIVERY) ; vide = tous. Utilisé par la
+	// déclaration de TVA, quel que soit le mode.
+	orderTypes []string
+}
+
+func manualOrderScope() orderScope { return orderScope{manual: true} }
+
+// predicate renvoie le fragment `AND ...` du périmètre pour l'alias de orders
+// donné, et ses arguments.
+func (s orderScope) predicate(alias string) (string, []interface{}) {
+	var b strings.Builder
+	var args []interface{}
+	if s.manual {
+		b.WriteString(" AND " + alias + ".brand = 'WELLO_RESTO' AND " + alias + ".created_by NOT IN ('-1', 'SCANNORDER')")
+	} else if len(s.sources) > 0 {
+		b.WriteString(" AND " + alias + ".order_source = ANY(?)")
+		args = append(args, s.sources)
+	}
+	if len(s.orderTypes) > 0 {
+		b.WriteString(" AND " + alias + ".order_type = ANY(?)")
+		args = append(args, s.orderTypes)
+	}
+	return b.String(), args
+}
+
+// GetOrderVATLines renvoie, pour chaque commande du périmètre sur
+// [from, toExclusive[, ses parts TTC par catégorie de TVA : chaque ligne
+// (prix + suppléments) × quantité, et les frais de livraison non nuls à leur
+// propre taux. Catégorie et taux lus en priorité sur la ligne (TVA figée à la
+// vente, migration 164). Commandes closes uniquement, hors commandes jamais
+// vendues (models.VoidOrderBrandStatusesSQL : refusées, annulées, livraison
+// avortée), ancrées sur leur date de création. Les catégories masquées du
+// rapport (show_in_report = false) sont renvoyées avec Reported = false : le
+// mode manuel les écarte de l'affichage, le mode automatique en a besoin pour
+// que chaque paiement tombe dans un taux.
+func (r *AccountingRepository) GetOrderVATLines(ctx context.Context, merchantID string, from, toExclusive time.Time, scope orderScope) ([]orderVATLine, error) {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
 	fromParam := acctUTCParam(from)
 	toParam := acctUTCParam(toExclusive)
+	itemsScope, itemsScopeArgs := scope.predicate("o")
+	feesScope, feesScopeArgs := scope.predicate("o_fees")
 
-	// IFNULL est MySQL-only -> COALESCE (valide dans les deux dialectes)
 	sqlQuery := `
 		SELECT
+			o.order_id,
 			tva.tva_title AS title,
-			tva.tva_rate AS rate,
-			((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity) AS TTC
+			` + models.OrderItemTVARateSQL("oi", "tva") + ` AS rate,
+			tva.show_in_report AS reported,
+			COALESCE(o.order_source, '') AS source,
+			LOWER(COALESCE(o.order_type, '')) AS order_type,
+			((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity) AS ttc
 		FROM orders o
 		INNER JOIN orderitems oi ON oi.order_id = o.order_id
 		INNER JOIN products p ON p.product_id = oi.product_id
-		INNER JOIN tva_categories tva ON tva.tva_id = (
-			CASE 
-				WHEN o.order_type = 'DELIVERY' THEN p.tva_delivery_id
-				WHEN o.order_type = 'TAKE_AWAY' THEN p.tva_take_away_id
-				ELSE p.tva_in_id
-			END
-		)
+		INNER JOIN tva_categories tva ON tva.tva_id = ` + models.OrderItemTVAIDSQL("oi", "o", "p") + `
 		LEFT JOIN (
 			SELECT order_item_id, SUM(extra.price) AS extra_price
 			FROM extra
@@ -219,85 +292,100 @@ func (r *AccountingRepository) GetTVAData(ctx context.Context, merchantID string
 		  AND o.creation_date < ?
 		  AND o.merchant_id = ?
 		  AND o.state = 'CLOSED'
-		  AND o.brand = 'WELLO_RESTO'
-		  AND o.brand_status NOT IN ('DELETED', 'CANCELED', 'DELIVERY_CANCELED', 'DELIVERY_FAILED')
-		  AND o.created_by NOT IN ('-1', 'SCANNORDER')
-		  AND tva.show_in_report
+		  AND upper(o.brand_status) NOT IN ` + models.VoidOrderBrandStatusesSQL + itemsScope + `
 		UNION ALL
 		SELECT
+			o_fees.order_id,
 			tva_fees.tva_title AS title,
-			tva_fees.tva_rate AS rate,
-			o_fees.delivery_fees AS TTC
+			` + models.DeliveryFeesTVARateSQL("o_fees", "tva_fees") + ` AS rate,
+			TRUE AS reported,
+			COALESCE(o_fees.order_source, '') AS source,
+			LOWER(COALESCE(o_fees.order_type, '')) AS order_type,
+			o_fees.delivery_fees AS ttc
 		FROM orders o_fees
-		INNER JOIN tva_categories tva_fees ON tva_fees.tva_id = '-1'
+		INNER JOIN tva_categories tva_fees ON tva_fees.tva_id = -1
 		WHERE o_fees.creation_date >= ?
 		  AND o_fees.creation_date < ?
 		  AND o_fees.merchant_id = ?
-		  AND o_fees.brand = 'WELLO_RESTO'
-		  AND o_fees.created_by NOT IN ('-1', 'SCANNORDER')
-		  AND o_fees.brand_status NOT IN ('DELETED', 'CANCELED', 'DELIVERY_CANCELED', 'DELIVERY_FAILED')
 		  AND o_fees.state = 'CLOSED'
+		  AND o_fees.delivery_fees <> 0
+		  AND upper(o_fees.brand_status) NOT IN ` + models.VoidOrderBrandStatusesSQL + feesScope + `
 	`
 
-	rows, err := db.QueryContext(ctx, sqlQuery, fromParam, toParam, merchantID, fromParam, toParam, merchantID)
+	args := []interface{}{fromParam, toParam, merchantID}
+	args = append(args, itemsScopeArgs...)
+	args = append(args, fromParam, toParam, merchantID)
+	args = append(args, feesScopeArgs...)
+
+	rows, err := db.QueryContext(ctx, sqlQuery, args...)
 	if err != nil {
-		log.Error(fmt.Sprintf("Error fetching TVA data: %v", err))
+		log.Error(fmt.Sprintf("Error fetching order VAT lines: %v", err))
 		return nil, err
 	}
 	defer rows.Close()
 
-	// Map pour regrouper par titre TVA
-	tvaTotals := make(map[string]*TVARow)
-
+	var out []orderVATLine
 	for rows.Next() {
-		var title string
-		var rate float64
-		var ttcCent int64
-
-		if err := rows.Scan(&title, &rate, &ttcCent); err != nil {
-			log.Error(fmt.Sprintf("Error scanning TVA row: %v", err))
+		var l orderVATLine
+		if err := rows.Scan(&l.OrderID, &l.Title, &l.Rate, &l.Reported, &l.Source, &l.OrderType, &l.TTC); err != nil {
+			log.Error(fmt.Sprintf("Error scanning order VAT line: %v", err))
 			return nil, err
 		}
-
-		if _, exists := tvaTotals[title]; !exists {
-			tvaTotals[title] = &TVARow{
-				TVATitle: title,
-				Rate:     rate,
-				TTC:      0,
-				HT:       0,
-				TVA:      0,
-			}
-		}
-
-		tvaTotals[title].TTC += float64(ttcCent)
+		out = append(out, l)
 	}
-
-	if err = rows.Err(); err != nil {
-		log.Error(fmt.Sprintf("Error iterating TVA rows: %v", err))
+	if err := rows.Err(); err != nil {
+		log.Error(fmt.Sprintf("Error iterating order VAT lines: %v", err))
 		return nil, err
 	}
+	return out, nil
+}
 
-	// Conversion TTC → HT + TVA
-	var result []TVARow
-	for _, row := range tvaTotals {
-		rate := row.Rate
+// GetOrderPayments renvoie, pour chaque commande du périmètre (mêmes filtres
+// que GetOrderVATLines), le total de chaque moyen de paiement actif, avec son
+// libellé FR (repli sur le code brut quand le libellé manque : un moyen de
+// paiement sans libellé ne disparaît pas silencieusement).
+func (r *AccountingRepository) GetOrderPayments(ctx context.Context, merchantID string, from, toExclusive time.Time, scope orderScope) ([]orderPaymentLine, error) {
+	db := dbx.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
-		var ht, tva float64
-		if rate == 0 {
-			ht = row.TTC
-			tva = 0
-		} else {
-			ht = row.TTC * (100.0 / (100.0 + rate))
-			tva = row.TTC - ht
-		}
+	scopeSQL, scopeArgs := scope.predicate("o")
+	sqlQuery := `
+		SELECT o.order_id, p.mop, COALESCE(NULLIF(l.label, ''), p.mop) AS label, SUM(p.amount) AS amount
+		FROM payments p
+		INNER JOIN orders o ON o.order_id = p.order_id
+		LEFT JOIN labels l ON l.label_type = 'mop' AND l.label_value = p.mop AND l.lang = 'FR'
+		WHERE p.enabled = TRUE
+		  AND o.creation_date >= ?
+		  AND o.creation_date < ?
+		  AND o.merchant_id = ?
+		  AND o.state = 'CLOSED'
+		  AND upper(o.brand_status) NOT IN ` + models.VoidOrderBrandStatusesSQL + scopeSQL + `
+		GROUP BY o.order_id, p.mop, COALESCE(NULLIF(l.label, ''), p.mop)
+	`
+	args := []interface{}{acctUTCParam(from), acctUTCParam(toExclusive), merchantID}
+	args = append(args, scopeArgs...)
 
-		row.HT = ht
-		row.TVA = tva
-
-		result = append(result, *row)
+	rows, err := db.QueryContext(ctx, sqlQuery, args...)
+	if err != nil {
+		log.Error(fmt.Sprintf("Error fetching order payments: %v", err))
+		return nil, err
 	}
+	defer rows.Close()
 
-	return result, nil
+	var out []orderPaymentLine
+	for rows.Next() {
+		var p orderPaymentLine
+		if err := rows.Scan(&p.OrderID, &p.MOP, &p.Label, &p.Amount); err != nil {
+			log.Error(fmt.Sprintf("Error scanning order payment: %v", err))
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		log.Error(fmt.Sprintf("Error iterating order payments: %v", err))
+		return nil, err
+	}
+	return out, nil
 }
 
 // GetPaymentsData récupère les données de paiements groupées par moyen sur
@@ -460,6 +548,11 @@ func (r *AccountingRepository) GetTrustedEnclosedRegisterIDs(ctx context.Context
 	// Recalcul live des mêmes paiements, mêmes filtres que
 	// cashRegisterReportMOPSQL (cash_registers/repository.go) — sans filtre
 	// canal/brand, pour rester comparable à ce qui a produit l'instantané.
+	// Volontairement PAS models.VoidOrderBrandStatusesSQL : ce filtre doit
+	// rester identique à celui qui a calculé les instantanés déjà figés, sinon
+	// tout registre enclosed historique deviendrait "en dérive". Les paiements
+	// d'une commande DENIED sont de toute façon désactivés au refus
+	// (DisablePayments), donc déjà exclus par p.enabled.
 	liveRows, err := db.QueryContext(ctx, `
 		SELECT `+acctCastChar("p.cash_register_id")+` AS cash_register_id, p.mop, SUM(p.amount) AS amount
 		FROM orders o
@@ -612,212 +705,4 @@ func (r *AccountingRepository) GetRealPaymentsData(ctx context.Context, register
 	}
 
 	return result, nil
-}
-
-// interpolateQuery replaces query placeholders with actual parameter values for logging/debugging
-func interpolateQuery(query string, args []interface{}) string {
-	argIndex := 0
-	result := ""
-	for i := 0; i < len(query); i++ {
-		if query[i] == '?' && argIndex < len(args) {
-			arg := args[argIndex]
-			argIndex++
-			switch v := arg.(type) {
-			case string:
-				result += "'" + strings.ReplaceAll(v, "'", "''") + "'"
-			case int, int64:
-				result += fmt.Sprintf("%v", v)
-			case float64:
-				result += strconv.FormatFloat(v, 'f', -1, 64)
-			case nil:
-				result += "NULL"
-			default:
-				result += fmt.Sprintf("'%v'", v)
-			}
-		} else {
-			result += string(query[i])
-		}
-	}
-	return result
-}
-
-func (r *AccountingRepository) GetVATAggregationRows(
-	ctx context.Context,
-	merchantID string,
-	fromUTC time.Time,
-	toUTC time.Time,
-	channels []string,
-	orderTypes []string,
-) ([]VATAggregationRow, error) {
-	db := dbx.GetDB(ctx, r.database)
-	log := logger.FromContext(ctx)
-
-	start := fromUTC.Format("2006-01-02")
-	end := toUTC.Format("2006-01-02")
-
-	channelClauseItems, channelArgsItems := buildChannelFilterClause("o", channels)
-	orderTypeClauseItems, orderTypeArgsItems := buildOrderTypeFilterClause("o", orderTypes)
-	channelClauseFees, channelArgsFees := buildChannelFilterClause("o_fees", channels)
-	orderTypeClauseFees, orderTypeArgsFees := buildOrderTypeFilterClause("o_fees", orderTypes)
-
-	baseArgs := []interface{}{start, end, merchantID}
-	itemArgs := append([]interface{}{}, baseArgs...)
-	itemArgs = append(itemArgs, channelArgsItems...)
-	itemArgs = append(itemArgs, orderTypeArgsItems...)
-
-	feesArgs := append([]interface{}{}, baseArgs...)
-	feesArgs = append(feesArgs, channelArgsFees...)
-	feesArgs = append(feesArgs, orderTypeArgsFees...)
-
-	args := append(itemArgs, feesArgs...)
-
-	// Fragments par dialecte : DATE_FORMAT (clé de mois + bornes de journée)
-	// et ROUND scannable en int64 (cf. helpers en tête de fichier).
-	itemsTTC := "((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity)"
-	itemsHT := acctRoundToInt(itemsTTC + " * 100.0 / (100.0 + tva.tva_rate)")
-	feesHT := acctRoundToInt("o_fees.delivery_fees * 100.0 / (100.0 + tva_fees.tva_rate)")
-
-	query := fmt.Sprintf(`
-		SELECT month_key, channel, order_type, rate,
-		       SUM(ttc_cents) AS ttc_cents,
-		       SUM(ht_cents) AS ht_cents,
-		       SUM(vat_cents) AS vat_cents
-		FROM (
-			SELECT
-				%s AS month_key,
-				CASE
-					WHEN o.brand = 'UBER_EATS' THEN 'ubereats'
-					WHEN o.brand = 'DELIVEROO' THEN 'deliveroo'
-					WHEN o.brand = 'WELLO_RESTO' AND o.created_by = 'SCANNORDER' THEN 'scannorder'
-					ELSE 'restaurant'
-				END AS channel,
-				LOWER(o.order_type) AS order_type,
-				tva.tva_rate AS rate,
-				%s AS ttc_cents,
-				%s AS ht_cents,
-				%s - %s AS vat_cents
-			FROM orders o
-			INNER JOIN orderitems oi ON oi.order_id = o.order_id
-			INNER JOIN products p ON p.product_id = oi.product_id
-			INNER JOIN tva_categories tva ON tva.tva_id = (
-				CASE
-					WHEN o.order_type = 'DELIVERY' THEN p.tva_delivery_id
-					WHEN o.order_type = 'TAKE_AWAY' THEN p.tva_take_away_id
-					ELSE p.tva_in_id
-				END
-			)
-			LEFT JOIN (
-				SELECT order_item_id, SUM(extra.price) AS extra_price
-				FROM extra
-				GROUP BY order_item_id
-			) e ON e.order_item_id = oi.order_item_id
-			WHERE o.creation_date >= %s
-			  AND o.creation_date <= %s
-			  AND o.merchant_id = ?
-			  AND o.state = 'CLOSED'
-			  AND o.brand_status NOT IN ('DELETED', 'CANCELED', 'DELIVERY_CANCELED', 'DELIVERY_FAILED')
-			  AND tva.show_in_report
-			  %s
-			  %s
-
-			UNION ALL
-
-			SELECT
-				%s AS month_key,
-				CASE
-					WHEN o_fees.brand = 'UBER_EATS' THEN 'ubereats'
-					WHEN o_fees.brand = 'DELIVEROO' THEN 'deliveroo'
-					WHEN o_fees.brand = 'WELLO_RESTO' AND o_fees.created_by = 'SCANNORDER' THEN 'scannorder'
-					ELSE 'restaurant'
-				END AS channel,
-				LOWER(o_fees.order_type) AS order_type,
-				tva_fees.tva_rate AS rate,
-				o_fees.delivery_fees AS ttc_cents,
-				%s AS ht_cents,
-				o_fees.delivery_fees - %s AS vat_cents
-			FROM orders o_fees
-			INNER JOIN tva_categories tva_fees ON tva_fees.tva_id = -1
-			WHERE o_fees.creation_date >= %s
-			  AND o_fees.creation_date <= %s
-			  AND o_fees.merchant_id = ?
-			  AND o_fees.state = 'CLOSED'
-			  AND o_fees.brand_status NOT IN ('DELETED', 'CANCELED', 'DELIVERY_CANCELED', 'DELIVERY_FAILED')
-			  AND o_fees.delivery_fees > 0
-			  %s
-			  %s
-		) agg
-		GROUP BY month_key, channel, order_type, rate
-		ORDER BY month_key, channel, order_type, rate
-	`,
-		acctMonthKey("o.creation_date"),
-		itemsTTC, itemsHT, itemsTTC, itemsHT,
-		acctDayStart(), acctDayEnd(),
-		channelClauseItems, orderTypeClauseItems,
-		acctMonthKey("o_fees.creation_date"),
-		feesHT, feesHT,
-		acctDayStart(), acctDayEnd(),
-		channelClauseFees, orderTypeClauseFees)
-
-	// Log the fully interpolated query for debugging
-	finalQuery := interpolateQuery(query, args)
-	log.Info(fmt.Sprintf("VAT Query Executed:\n%s", finalQuery))
-
-	rows, err := db.QueryContext(ctx, query, args...)
-	if err != nil {
-		log.Error(fmt.Sprintf("Error fetching VAT aggregation rows: %v", err))
-		return nil, err
-	}
-	defer rows.Close()
-
-	out := make([]VATAggregationRow, 0)
-	for rows.Next() {
-		var row VATAggregationRow
-		if err := rows.Scan(&row.Month, &row.Channel, &row.OrderType, &row.Rate, &row.TTCCents, &row.HTCents, &row.VATCents); err != nil {
-			return nil, err
-		}
-		out = append(out, row)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return out, nil
-}
-
-func buildChannelFilterClause(alias string, channels []string) (string, []interface{}) {
-	if len(channels) == 0 {
-		return "", nil
-	}
-
-	placeholders := make([]string, 0, len(channels))
-	args := make([]interface{}, 0, len(channels))
-	for _, c := range channels {
-		placeholders = append(placeholders, "?")
-		args = append(args, c)
-	}
-
-	caseExpr := fmt.Sprintf(`CASE
-		WHEN %s.brand = 'UBER_EATS' THEN 'ubereats'
-		WHEN %s.brand = 'DELIVEROO' THEN 'deliveroo'
-		WHEN %s.brand = 'WELLO_RESTO' AND %s.created_by = 'SCANNORDER' THEN 'scannorder'
-		ELSE 'restaurant'
-	END`, alias, alias, alias, alias)
-
-	return " AND " + caseExpr + " IN (" + strings.Join(placeholders, ",") + ")", args
-}
-
-func buildOrderTypeFilterClause(alias string, orderTypes []string) (string, []interface{}) {
-	if len(orderTypes) == 0 {
-		return "", nil
-	}
-
-	placeholders := make([]string, 0, len(orderTypes))
-	args := make([]interface{}, 0, len(orderTypes))
-	for _, t := range orderTypes {
-		placeholders = append(placeholders, "?")
-		args = append(args, strings.ToUpper(t))
-	}
-
-	return " AND " + alias + ".order_type IN (" + strings.Join(placeholders, ",") + ")", args
 }

@@ -233,7 +233,8 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// ---- POS Accounting ----
 	posAccountingRepo := posAccountingModule.NewAccountingRepository(selectedDB)
 	posAccountingService := posAccountingModule.NewAccountingService(posAccountingRepo, cashRegisterRepo)
-	posAccountingHandler := posAccountingModule.NewAccountingHandler(posAccountingService, r2Client)
+	// Bucket R2 PRIVÉ : exports comptables archivés, lus par lien signé (migration 166).
+	posAccountingHandler := posAccountingModule.NewAccountingHandler(posAccountingService, r2PrivateClient)
 
 	// ---- STATS ----
 	statsRepo := statsModule.NewStatsRepository(selectedDB)
@@ -1025,6 +1026,9 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 
 		r.Route("/accounting", func(r chi.Router) {
 			r.Post("/export", posAccountingHandler.ExportAccounting)
+			r.Get("/export-options", posAccountingHandler.ExportOptions)
+			r.Get("/exports", posAccountingHandler.ListAccountingExports)
+			r.Get("/exports/{export_id}/download", posAccountingHandler.AccountingExportDownload)
 		})
 	})
 
@@ -1673,6 +1677,13 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		// Crédits d'import de carte par photo d'un marchand (défaut :
 		// AI_MENU_OCR_DEFAULT_CREDITS) — recharge par le staff interne.
 		r.Put("/merchants/{id}/menu-ocr-credits", menuAIImportH.SetMerchantAICredits)
+
+		// Mode de clôture des registres (MANUAL / AUTO) — changé uniquement
+		// par l'équipe WelloResto, planifié au 1er d'un mois futur
+		// (docs/EXPORT_COMPTABLE_MODES_CLOTURE.md).
+		r.Get("/merchants/{id}/cash-register-closing-modes", cashRegisterH.GetClosingModes)
+		r.Post("/merchants/{id}/cash-register-closing-modes", cashRegisterH.ScheduleClosingMode)
+		r.Delete("/merchants/{id}/cash-register-closing-modes/{effective_from}", cashRegisterH.CancelClosingMode)
 	})
 
 	// --- SUBSCRIPTIONS (LOT B B1e) --- client-facing preview/apply.

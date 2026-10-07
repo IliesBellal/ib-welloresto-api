@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/infrastructure/r2"
@@ -12,13 +13,55 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+// AccountingHandler expose l'export comptable. r2Client est le client du
+// bucket R2 PRIVÉ (R2_PRIVATE_BUCKET) : les exports n'y sont lisibles que par
+// lien signé (migration 166).
 type AccountingHandler struct {
 	service  *AccountingService
 	r2Client *r2.Client
 }
 
-func NewAccountingHandler(svc *AccountingService, r2Client *r2.Client) *AccountingHandler {
-	return &AccountingHandler{service: svc, r2Client: r2Client}
+func NewAccountingHandler(svc *AccountingService, privateR2Client *r2.Client) *AccountingHandler {
+	return &AccountingHandler{service: svc, r2Client: privateR2Client}
+}
+
+// ExportOptions GET /pos/accounting/export-options?date_from=YYYY-MM-DD — mode
+// de clôture de l'établissement au premier jour de la période et canaux
+// filtrables (vides en clôture manuelle).
+func (h *AccountingHandler) ExportOptions(w http.ResponseWriter, r *http.Request) {
+	resp, err := h.service.ExportOptions(r.Context(), r.URL.Query().Get("date_from"))
+	if err != nil {
+		models.SendErrorJSON(w, "pos", "accounting_export_options", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "pos", "accounting_export_options", resp)
+}
+
+// ListAccountingExports GET /pos/accounting/exports — exports archivés de
+// l'établissement, du plus récent au plus ancien.
+func (h *AccountingHandler) ListAccountingExports(w http.ResponseWriter, r *http.Request) {
+	resp, err := h.service.ListAccountingExports(r.Context())
+	if err != nil {
+		models.SendErrorJSON(w, "pos", "accounting_exports_list", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "pos", "accounting_exports_list", resp)
+}
+
+// AccountingExportDownload GET /pos/accounting/exports/{export_id}/download —
+// nouveau lien signé (une heure) vers un export archivé de l'établissement.
+func (h *AccountingHandler) AccountingExportDownload(w http.ResponseWriter, r *http.Request) {
+	exportID, err := strconv.ParseInt(chi.URLParam(r, "export_id"), 10, 64)
+	if err != nil {
+		models.SendErrorJSON(w, "pos", "accounting_export_download", models.ErrMissingResourceID)
+		return
+	}
+	resp, err := h.service.AccountingExportLink(r.Context(), exportID, h.r2Client)
+	if err != nil {
+		models.SendErrorJSON(w, "pos", "accounting_export_download", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "pos", "accounting_export_download", resp)
 }
 
 // ExportAccounting POST /pos/accounting/export
@@ -36,7 +79,7 @@ func (h *AccountingHandler) ExportAccounting(w http.ResponseWriter, r *http.Requ
 	}
 
 	ctx := r.Context()
-	report, err := h.service.ExportAccountingReport(ctx, token, req.DateFrom, req.DateTo, h.r2Client)
+	report, err := h.service.ExportAccountingReport(ctx, token, req.DateFrom, req.DateTo, req.Channels, h.r2Client)
 	if err != nil {
 		models.SendJSON(w, http.StatusInternalServerError, "pos", "accounting_export", map[string]string{"error": err.Error()})
 		return

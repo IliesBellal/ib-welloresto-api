@@ -58,6 +58,7 @@ type CashRegisterSummary struct {
 	FinalCashFund  int            `json:"final_cash_fund"`
 	Closed         bool           `json:"closed"`   // correspond à la colonne closed
 	Enclosed       bool           `json:"enclosed"` // correspond à la colonne enclosed
+	ClosingMode    string         `json:"closing_mode"` // MANUAL / AUTO, cf. cash_registers/closing_mode.go
 	Currency       string         `json:"currency"`
 	ClosureComment *string        `json:"closure_comment"`
 	OpenedBy       UserBaseInfo   `json:"opened_by"`
@@ -66,6 +67,10 @@ type CashRegisterSummary struct {
 	Payments       []CRPayment    `json:"payments"`
 	Items          []CRItem       `json:"items"`
 	CustomItems    []CRCustomItem `json:"custom_items"`
+	// Discounts : total des remises de caisse du registre, hors encaissements
+	// (Items / CustomItems / Payments n'en contiennent plus) — information,
+	// présentation Square / Lightspeed.
+	Discounts int `json:"discounts"`
 }
 
 type CashDeskInfo struct {
@@ -130,6 +135,12 @@ type CashRegisterReport struct {
 	HT             int                       `json:"HT"`
 	TTC            int                       `json:"TTC"`
 	TVA            int                       `json:"TVA"`
+	// GrossTTC / Discounts : ventes brutes TTC et remises de caisse ; TTC = GrossTTC − Discounts
+	// (ventes nettes, base de la TVA) — présentation Square / Lightspeed, cf.
+	// cash_registers/register_vat.go.
+	GrossTTC  int `json:"gross_ttc"`
+	Discounts int `json:"discounts"`
+
 	CashReport     []CashReportDeliveryGroup `json:"cash_report"`
 	MOP            []MOPLine                 `json:"mop"`
 	CashReportType string                    `json:"cash_report_type"`
@@ -142,6 +153,9 @@ type CashRegisterOpenResponse struct {
 
 type CashRegisterOpen struct {
 	CashRegisterId string `json:"cash_register_id"`
+	// ClosingMode : MANUAL (relevé de caisse à la clôture) ou AUTO (fermeture
+	// sans relevé, validation automatique) — cf. cash_registers/closing_mode.go.
+	ClosingMode string `json:"closing_mode,omitempty"`
 }
 
 type CashReportDeliveryGroup struct {

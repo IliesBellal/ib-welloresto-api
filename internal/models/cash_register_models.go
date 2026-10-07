@@ -29,6 +29,12 @@ type CashRegisterDetails struct {
 	HT             int                       `json:"HT"`
 	TTC            int                       `json:"TTC"`
 	TVA            int                       `json:"TVA"`
+	// GrossTTC / Discounts : ventes brutes TTC et remises de caisse ; TTC = GrossTTC − Discounts
+	// (ventes nettes, base de la TVA) — présentation Square / Lightspeed, cf.
+	// cash_registers/register_vat.go.
+	GrossTTC  int `json:"gross_ttc"`
+	Discounts int `json:"discounts"`
+
 	CashReport     []CashReportDeliveryGroup `json:"cash_report"`
 	MOP            []MOPLine                 `json:"mop"`
 	CashReportType string                    `json:"cash_report_type"`
