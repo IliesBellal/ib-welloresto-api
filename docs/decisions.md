@@ -42,6 +42,40 @@ des clôtures Uber Eats hors chaîne (C10). Brief, journal et mesures :
 - `SyncOrderState` vers un état ouvert peut rouvrir une commande close ;
 - C4 (commande de vérification, qui réutilisera les chargeurs de `internal/fiscal`), C6, C7, C8, C9.
 
+### Webhook Stripe — e-mail du paiement recopié sur la fiche client (2026-10-06)
+
+**Contexte.** ScanNOrder ne demande pas d'e-mail au checkout : le seul
+e-mail client est celui saisi sur Stripe Checkout. Il n'arrivait jamais sur
+la fiche `customer` (écrit seulement dans `stripe_payments` et utilisé pour
+la confirmation) : `handleCustomerUpdate` était entièrement commenté. Il est
+nécessaire au futur outil marketing (conception :
+`wello-resto-scannorder/docs/comptes-client.md` §9).
+
+**Implémentation.**
+- `Repository.SetOrderCustomerEmail` : `UPDATE customer SET customer_email`
+  sur la fiche liée à la commande (`orders.customer_id`), bornée au merchant
+  de la commande. Pas de recherche par e-mail (l'ancien code commenté
+  aurait créé des doublons de fiches).
+- `attachPaymentEmailToCustomer`, appelé **après le commit** de
+  `HandleCheckoutSessionCompleted`, flux standard uniquement (pas
+  `app_qr_code` : le payeur d'un QR de table n'est pas forcément le client
+  de la commande). Best effort : un échec est loggé, le paiement n'est pas
+  touché. L'ancien appel se faisait dans la transaction : sous Postgres une
+  erreur SQL l'aurait avortée et aurait fait perdre le paiement.
+- Seul l'e-mail est repris : nom et adresse saisis dans ScanNOrder font foi.
+  Fiche mise à jour à chaque commande (même règle que le reste des
+  coordonnées).
+- `handleCustomerUpdate` (corps commenté, no-op) supprimé. `FindCustomer` /
+  `CreateCustomer` / `UpdateCustomer` / `UpdateOrderCustomer` ne sont plus
+  appelés que par les tests, laissés en place.
+- Couverture : `TestStripeRepository_Postgres` (fiche liée mise à jour,
+  aucune fiche touchée via un autre merchant). Non exécuté localement (pas
+  de `POSTGRES_URL`).
+
+Hors scope, toujours ouvert : `POST /webhooks/stripe` ne vérifie pas la
+signature Stripe (`VerifySignature` vide). Prévu avec la création des
+comptes client.
+
 ### Upsell — Kill-switch LLM (AI_TASK_UPSELL_ENABLED) (2026-09-22)
 
 **Contexte.** Suite à un incident de facturation Anthropic (crédit épuisé,

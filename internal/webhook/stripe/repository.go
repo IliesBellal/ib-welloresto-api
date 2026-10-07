@@ -64,6 +64,9 @@ type Repository interface {
 	CreateCustomer(cdb context.Context, c Customer, merchantID string) (int64, error)
 	UpdateCustomer(cdb context.Context, c Customer) error
 	UpdateOrderCustomer(cdb context.Context, orderID string, customerID int64) error
+	// SetOrderCustomerEmail écrit l'e-mail saisi au paiement sur la fiche client
+	// déjà liée à la commande. Retourne false si la commande n'a pas de client.
+	SetOrderCustomerEmail(cdb context.Context, orderID, merchantID, email string) (bool, error)
 
 	// Fees & Intents
 	GetAccountIDByPaymentIntent(cdb context.Context, paymentIntentID string) (string, error)
@@ -421,6 +424,27 @@ func (r *mysqlRepo) UpdateCustomer(cdb context.Context, c Customer) error {
 	query := `UPDATE customer SET customer_email = ?, customer_name = COALESCE(customer_name, ?), customer_address = COALESCE(?, customer_address) WHERE customer_id = ?`
 	_, err := db.ExecContext(cdb, query, c.Email, c.Name, c.Address, c.ID)
 	return err
+}
+
+// SetOrderCustomerEmail : la fiche est celle liée à la commande (orders.customer_id),
+// jamais retrouvée par e-mail, ce qui créerait des doublons. Bornée au merchant
+// de la commande : une fiche n'appartient qu'à un établissement.
+func (r *mysqlRepo) SetOrderCustomerEmail(cdb context.Context, orderID, merchantID, email string) (bool, error) {
+	db := dbx.GetDB(cdb, r.database)
+
+	res, err := db.ExecContext(cdb, `
+		UPDATE customer SET customer_email = ?
+		WHERE merchant_id = ?
+		  AND customer_id = (SELECT o.customer_id FROM orders o WHERE o.order_id = ? AND o.merchant_id = ?)`,
+		email, merchantID, orderID, merchantID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func (r *mysqlRepo) UpdateOrderCustomer(cdb context.Context, orderID string, customerID int64) error {

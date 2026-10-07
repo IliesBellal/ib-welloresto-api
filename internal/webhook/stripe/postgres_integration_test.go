@@ -257,6 +257,27 @@ func TestStripeRepository_Postgres(t *testing.T) {
 		t.Fatalf("expected order.CustomerID=%d, got %+v", custID, order.CustomerID)
 	}
 
+	// SetOrderCustomerEmail : e-mail du paiement écrit sur la fiche liée à la commande.
+	updated, err := repo.SetOrderCustomerEmail(ctx, orderID, merchantID, "paid@example.com")
+	if err != nil {
+		t.Fatalf("SetOrderCustomerEmail failed against postgres: %v", err)
+	}
+	if !updated {
+		t.Fatal("SetOrderCustomerEmail: expected the linked customer to be updated")
+	}
+	paid, err := repo.FindCustomer(ctx, "paid@example.com", merchantID)
+	if err != nil || paid == nil || paid.ID != custID {
+		t.Fatalf("expected customer %d with the payment email, got %+v (err %v)", custID, paid, err)
+	}
+	// Autre merchant : aucune fiche touchée.
+	otherMerchant, err := repo.SetOrderCustomerEmail(ctx, orderID, "999999999", "other@example.com")
+	if err != nil {
+		t.Fatalf("SetOrderCustomerEmail (other merchant) failed: %v", err)
+	}
+	if otherMerchant {
+		t.Fatal("SetOrderCustomerEmail must not update a customer through another merchant's id")
+	}
+
 	// --- Fees & intents ---
 	gotAccountID, err := repo.GetAccountIDByPaymentIntent(ctx, "itest-pi-1")
 	if err != nil {

@@ -253,9 +253,6 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 		// D. Cas Spécial: App QR Code
 		if session.Metadata["checkout_session_type"] == "app_qr_code" {
 			isAppQRCode = true
-			if err := s.handleCustomerUpdate(txCtx, &session, orderID, merchantID); err != nil {
-				log.Printf("Warning: failed to update customer: %v", err)
-			}
 			return nil
 		}
 
@@ -272,11 +269,6 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 		if err == nil {
 			shouldAutoAccept = (merchantParams.AutoAcceptDelivery && orderType == "DELIVERY") ||
 				(merchantParams.AutoAcceptTakeaway && orderType == "TAKE_AWAY")
-		}
-
-		// G. Update Customer
-		if err := s.handleCustomerUpdate(txCtx, &session, orderID, merchantID); err != nil {
-			log.Printf("Warning: customer update failed: %v", err)
 		}
 
 		return nil
@@ -308,6 +300,8 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 	}
 
 	go s.notification.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
+
+	s.attachPaymentEmailToCustomer(ctx, &session, orderID, merchantID)
 
 	if shouldAutoAccept {
 		go s.orderlifecycle.SetOrderAccepted(context.Background(), "SYSTEM", merchantID, orderID)
@@ -1208,48 +1202,23 @@ func (s *StripeWebhookService) VerifySignature(ctx context.Context, header http.
 
 // --- Private Helpers ---
 
-// handleCustomerUpdate reste inchangé dans sa logique, mais prend un pointeur typé car appelé après unmarshal
-func (s *StripeWebhookService) handleCustomerUpdate(ctx context.Context, session *stripe.CheckoutSession, orderID, merchantID string) error {
+// attachPaymentEmailToCustomer copie l'e-mail saisi sur Stripe Checkout vers la
+// fiche client de la commande (ScanNOrder ne demande pas d'e-mail au checkout).
+// Fiche mise à jour à chaque commande, comme le reste de ses coordonnées
+// (wello-resto-scannorder docs/comptes-client.md §9.6). Seul le nom et
+// l'adresse saisis dans ScanNOrder font foi : on ne reprend que l'e-mail.
+//
+// Hors transaction de paiement et sans effet sur son issue : sous Postgres,
+// une erreur SQL dans la transaction l'avorterait et ferait perdre le paiement.
+func (s *StripeWebhookService) attachPaymentEmailToCustomer(ctx context.Context, session *stripe.CheckoutSession, orderID, merchantID string) {
 	if session.CustomerDetails == nil {
-		return nil
+		return
 	}
-
-	/*
-		Il faudra ici mettre à jour le client en s'assurant que l'adresse email soit conservée et que l'adresse postale du client ne soit pas perdue
-			details := session.CustomerDetails
-			var address string
-			if details.Address != nil {
-				address = fmt.Sprintf("%s, %s %s", details.Address.Line1, details.Address.PostalCode, details.Address.City)
-			}
-			existing, err := s.repo.FindCustomer(ctx, details.Email, merchantID)
-			if err != nil {
-				return err
-			}
-
-			var customerID int64
-			if existing != nil {
-				customerID = existing.ID
-				existing.Name = details.Name
-				if address != "" {
-					existing.Address = address
-				}
-				if err := s.repo.UpdateCustomer(ctx, *existing); err != nil {
-					return err
-				}
-			} else {
-				newC := Customer{
-					Name:    details.Name,
-					Email:   details.Email,
-					Address: address,
-				}
-				id, err := s.repo.CreateCustomer(ctx, newC, merchantID)
-				if err != nil {
-					return err
-				}
-				customerID = id
-			}
-
-			return s.repo.UpdateOrderCustomer(ctx, orderID, customerID)
-	*/
-	return nil
+	email := strings.TrimSpace(session.CustomerDetails.Email)
+	if email == "" {
+		return
+	}
+	if _, err := s.repo.SetOrderCustomerEmail(ctx, orderID, merchantID, email); err != nil {
+		logger.FromContext(ctx).Warn("[stripe webhook] customer email not saved: order=" + orderID + " merchant=" + merchantID + ": " + err.Error())
+	}
 }
