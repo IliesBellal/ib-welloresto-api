@@ -1,6 +1,10 @@
 package importer
 
-import "testing"
+import (
+	"testing"
+
+	"welloresto-api/internal/importutil"
+)
 
 // aiReadyDecisions : décisions proposées par la preview, complétées comme le
 // ferait le restaurateur (nature du Veggie précisée, TVA confirmée).
@@ -217,6 +221,106 @@ func TestBuildCommitPlan_AIDoorPriceDecision(t *testing.T) {
 	}
 	if productByName(t, imp, "Classique").PriceIn == 1270 {
 		t.Errorf("applyAIDecisions a modifié le canonique d'origine")
+	}
+}
+
+func plannedCategoryByID(plan *CommitPlan, externalID string) (PlannedCategory, bool) {
+	for _, c := range plan.Categories {
+		if c.ExternalID == externalID {
+			return c, true
+		}
+	}
+	return PlannedCategory{}, false
+}
+
+func TestBuildCommitPlan_AIDoorAddedCategories(t *testing.T) {
+	imp := buildAITestImport(t)
+	lk := defaultLookups()
+	lk.ExistingCategories = []ExistingCategory{{CategID: 42, MerchantCategID: "m-42", Name: "Desserts"}}
+
+	decisions := aiReadyDecisions(t, imp)
+	decisions.AddedCategories = map[string]string{"new-1": "desserts", "new-2": "Végé"}
+	// Les deux produits de « Burgers » partent ailleurs : la catégorie lue
+	// devient vide et ne doit pas être créée.
+	decisions.CategoryPerProduct[productByName(t, imp, "Classique").ExternalID] = "new-1"
+	decisions.CategoryPerProduct[productByName(t, imp, "Veggie").ExternalID] = "new-2"
+
+	plan, blockers := BuildCommitPlan(imp, decisions, lk)
+	if len(blockers) > 0 {
+		t.Fatalf("BuildCommitPlan bloqué : %s", BlockersMessage(blockers))
+	}
+
+	dessertsID := importutil.GeneratedExternalID(aiCategoryPrefix, "desserts")
+	if got := plannedByName(t, plan, "Classique").CategoryExternalID; got != dessertsID {
+		t.Errorf("catégorie de Classique = %q, want %q", got, dessertsID)
+	}
+	if desserts, ok := plannedCategoryByID(plan, dessertsID); !ok || desserts.ReuseCategID != 42 {
+		t.Errorf("catégorie ajoutée « desserts » = %+v (présente : %v), want rattachée à la catégorie 42 de la caisse", desserts, ok)
+	}
+
+	vegeID := importutil.GeneratedExternalID(aiCategoryPrefix, "Végé")
+	if got := plannedByName(t, plan, "Veggie").CategoryExternalID; got != vegeID {
+		t.Errorf("catégorie de Veggie = %q, want %q", got, vegeID)
+	}
+	if vege, ok := plannedCategoryByID(plan, vegeID); !ok || vege.ReuseCategID != 0 {
+		t.Errorf("catégorie ajoutée « Végé » = %+v (présente : %v), want créée", vege, ok)
+	}
+
+	burgersID := productByName(t, imp, "Classique").CategoryExternalID
+	if _, ok := plannedCategoryByID(plan, burgersID); ok {
+		t.Errorf("la catégorie lue « Burgers », vidée en relecture, ne doit pas être créée")
+	}
+	if len(imp.Categories) != 2 {
+		t.Errorf("applyAddedCategories a modifié le canonique d'origine (%d catégories)", len(imp.Categories))
+	}
+}
+
+func TestBuildCommitPlan_AIDoorAddedCategoryMatchingReadOneIsReused(t *testing.T) {
+	imp := buildAITestImport(t)
+	decisions := aiReadyDecisions(t, imp)
+	decisions.AddedCategories = map[string]string{"new-1": "  BOISSONS "}
+	decisions.CategoryPerProduct[productByName(t, imp, "Classique").ExternalID] = "new-1"
+
+	plan, blockers := BuildCommitPlan(imp, decisions, defaultLookups())
+	if len(blockers) > 0 {
+		t.Fatalf("BuildCommitPlan bloqué : %s", BlockersMessage(blockers))
+	}
+	boissons := productByName(t, imp, "Coca-Cola Zero").CategoryExternalID
+	if got := plannedByName(t, plan, "Classique").CategoryExternalID; got != boissons {
+		t.Errorf("catégorie de Classique = %q, want la catégorie lue %q", got, boissons)
+	}
+	if len(plan.Categories) != 2 {
+		t.Errorf("%d catégories au plan, want 2 (aucun doublon de « Boissons »)", len(plan.Categories))
+	}
+}
+
+func TestBuildCommitPlan_AIDoorRejectsInvalidAddedCategories(t *testing.T) {
+	imp := buildAITestImport(t)
+	readCategory := imp.Categories[0].ExternalID
+
+	cases := map[string]func(d *ImportDecisions){
+		"nom vide":             func(d *ImportDecisions) { d.AddedCategories = map[string]string{"new-1": "   "} },
+		"référence déjà prise": func(d *ImportDecisions) { d.AddedCategories = map[string]string{readCategory: "Desserts"} },
+		"référence vide":       func(d *ImportDecisions) { d.AddedCategories = map[string]string{"": "Desserts"} },
+	}
+	for name, mutate := range cases {
+		decisions := aiReadyDecisions(t, imp)
+		mutate(&decisions)
+		_, blockers := BuildCommitPlan(imp, decisions, defaultLookups())
+		if codes := blockerCodes(blockers); codes[BlockerInvalidCategoryDecision] != 1 || len(blockers) != 1 {
+			t.Errorf("%s : blocages = %s, want un seul %s", name, BlockersMessage(blockers), BlockerInvalidCategoryDecision)
+		}
+	}
+}
+
+func TestBuildCommitPlan_AddedCategoriesReservedToAIDoor(t *testing.T) {
+	imp := *buildAITestImport(t)
+	imp.Provider = "wello-generic"
+	decisions := ImportDecisions{AddedCategories: map[string]string{"new-1": "Desserts"}}
+
+	_, blockers := BuildCommitPlan(&imp, decisions, defaultLookups())
+	if blockerCodes(blockers)[BlockerInvalidCategoryDecision] == 0 {
+		t.Fatalf("blocages = %s, want %s", BlockersMessage(blockers), BlockerInvalidCategoryDecision)
 	}
 }
 

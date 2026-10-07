@@ -322,3 +322,21 @@ Demande d'Ilies : générer aussi la composition (ingrédients et association pr
 | `import_ai_service_test.go` | OK. Option transmise dans le message de chaque photo, consigne système inchangée, choix gardé par photo, preview avec ingrédients et composition ; option absente = « non demandés » |
 | `TestAIImport_Postgres_EndToEndWithIngredients` | **Écrit, pas exécuté** : il écrit sur staging (données de test nettoyées) ; il attend l'accord d'Ilies. Il vérifie : lecture des unités, 3 ingrédients, 3 catégories, 3 lignes de composition à quantité 0, unité proposée conservée |
 | Consigne sur de vraies photos | **Non testée** : prochain test staging |
+
+## 10. Catégorie modifiable en relecture (2026-10-06)
+
+Retour d'Ilies : à la relecture photo, impossible de donner une catégorie à un produit dont la catégorie n'a pas été lue, ni de corriger une catégorie mal lue. `category_per_product` n'acceptait que les catégories du lot ; une carte sans titre de rubrique lisible laissait le restaurateur sans aucun choix.
+
+### D19 — Catégories ajoutées en relecture
+- **Décision `added_categories`** : `{référence: nom}`, porte IA seulement. La référence est choisie par le client et citée dans `category_per_product`.
+- **`applyAddedCategories`** (appelée par `BuildCommitPlan` après `applyAIDecisions`, sur la copie du canonique) :
+  - l'identifiant externe réel est dérivé du nom par `GeneratedExternalID(aiCategoryPrefix, nom)`, comme une catégorie lue (D1) : réimporter la même carte retrouve la même correspondance ;
+  - un nom identique à une catégorie lue (après `NormalizeLabel`) réutilise celle-ci, sans doublon ;
+  - les références de `category_per_product` sont réécrites en identifiants réels ;
+  - le rattachement à une catégorie existante de la caisse se fait par nom, dans `buildCategories`, comme pour une catégorie lue.
+- **Refus** (`invalid_category_decision`) : nom vide, référence vide ou déjà utilisée par un identifiant du lot, décision envoyée par une autre porte.
+- **Catégories vides non créées** (`pruneUnusedCategories`, porte IA seulement) : une catégorie lue dont tous les produits ont été écartés ou déplacés en relecture n'est plus créée.
+
+| Vérification | Résultat |
+|---|---|
+| `ai_decisions_test.go` | OK. Couvre : catégorie ajoutée rattachée par nom à une catégorie de la caisse ; catégorie ajoutée créée ; catégorie lue vidée non créée ; canonique d'origine intact ; nom identique à une catégorie lue réutilisé ; 3 décisions invalides ; décision refusée hors porte IA |

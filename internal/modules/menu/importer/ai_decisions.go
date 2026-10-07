@@ -3,6 +3,9 @@ package importer
 import (
 	"fmt"
 	"sort"
+	"strings"
+
+	"welloresto-api/internal/importutil"
 )
 
 // Blocages propres à la porte IA.
@@ -164,6 +167,109 @@ func applyAIDecisions(imp *IntermediateImport, decisions ImportDecisions) (*Inte
 
 	sort.SliceStable(blockers, func(i, j int) bool { return blockers[i].Ref < blockers[j].Ref })
 	return &out, blockers
+}
+
+// applyAddedCategories ajoute au lot les catégories créées en relecture
+// (AddedCategories, porte IA) et réécrit en identifiants externes réels les
+// références que CategoryPerProduct leur donne.
+//
+// L'identifiant réel est dérivé du nom, exactement comme pour une catégorie
+// lue sur les photos (aiMerger.category) : une catégorie portant déjà ce nom
+// dans le lot est réutilisée telle quelle, et réimporter la même carte
+// retrouve la même correspondance. Le rattachement à une catégorie existante
+// de la caisse se fait ensuite par nom, dans buildCategories.
+func applyAddedCategories(imp *IntermediateImport, decisions ImportDecisions) (*IntermediateImport, ImportDecisions, []CommitBlocker) {
+	if len(decisions.AddedCategories) == 0 {
+		return imp, decisions, nil
+	}
+	if imp.Provider != AIPhotoSlug {
+		return imp, decisions, []CommitBlocker{{
+			Code:    BlockerInvalidCategoryDecision,
+			Message: "l'ajout de catégories en relecture est réservé à l'import par photo",
+		}}
+	}
+
+	out := *imp
+	out.Categories = make([]CanonicalCategory, len(imp.Categories))
+	copy(out.Categories, imp.Categories)
+
+	known := make(map[string]struct{}, len(out.Categories)+len(out.Tags))
+	byKey := make(map[string]string, len(out.Categories))
+	for _, category := range out.Categories {
+		known[category.ExternalID] = struct{}{}
+		byKey[importutil.NormalizeLabel(category.Name)] = category.ExternalID
+	}
+	for _, tag := range out.Tags {
+		known[tag.ExternalID] = struct{}{}
+	}
+
+	// Ordre stable : les catégories ajoutées le sont dans le même ordre d'un
+	// commit à l'autre.
+	refs := make([]string, 0, len(decisions.AddedCategories))
+	for ref := range decisions.AddedCategories {
+		refs = append(refs, ref)
+	}
+	sort.Strings(refs)
+
+	var blockers []CommitBlocker
+	resolved := make(map[string]string, len(refs))
+	for _, ref := range refs {
+		name := strings.TrimSpace(decisions.AddedCategories[ref])
+		if _, taken := known[ref]; taken || ref == "" {
+			blockers = append(blockers, CommitBlocker{Code: BlockerInvalidCategoryDecision, Ref: ref,
+				Message: fmt.Sprintf("la référence %q de la catégorie ajoutée %q est déjà utilisée par l'import", ref, name)})
+			continue
+		}
+		if name == "" {
+			blockers = append(blockers, CommitBlocker{Code: BlockerInvalidCategoryDecision, Ref: ref,
+				Message: "une catégorie ajoutée doit avoir un nom"})
+			continue
+		}
+		key := importutil.NormalizeLabel(name)
+		id, exists := byKey[key]
+		if !exists {
+			id = importutil.GeneratedExternalID(aiCategoryPrefix, name)
+			byKey[key] = id
+			out.Categories = append(out.Categories, CanonicalCategory{ExternalID: id, Name: name})
+		}
+		resolved[ref] = id
+	}
+
+	categoryPerProduct := make(map[string]string, len(decisions.CategoryPerProduct))
+	for productID, categoryID := range decisions.CategoryPerProduct {
+		if id, ok := resolved[categoryID]; ok {
+			categoryID = id
+		}
+		categoryPerProduct[productID] = categoryID
+	}
+	decisions.CategoryPerProduct = categoryPerProduct
+
+	return &out, decisions, blockers
+}
+
+// pruneUnusedCategories retire du plan (porte IA) les catégories qu'aucun
+// produit créé n'utilise : une catégorie lue dont tous les produits ont été
+// écartés ou déplacés en relecture ne doit pas apparaître vide dans la caisse.
+func (b *commitPlanner) pruneUnusedCategories() {
+	used := make(map[string]struct{})
+	for _, p := range b.plan.Products {
+		if p.Materializable() {
+			used[p.CategoryExternalID] = struct{}{}
+		}
+	}
+
+	categories := b.plan.Categories[:0]
+	for _, c := range b.plan.Categories {
+		if _, ok := used[c.ExternalID]; ok {
+			categories = append(categories, c)
+		}
+	}
+	b.plan.Categories = categories
+
+	b.plannedCategories = make(map[string]*PlannedCategory, len(b.plan.Categories))
+	for i := range b.plan.Categories {
+		b.plannedCategories[b.plan.Categories[i].ExternalID] = &b.plan.Categories[i]
+	}
 }
 
 // tvaOverride rend le tva_id choisi en relecture pour ce produit et ce canal,

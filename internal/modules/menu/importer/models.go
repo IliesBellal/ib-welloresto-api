@@ -439,6 +439,15 @@ type ImportDecisions struct {
 	// (porte IA), parmi ceux lus dans sa description. Produit absent de la
 	// map = tous ses ingrédients ; liste vide = aucun.
 	IngredientsPerProduct map[string][]string `json:"ingredients_per_product,omitempty"`
+
+	// AddedCategories : catégories ajoutées en relecture (porte IA), que la
+	// lecture des photos n'a pas produites — catégorie non lue, ou catégorie
+	// déjà présente dans la caisse. Clé = référence choisie par le client,
+	// citable dans CategoryPerProduct ; valeur = nom. L'identifiant externe
+	// réel est dérivé du nom comme pour une catégorie lue
+	// (applyAddedCategories), et buildCategories se rattache à une catégorie
+	// existante du même nom.
+	AddedCategories map[string]string `json:"added_categories,omitempty"`
 }
 
 // ChannelPrices porte les prix d'un produit par canal, en centimes.

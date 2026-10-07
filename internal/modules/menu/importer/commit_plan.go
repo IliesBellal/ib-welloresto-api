@@ -248,6 +248,8 @@ func BuildCommitPlan(imp *IntermediateImport, decisions ImportDecisions, lk Prev
 	// Porte IA : nature et groupe décidés en relecture, appliqués sur une
 	// copie avant toute résolution (la TVA en dépend).
 	imp, aiBlockers := applyAIDecisions(imp, decisions)
+	imp, decisions, categoryBlockers := applyAddedCategories(imp, decisions)
+	aiBlockers = append(aiBlockers, categoryBlockers...)
 	if imp.Provider == AIPhotoSlug && !decisions.TvaConfirmed {
 		aiBlockers = append(aiBlockers, CommitBlocker{
 			Code:    BlockerTvaNotConfirmed,
@@ -276,6 +278,7 @@ func BuildCommitPlan(imp *IntermediateImport, decisions ImportDecisions, lk Prev
 	b.resolveGroups()
 	if imp.Provider == AIPhotoSlug {
 		b.pruneUnusedComponents()
+		b.pruneUnusedCategories()
 	}
 
 	if len(b.blockers) > 0 {
