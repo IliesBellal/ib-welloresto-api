@@ -25,6 +25,49 @@ const (
 	MerchantApprovalPendingCardPayment = "PENDING_CARD_PAYMENT"
 )
 
+// VoidOrderBrandStatusesSQL liste les brand_status d'une commande close qui
+// n'a jamais constitué une vente, sous forme de liste SQL à placer après
+// `upper(o.brand_status) NOT IN ` dans les requêtes fiscales qui lisent les
+// lignes de commande (TVA du rapport comptable et du registre de caisse) :
+//   - DELETED / CANCELED : commande supprimée ou annulée ;
+//   - DENIED : commande refusée à l'arrivée — DenyOrderLocal et le webhook
+//     Deliveroo la passent en state='CLOSED' sans qu'elle ait été vendue ;
+//   - DELIVERY_CANCELED / DELIVERY_FAILED : livraison avortée, cf.
+//     docs/diagnostic-rapport-comptable-croq-o-pizzas.sql.
+//
+// Toujours comparer via upper(...) : des lignes historiques en prod portent un
+// brand_status en minuscules (cf. analytics/scope.go).
+const VoidOrderBrandStatusesSQL = `('DELETED', 'CANCELED', 'DENIED', 'DELIVERY_CANCELED', 'DELIVERY_FAILED')`
+
+// OrderItemTVAIDSQL renvoie l'expression SQL de la catégorie de TVA d'une
+// ligne de commande : celle figée sur la ligne à la vente (orderitems.tva_id,
+// migration 164), à défaut celle du produit pour le type de la commande — la
+// dérivation historique, qui suit la configuration produit du jour. Les
+// paramètres sont les alias SQL de orderitems, orders et products.
+// Cf. docs/TVA_FIGEE_LIGNES_COMMANDE.md.
+func OrderItemTVAIDSQL(item, order, product string) string {
+	return "COALESCE(" + item + ".tva_id, CASE" +
+		" WHEN " + order + ".order_type = 'DELIVERY' THEN " + product + ".tva_delivery_id" +
+		" WHEN " + order + ".order_type = 'TAKE_AWAY' THEN " + product + ".tva_take_away_id" +
+		" ELSE " + product + ".tva_in_id END)"
+}
+
+// OrderItemTVARateSQL renvoie l'expression SQL du taux de TVA d'une ligne :
+// celui figé sur la ligne, à défaut celui de la catégorie jointe via
+// OrderItemTVAIDSQL. Les paramètres sont les alias de orderitems et de
+// tva_categories.
+func OrderItemTVARateSQL(item, category string) string {
+	return "COALESCE(" + item + ".tva_rate, " + category + ".tva_rate)"
+}
+
+// DeliveryFeesTVARateSQL renvoie l'expression SQL du taux de TVA des frais de
+// livraison d'une commande : celui figé sur la commande, à défaut celui de la
+// catégorie -1 jointe. Les paramètres sont les alias de orders et de
+// tva_categories.
+func DeliveryFeesTVARateSQL(order, category string) string {
+	return "COALESCE(" + order + ".delivery_fees_tva_rate, " + category + ".tva_rate)"
+}
+
 // OrderItemInsert represents an order item insert
 type OrderItemInsert struct {
 	OrderID         string

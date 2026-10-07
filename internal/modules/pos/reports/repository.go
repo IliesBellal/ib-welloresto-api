@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/logger"
+	"welloresto-api/internal/models"
 )
 
 // reportDayKey formate un timestamp en 'YYYY-MM-DD' selon le dialecte.
@@ -42,7 +43,9 @@ func NewReportsRepository(db *sql.DB) *ReportsRepository {
 	return &ReportsRepository{database: db}
 }
 
-// GetTVAReportData récupère les données de TVA par jour et par type de livraison
+// GetTVAReportData récupère les données de TVA par jour et par type de livraison.
+// Exclut les commandes closes jamais vendues (models.VoidOrderBrandStatusesSQL :
+// refusées, annulées, livraison avortée), comme pos/accounting.GetTVAData.
 func (r *ReportsRepository) GetTVAReportData(ctx context.Context, merchantID, dateFrom, dateTo string) ([]TVADayReport, error) {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
@@ -52,18 +55,12 @@ func (r *ReportsRepository) GetTVAReportData(ctx context.Context, merchantID, da
 			` + reportDayKey("o.creation_date") + ` AS report_date,
 			o.order_type,
 			tva.tva_title AS title,
-			tva.tva_rate AS rate,
+			` + models.OrderItemTVARateSQL("oi", "tva") + ` AS rate,
 			((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity) AS TTC
 		FROM orders o
 		INNER JOIN orderitems oi ON oi.order_id = o.order_id
 		INNER JOIN products p ON p.product_id = oi.product_id
-		INNER JOIN tva_categories tva ON tva.tva_id = (
-			CASE 
-				WHEN o.order_type = 'DELIVERY' THEN p.tva_delivery_id
-				WHEN o.order_type = 'TAKE_AWAY' THEN p.tva_take_away_id
-				ELSE p.tva_in_id
-			END
-		)
+		INNER JOIN tva_categories tva ON tva.tva_id = ` + models.OrderItemTVAIDSQL("oi", "o", "p") + `
 		LEFT JOIN (
 			SELECT order_item_id, SUM(extra.price) AS extra_price
 			FROM extra
@@ -74,7 +71,7 @@ func (r *ReportsRepository) GetTVAReportData(ctx context.Context, merchantID, da
 		  AND o.merchant_id = ?
 		  AND o.state = 'CLOSED'
 		  AND o.brand = 'WELLO_RESTO'
-		  AND o.brand_status NOT IN ('DELETED', 'CANCELED')
+		  AND upper(o.brand_status) NOT IN ` + models.VoidOrderBrandStatusesSQL + `
 		  AND o.created_by NOT IN ('-1', 'SCANNORDER')
 		  AND tva.show_in_report
 		UNION ALL
@@ -82,7 +79,7 @@ func (r *ReportsRepository) GetTVAReportData(ctx context.Context, merchantID, da
 			` + reportDayKey("o_fees.creation_date") + ` AS report_date,
 			o_fees.order_type,
 			tva_fees.tva_title AS title,
-			tva_fees.tva_rate AS rate,
+			` + models.DeliveryFeesTVARateSQL("o_fees", "tva_fees") + ` AS rate,
 			o_fees.delivery_fees AS TTC
 		FROM orders o_fees
 		INNER JOIN tva_categories tva_fees ON tva_fees.tva_id = -1
@@ -91,8 +88,9 @@ func (r *ReportsRepository) GetTVAReportData(ctx context.Context, merchantID, da
 		  AND o_fees.merchant_id = ?
 		  AND o_fees.brand = 'WELLO_RESTO'
 		  AND o_fees.created_by NOT IN ('-1', 'SCANNORDER')
-		  AND o_fees.brand_status NOT IN ('DELETED', 'CANCELED')
+		  AND upper(o_fees.brand_status) NOT IN ` + models.VoidOrderBrandStatusesSQL + `
 		  AND o_fees.state = 'CLOSED'
+		  AND o_fees.delivery_fees <> 0
 		ORDER BY report_date, order_type, title
 	`
 
@@ -103,8 +101,15 @@ func (r *ReportsRepository) GetTVAReportData(ctx context.Context, merchantID, da
 	}
 	defer rows.Close()
 
-	// Map structure: date -> order_type -> TVATitle -> aggregated data
-	dayMap := make(map[string]map[string]map[string]*TVADayData)
+	// Map structure: date -> order_type -> (TVATitle, taux) -> aggregated data.
+	// Clé (titre, taux) et non titre seul : le taux étant figé sur la ligne
+	// (migration 164), une catégorie dont le taux a changé peut porter deux
+	// taux sur une même période.
+	type tvaKey struct {
+		title string
+		rate  float64
+	}
+	dayMap := make(map[string]map[string]map[tvaKey]*TVADayData)
 
 	for rows.Next() {
 		var date string
@@ -119,14 +124,15 @@ func (r *ReportsRepository) GetTVAReportData(ctx context.Context, merchantID, da
 		}
 
 		if dayMap[date] == nil {
-			dayMap[date] = make(map[string]map[string]*TVADayData)
+			dayMap[date] = make(map[string]map[tvaKey]*TVADayData)
 		}
 		if dayMap[date][orderType] == nil {
-			dayMap[date][orderType] = make(map[string]*TVADayData)
+			dayMap[date][orderType] = make(map[tvaKey]*TVADayData)
 		}
 
-		if _, exists := dayMap[date][orderType][title]; !exists {
-			dayMap[date][orderType][title] = &TVADayData{
+		key := tvaKey{title: title, rate: rate}
+		if _, exists := dayMap[date][orderType][key]; !exists {
+			dayMap[date][orderType][key] = &TVADayData{
 				TVATitle: title,
 				Rate:     rate,
 				TTC:      0,
@@ -135,7 +141,7 @@ func (r *ReportsRepository) GetTVAReportData(ctx context.Context, merchantID, da
 			}
 		}
 
-		dayMap[date][orderType][title].TTC += float64(ttcCent)
+		dayMap[date][orderType][key].TTC += float64(ttcCent)
 	}
 
 	if err = rows.Err(); err != nil {
@@ -228,7 +234,7 @@ func (r *ReportsRepository) GetPaymentsReportData(ctx context.Context, merchantI
 		  AND o.creation_date <= ` + reportDayEnd() + `
 		  AND o.created_by NOT IN ('-1', 'SCANNORDER')
 		  AND o.state = 'CLOSED'
-		  AND o.brand_status NOT IN ('DELETED', 'CANCELED')
+		  AND upper(o.brand_status) NOT IN ` + models.VoidOrderBrandStatusesSQL + `
 		  AND o.brand = 'WELLO_RESTO'
 		GROUP BY report_date, payment_code, payment_label
 		ORDER BY report_date, payment_code

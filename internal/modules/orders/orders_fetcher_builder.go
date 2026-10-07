@@ -31,6 +31,26 @@ func castChar(expr string) string {
 	return "CAST(" + expr + " AS CHAR)"
 }
 
+// frozenProductVATRateSQL renvoie le taux d'une ligne pour un type de service
+// (IN, DELIVERY, TAKE_AWAY) tel que renvoyé aux clients (tva_rate_in /
+// _delivery / _take_away) : pour une commande close, le taux figé sur la ligne
+// à la vente (migration 164) remplace celui du produit pour le type de la
+// commande — une facture ou un ticket réédité garde ainsi son taux même si le
+// catalogue a changé depuis. Une commande ouverte garde les taux du produit :
+// la caisse recalcule elle-même ses totaux à partir des trois taux quand on
+// change le type de service, et le taux figé sera recalculé à l'enregistrement.
+// categoryAlias est l'alias de tva_categories joint sur la catégorie produit
+// du type donné ; "IN" couvre tout type autre que DELIVERY et TAKE_AWAY, comme
+// la dérivation des rapports (models.OrderItemTVAIDSQL).
+func frozenProductVATRateSQL(serviceType, categoryAlias string) string {
+	typeMatches := "o.order_type = '" + serviceType + "'"
+	if serviceType == "IN" {
+		typeMatches = "COALESCE(o.order_type, '') NOT IN ('DELIVERY', 'TAKE_AWAY')"
+	}
+	return "CASE WHEN o.state = 'CLOSED' AND oi.tva_rate IS NOT NULL AND " + typeMatches +
+		" THEN oi.tva_rate ELSE " + categoryAlias + ".tva_rate END"
+}
+
 func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID string, whereFilters QueryFilter, orderByFilter, limitsFilters string) ([]models.Order, error) {
 
 	// 1️⃣ Récupération dynamique de la DB ou de la Transaction depuis le
@@ -410,7 +430,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		       CASE WHEN oi.isPaid THEN 1 ELSE 0 END AS isPaid,
 		       CASE WHEN oi.isDistributed THEN 1 ELSE 0 END AS isDistributed,
 		       oi.ordered_on, oi.base_price, oi.discount_id, d.discount_name, oi.ready_for_distribution_quantity,
-		       oi.distributed_quantity, tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away, oi.delay_id, oc.content, oc.user_id, oc.creation_date,
+		       oi.distributed_quantity, ` + frozenProductVATRateSQL("IN", "tva_in") + ` as tva_rate_in, ` + frozenProductVATRateSQL("DELIVERY", "tva_delivery") + ` as tva_rate_delivery, ` + frozenProductVATRateSQL("TAKE_AWAY", "tva_take_away") + ` as tva_rate_take_away, oi.delay_id, oc.content, oc.user_id, oc.creation_date,
 		p.price_take_away, p.price_delivery, p.image_url, oi.production_status, oi.production_status_done_quantity, p.production_color,
 		p.available_in, p.available_take_away, p.available_delivery,
 		       CASE WHEN oi.is_upsell THEN 1 ELSE 0 END AS is_upsell,

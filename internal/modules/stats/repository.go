@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/models"
 	"welloresto-api/internal/timeutil"
 )
 
@@ -335,24 +336,22 @@ type UpsellServerRow struct {
 
 // upsellLineHTExpr calcule le HT par ligne de commande à partir du TTC et du taux de TVA
 // du produit, comme dans GetTVAReportData (mêmes jointures produits/extra/tva_categories).
-const upsellLineHTExpr = `
+// Catégorie et taux lus en priorité sur la ligne (TVA figée à la vente,
+// migration 164, cf. docs/TVA_FIGEE_LIGNES_COMMANDE.md).
+var upsellLineVATRateExpr = models.OrderItemTVARateSQL("oi", "tva")
+
+var upsellLineHTExpr = `
 	CASE
-		WHEN tva.tva_rate = 0 THEN ((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity)
-		ELSE ((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity) * 100.0 / (100.0 + tva.tva_rate)
+		WHEN ` + upsellLineVATRateExpr + ` = 0 THEN ((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity)
+		ELSE ((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity) * 100.0 / (100.0 + ` + upsellLineVATRateExpr + `)
 	END
 `
 
-const upsellLinesFromJoins = `
+var upsellLinesFromJoins = `
 	FROM orderitems oi
 	INNER JOIN orders o ON o.order_id = oi.order_id
 	INNER JOIN products p ON p.product_id = oi.product_id
-	INNER JOIN tva_categories tva ON tva.tva_id = (
-		CASE
-			WHEN o.order_type = 'DELIVERY' THEN p.tva_delivery_id
-			WHEN o.order_type = 'TAKE_AWAY' THEN p.tva_take_away_id
-			ELSE p.tva_in_id
-		END
-	)
+	INNER JOIN tva_categories tva ON tva.tva_id = ` + models.OrderItemTVAIDSQL("oi", "o", "p") + `
 	LEFT JOIN (
 		SELECT order_item_id, SUM(extra.price) AS extra_price
 		FROM extra
@@ -369,7 +368,7 @@ const upsellLinesWhereClause = `
 	AND o.brand_status NOT IN ('DELETED', 'CANCELED')
 `
 
-const upsellLinesBaseQuery = upsellLinesFromJoins + upsellLinesWhereClause
+var upsellLinesBaseQuery = upsellLinesFromJoins + upsellLinesWhereClause
 
 // roundToIntExpr wraps a fractional SQL expression (upsellLineHTExpr divides
 // by 100+tva_rate, which is rarely a whole number of cents) so it scans

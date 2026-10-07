@@ -1483,6 +1483,15 @@ func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models
 		return nil, err
 	}
 
+	// Bloquant, volontairement : appelée dans une transaction par certains
+	// appelants, une requête en échec y rendrait de toute façon toutes les
+	// suivantes invalides. Seul échec plausible : migration 164 non appliquée
+	// (elle doit l'être avant le déploiement du code).
+	if err := r.freezeOrderVAT(ctx, orderID); err != nil {
+		log.Error("freezeOrderVAT failure " + err.Error())
+		return nil, err
+	}
+
 	if err := r.insertPayments(ctx, req); err != nil {
 		//tx.Rollback()
 		log.Error("insertPayments failure" + err.Error())
@@ -1944,6 +1953,12 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 	// leur propre TTC/HT/TVA (cf. docs/decisions.md, restriction au POS).
 	if err := r.updateOrderBase(ctx, req); err != nil {
 		return fmt.Errorf("update order base failed: %w", err)
+	}
+
+	// Après updateOrderBase : le type de commande (dont dépend le taux) vient
+	// d'être écrit. Bloquant, cf. CreateOrder.
+	if err := r.freezeOrderVAT(ctx, *req.Order.OrderID); err != nil {
+		return fmt.Errorf("freeze order VAT failed: %w", err)
 	}
 
 	// 8. Gestion des emplacements (table, salle…)
@@ -2787,18 +2802,75 @@ func (r *OrdersLifeCycleRepository) insertPayments(ctx context.Context, req *mod
 	return nil
 }
 
-// GetDeliveryFeesVATRate renvoie le taux de TVA appliqué aux frais de
-// livraison (tva_categories.tva_id = -1, même convention que le rapport
-// comptable). found=false si la catégorie n'existe pas.
-func (r *OrdersLifeCycleRepository) GetDeliveryFeesVATRate(ctx context.Context) (rate float64, found bool, err error) {
+// freezeOrderVAT fige sur chaque ligne de la commande la catégorie et le taux
+// de TVA du produit pour le type de commande en cours, et sur la commande le
+// taux des frais de livraison (catégorie -1) — cf.
+// docs/TVA_FIGEE_LIGNES_COMMANDE.md. Appelée après toute écriture des lignes
+// (CreateOrder, UpdateOrder) : recalcule toutes les lignes d'un coup, ce qui
+// couvre un changement de type de commande (le taux en dépend).
+//
+// Une commande close garde ses valeurs : seules les lignes d'une commande non
+// close, ou encore vides, sont (re)figées. Une ligne dont le produit ou la
+// catégorie est introuvable est remise à NULL plutôt que de garder un taux
+// devenu faux ; les lectures retombent alors sur le produit.
+func (r *OrdersLifeCycleRepository) freezeOrderVAT(ctx context.Context, orderID string) error {
 	db := dbx.GetDB(ctx, r.database)
 
-	err = db.QueryRowContext(ctx, `SELECT tva_rate FROM tva_categories WHERE tva_id = ?`, -1).Scan(&rate)
+	if _, err := db.ExecContext(ctx, `
+		UPDATE orderitems oi
+		SET tva_id = v.tva_id,
+		    tva_rate = v.tva_rate,
+		    tva_reconstructed = FALSE
+		FROM (
+			SELECT oi2.order_item_id, tc.tva_id, tc.tva_rate
+			FROM orderitems oi2
+			INNER JOIN orders o ON o.order_id = oi2.order_id
+			LEFT JOIN products p ON p.product_id = oi2.product_id
+			LEFT JOIN tva_categories tc ON tc.tva_id = CASE
+					WHEN o.order_type = 'DELIVERY' THEN p.tva_delivery_id
+					WHEN o.order_type = 'TAKE_AWAY' THEN p.tva_take_away_id
+					ELSE p.tva_in_id
+				END
+			WHERE oi2.order_id = ?
+			  AND (COALESCE(o.state, '') <> 'CLOSED' OR oi2.tva_id IS NULL)
+		) v
+		WHERE oi.order_item_id = v.order_item_id`, orderID); err != nil {
+		return fmt.Errorf("freeze order items VAT: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		UPDATE orders
+		SET delivery_fees_tva_rate = (SELECT tva_rate FROM tva_categories WHERE tva_id = -1),
+		    delivery_fees_tva_reconstructed = FALSE
+		WHERE order_id = ?
+		  AND (COALESCE(state, '') <> 'CLOSED' OR delivery_fees_tva_rate IS NULL)`, orderID); err != nil {
+		return fmt.Errorf("freeze delivery fees VAT: %w", err)
+	}
+	return nil
+}
+
+// GetDeliveryFeesVATRate renvoie le taux de TVA appliqué aux frais de
+// livraison d'une commande : celui figé sur la commande à la vente (migration
+// 164), à défaut celui de la catégorie -1 (même convention que le rapport
+// comptable). found=false si la commande n'existe pas ou si aucun taux n'est
+// connu.
+func (r *OrdersLifeCycleRepository) GetDeliveryFeesVATRate(ctx context.Context, orderID string) (rate float64, found bool, err error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	var nullable sql.NullFloat64
+	err = db.QueryRowContext(ctx, `
+		SELECT `+models.DeliveryFeesTVARateSQL("o", "tva_fees")+`
+		FROM orders o
+		LEFT JOIN tva_categories tva_fees ON tva_fees.tva_id = -1
+		WHERE o.order_id = ?`, orderID).Scan(&nullable)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
 	if err != nil {
 		return 0, false, fmt.Errorf("GetDeliveryFeesVATRate: %w", err)
 	}
-	return rate, true, nil
+	if !nullable.Valid {
+		return 0, false, nil
+	}
+	return nullable.Float64, true, nil
 }

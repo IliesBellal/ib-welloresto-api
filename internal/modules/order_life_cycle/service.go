@@ -1462,7 +1462,7 @@ func (s *OrdersLifeCycleService) deliveryFeesVATRateForInvoice(ctx context.Conte
 	if order.DeliveryFees == nil || *order.DeliveryFees <= 0 {
 		return nil
 	}
-	rate, found, err := s.ordersLifeCycleRepo.GetDeliveryFeesVATRate(ctx)
+	rate, found, err := s.ordersLifeCycleRepo.GetDeliveryFeesVATRate(ctx, order.OrderID)
 	if err != nil {
 		logger.FromContext(ctx).Warn("invoice: delivery fees VAT rate unavailable, VAT breakdown omitted",
 			zap.String("order_id", order.OrderID), zap.Error(err))

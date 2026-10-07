@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/models"
 )
 
 // upsellSuggestionsMinProposed aliases staffCancellationMinOrders
@@ -39,24 +40,21 @@ const upsellSuggestionsMinProposed = staffCancellationMinOrders
 // rows carry a lowercase brand_status). This is a migration, not a rewrite;
 // the divergence only matters for an upsell line on an order whose
 // brand_status is stored lowercase.
-const upsellLineHTExpr = `
+//
+// Category and rate are read from the line first (VAT frozen at sale time,
+// migration 164), same as htLineExpr/htLineJoins.
+var upsellLineHTExpr = `
 	CASE
-		WHEN tva.tva_rate = 0 THEN ((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity)
-		ELSE ((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity) * 100.0 / (100.0 + tva.tva_rate)
+		WHEN ` + lineVATRateExpr + ` = 0 THEN ((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity)
+		ELSE ((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity) * 100.0 / (100.0 + ` + lineVATRateExpr + `)
 	END
 `
 
-const upsellLinesFromJoins = `
+var upsellLinesFromJoins = `
 	FROM orderitems oi
 	INNER JOIN orders o ON o.order_id = oi.order_id
 	INNER JOIN products p ON p.product_id = oi.product_id
-	INNER JOIN tva_categories tva ON tva.tva_id = (
-		CASE
-			WHEN o.order_type = 'DELIVERY' THEN p.tva_delivery_id
-			WHEN o.order_type = 'TAKE_AWAY' THEN p.tva_take_away_id
-			ELSE p.tva_in_id
-		END
-	)
+	INNER JOIN tva_categories tva ON tva.tva_id = ` + models.OrderItemTVAIDSQL("oi", "o", "p") + `
 	LEFT JOIN (
 		SELECT order_item_id, SUM(extra.price) AS extra_price
 		FROM extra

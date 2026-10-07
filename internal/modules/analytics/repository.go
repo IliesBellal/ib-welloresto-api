@@ -9,6 +9,7 @@ import (
 
 	"welloresto-api/internal/database"
 	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 	"welloresto-api/internal/permission"
 )
@@ -363,22 +364,11 @@ func (r *Repository) GetRevenueTotalsThreePeriods(ctx context.Context, merchantI
 			),
 			order_ht AS (
 				SELECT oi.order_id,
-					SUM(
-						CASE
-							WHEN tva.tva_rate = 0 THEN ((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity)
-							ELSE ((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity) * 100.0 / (100.0 + tva.tva_rate)
-						END
-					) AS ht_raw
+					SUM(`+htLineExpr+`) AS ht_raw
 				FROM orderitems oi
 				INNER JOIN scoped_orders so ON so.order_id = oi.order_id
 				INNER JOIN products p ON p.product_id = oi.product_id
-				INNER JOIN tva_categories tva ON tva.tva_id = (
-					CASE
-						WHEN so.order_type = 'DELIVERY' THEN p.tva_delivery_id
-						WHEN so.order_type = 'TAKE_AWAY' THEN p.tva_take_away_id
-						ELSE p.tva_in_id
-					END
-				)
+				INNER JOIN tva_categories tva ON tva.tva_id = `+models.OrderItemTVAIDSQL("oi", "so", "p")+`
 				LEFT JOIN (
 					SELECT order_item_id, SUM(extra.price) AS extra_price
 					FROM extra
@@ -468,24 +458,24 @@ func roundToIntExpr(expr string) string {
 // rate for the order's service type — identical shape to
 // pos/reports.GetTVAReportData and stats.upsellLineHTExpr (product →
 // tva_delivery_id/tva_take_away_id/tva_in_id depending on order_type).
-const htLineExpr = `
+// Category and rate are read from the line first (VAT frozen at sale time,
+// migration 164 — docs/TVA_FIGEE_LIGNES_COMMANDE.md), falling back to the
+// product derivation for lines not frozen yet. Every query joining
+// tva_categories as "tva" must select lineVATRateExpr, never tva.tva_rate.
+var lineVATRateExpr = models.OrderItemTVARateSQL("oi", "tva")
+
+var htLineExpr = `
 	CASE
-		WHEN tva.tva_rate = 0 THEN ((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity)
-		ELSE ((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity) * 100.0 / (100.0 + tva.tva_rate)
+		WHEN ` + lineVATRateExpr + ` = 0 THEN ((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity)
+		ELSE ((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity) * 100.0 / (100.0 + ` + lineVATRateExpr + `)
 	END
 `
 
-const htLineJoins = `
+var htLineJoins = `
 	FROM orderitems oi
 	INNER JOIN orders o ON o.order_id = oi.order_id
 	INNER JOIN products p ON p.product_id = oi.product_id
-	INNER JOIN tva_categories tva ON tva.tva_id = (
-		CASE
-			WHEN o.order_type = 'DELIVERY' THEN p.tva_delivery_id
-			WHEN o.order_type = 'TAKE_AWAY' THEN p.tva_take_away_id
-			ELSE p.tva_in_id
-		END
-	)
+	INNER JOIN tva_categories tva ON tva.tva_id = ` + models.OrderItemTVAIDSQL("oi", "o", "p") + `
 	LEFT JOIN (
 		SELECT order_item_id, SUM(extra.price) AS extra_price
 		FROM extra
@@ -509,10 +499,13 @@ const htLineJoins = `
 // delivery-fee UNION ALL branch — matching it here means the two endpoints'
 // delivery-fee handling stays explicable against each other, not a second,
 // diverging way of interpreting the same disabled-but-live category.
-const deliveryFeeHTExpr = `
+// Rate read from the order first (frozen at sale time, migration 164).
+var deliveryFeeVATRateExpr = models.DeliveryFeesTVARateSQL("o", "tva_fees")
+
+var deliveryFeeHTExpr = `
 	CASE
-		WHEN tva_fees.tva_rate = 0 THEN o.delivery_fees
-		ELSE o.delivery_fees * 100.0 / (100.0 + tva_fees.tva_rate)
+		WHEN ` + deliveryFeeVATRateExpr + ` = 0 THEN o.delivery_fees
+		ELSE o.delivery_fees * 100.0 / (100.0 + ` + deliveryFeeVATRateExpr + `)
 	END
 `
 
@@ -1341,13 +1334,13 @@ func (r *Repository) GetVATByRate(ctx context.Context, merchantIDs []string, sta
 	query := strings.TrimSpace(`
 		SELECT rate, COALESCE(SUM(ttc_cents), 0) AS ttc_cents, COALESCE(SUM(ht_raw), 0) AS ht_raw
 		FROM (
-			SELECT tva.tva_rate AS rate,
+			SELECT `+lineVATRateExpr+` AS rate,
 				(oi.price + COALESCE(e.extra_price, 0)) * oi.quantity AS ttc_cents,
 				`+htLineExpr+` AS ht_raw
 	`) + "\n\t\t" + strings.TrimSpace(htLineJoins) + `
 			WHERE ` + where + `
 			UNION ALL
-			SELECT tva_fees.tva_rate AS rate, o.delivery_fees AS ttc_cents, ` + deliveryFeeHTExpr + ` AS ht_raw
+			SELECT ` + deliveryFeeVATRateExpr + ` AS rate, o.delivery_fees AS ttc_cents, ` + deliveryFeeHTExpr + ` AS ht_raw
 	` + "\n\t\t" + strings.TrimSpace(deliveryFeeJoins) + `
 			WHERE ` + where + deliveryFeeFilter + `
 		) lines
@@ -1519,13 +1512,13 @@ func (r *Repository) GetVATByRateByMerchant(ctx context.Context, merchantIDs []s
 	query := strings.TrimSpace(`
 		SELECT merchant_id, rate, COALESCE(SUM(ttc_cents), 0) AS ttc_cents, COALESCE(SUM(ht_raw), 0) AS ht_raw
 		FROM (
-			SELECT o.merchant_id AS merchant_id, tva.tva_rate AS rate,
+			SELECT o.merchant_id AS merchant_id, `+lineVATRateExpr+` AS rate,
 				(oi.price + COALESCE(e.extra_price, 0)) * oi.quantity AS ttc_cents,
 				`+htLineExpr+` AS ht_raw
 	`) + "\n\t\t" + strings.TrimSpace(htLineJoins) + `
 			WHERE ` + where + `
 			UNION ALL
-			SELECT o.merchant_id AS merchant_id, tva_fees.tva_rate AS rate, o.delivery_fees AS ttc_cents, ` + deliveryFeeHTExpr + ` AS ht_raw
+			SELECT o.merchant_id AS merchant_id, ` + deliveryFeeVATRateExpr + ` AS rate, o.delivery_fees AS ttc_cents, ` + deliveryFeeHTExpr + ` AS ht_raw
 	` + "\n\t\t" + strings.TrimSpace(deliveryFeeJoins) + `
 			WHERE ` + where + deliveryFeeFilter + `
 		) lines
