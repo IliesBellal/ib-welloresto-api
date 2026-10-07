@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -37,10 +38,18 @@ func (s *receiptService) GenerateFiscalReceipt(ctx context.Context, order *model
 	// 2. Générer le nouveau numéro séquentiel
 	newNumber := s.generateNextReceiptNumber(lastNumber)
 
-	// 3. Préparer les JSON
+	// 3. Préparer les JSON, dont la ventilation de TVA par taux, nette des
+	// remises de caisse (C9, lot B conformité caisse)
 	itemsJSON, _ := json.Marshal(items)
 	paymentsJSON, _ := json.Marshal(payments)
-	taxDetailsJSON := []byte("{}") // À remplacer par ta logique de ventilation TVA si nécessaire
+	taxLines, discount, err := s.repo.GetOrderTaxLines(ctx, order.OrderID)
+	if err != nil {
+		return fmt.Errorf("failed to compute receipt tax details: %w", err)
+	}
+	taxDetailsJSON, err := json.Marshal(fiscal.BuildTaxDetails(taxLines, discount))
+	if err != nil {
+		return fmt.Errorf("failed to encode receipt tax details: %w", err)
+	}
 
 	// 4. Création, scellement et sauvegarde
 	receipt := &models.Receipt{
@@ -114,17 +123,44 @@ func (s *receiptService) GenerateRefundReceipt(ctx context.Context, merchantID s
 	newNumber := s.generateNextReceiptNumber(lastNumber)
 	newTechID := helpers.GeneratePrefixedID(helpers.ReceiptIDPrefix)
 
-	// 2. Snapshot : on met juste une ligne explicite pour l'avoir (puisqu'on omet les items précis pour l'instant)
-	itemsSnap := []models.SnapshotItem{
-		{
+	// 2. Ventilation de TVA de l'avoir (C9, lot B conformité caisse) : au
+	// prorata des taux du ticket d'origine ; pour un ticket antérieur au lot B
+	// (sans ventilation), des taux de la commande. Une ligne d'avoir par taux.
+	origTax, ok := fiscal.ParseTaxDetails(originalReceipt.TaxDetails)
+	if !ok {
+		taxLines, discount, err := s.repo.GetOrderTaxLines(ctx, orderID)
+		if err != nil {
+			return fmt.Errorf("failed to compute refund tax details: %w", err)
+		}
+		origTax = fiscal.BuildTaxDetails(taxLines, discount)
+	}
+	refundTax := fiscal.ProrateTaxDetails(origTax, int64(refundAmountNegative))
+	totalHT := refundAmountNegative
+	itemsSnap := []models.SnapshotItem{}
+	for _, l := range refundTax.Lines {
+		itemsSnap = append(itemsSnap, models.SnapshotItem{
 			Name:      fmt.Sprintf("Avoir sur facture %s", originalReceipt.ReceiptNumber),
 			Quantity:  1,
-			PriceTTC:  int64(refundAmountNegative), // Négatif
-			TaxRate:   0,                           // Pour un remboursement générique sans gestion d'items, on lisse souvent à 0, ou on doit recalculer le prorata exact.
-			TaxAmount: 0,
-		},
+			PriceTTC:  l.TTC, // Négatif
+			TaxRate:   int64(math.Round(l.Rate * 100)),
+			TaxAmount: l.TVA,
+		})
+	}
+	if len(refundTax.Lines) > 0 {
+		totalHT = int(refundTax.TotalHT())
+	} else {
+		// Aucun taux connu (commande sans ligne) : ligne unique, comme avant.
+		itemsSnap = append(itemsSnap, models.SnapshotItem{
+			Name:     fmt.Sprintf("Avoir sur facture %s", originalReceipt.ReceiptNumber),
+			Quantity: 1,
+			PriceTTC: int64(refundAmountNegative),
+		})
 	}
 	itemsJSON, _ := json.Marshal(itemsSnap)
+	taxDetailsJSON, err := json.Marshal(refundTax)
+	if err != nil {
+		return fmt.Errorf("failed to encode refund tax details: %w", err)
+	}
 
 	paySnap := []models.SnapshotPayment{
 		{Amount: refundAmountNegative, MOP: mop},
@@ -138,8 +174,8 @@ func (s *receiptService) GenerateRefundReceipt(ctx context.Context, merchantID s
 		OrderID:          orderID, // On le lie à la même commande !
 		ReceiptNumber:    newNumber,
 		TotalTTC:         refundAmountNegative,
-		TotalHT:          refundAmountNegative, // Simplifié pour cet exemple
-		TaxDetails:       []byte("{}"),
+		TotalHT:          totalHT,
+		TaxDetails:       taxDetailsJSON,
 		ItemsSnapshot:    itemsJSON,
 		PaymentsSnapshot: payJSON,
 		CreatedAt:        fiscal.Now(),

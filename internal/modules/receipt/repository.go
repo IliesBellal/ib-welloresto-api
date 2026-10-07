@@ -14,6 +14,7 @@ type ReceiptRepository interface {
 	InsertReceipt(ctx context.Context, receipt *models.Receipt) error
 	GetReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error)
 	GetSaleReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error)
+	GetOrderTaxLines(ctx context.Context, orderID string) ([]fiscal.TaxLine, int64, error)
 }
 
 type receiptRepository struct {
@@ -77,6 +78,57 @@ func (r *receiptRepository) InsertReceipt(ctx context.Context, receipt *models.R
 		receipt.CreatedAt, receipt.PrevHash, receipt.Hash, receipt.Signature, hashVersion,
 	)
 	return err
+}
+
+// GetOrderTaxLines renvoie les parts TTC de la commande par taux et le total
+// de ses remises de caisse actives, pour ventiler la TVA de son ticket (C9) :
+// mêmes règles que l'export comptable (pos/accounting GetOrderVATLines) —
+// chaque ligne (prix + suppléments) × quantité au taux figé sur la ligne
+// (migration 164, à défaut celui de la catégorie du produit), les frais de
+// livraison non nuls à leur propre taux.
+func (r *receiptRepository) GetOrderTaxLines(ctx context.Context, orderID string) ([]fiscal.TaxLine, int64, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	// Une seule requête (chemin de chaque clôture de vente) : parts « L » par
+	// taux, puis une ligne « D » portant le total des remises de caisse.
+	rows, err := db.QueryContext(ctx, `
+		SELECT 'L' AS kind, `+models.OrderItemTVARateSQL("oi", "tva")+` AS rate,
+		       ((oi.price + COALESCE((SELECT SUM(ex.price) FROM extra ex WHERE ex.order_item_id = oi.order_item_id), 0)) * oi.quantity) AS ttc
+		FROM orderitems oi
+		INNER JOIN orders o ON o.order_id = oi.order_id
+		INNER JOIN products p ON p.product_id = oi.product_id
+		INNER JOIN tva_categories tva ON tva.tva_id = `+models.OrderItemTVAIDSQL("oi", "o", "p")+`
+		WHERE oi.order_id = ?
+		UNION ALL
+		SELECT 'L', `+models.DeliveryFeesTVARateSQL("o_fees", "tva_fees")+`, o_fees.delivery_fees
+		FROM orders o_fees
+		INNER JOIN tva_categories tva_fees ON tva_fees.tva_id = -1
+		WHERE o_fees.order_id = ? AND o_fees.delivery_fees <> 0
+		UNION ALL
+		SELECT 'D', 0, COALESCE(SUM(amount), 0) FROM payments
+		WHERE order_id = ? AND enabled = TRUE AND upper(mop) IN `+models.DiscountMOPsSQL, orderID, orderID, orderID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("load order tax lines: %w", err)
+	}
+	defer rows.Close()
+	var lines []fiscal.TaxLine
+	var discount int64
+	for rows.Next() {
+		var kind string
+		var l fiscal.TaxLine
+		if err := rows.Scan(&kind, &l.Rate, &l.TTC); err != nil {
+			return nil, 0, fmt.Errorf("scan order tax line: %w", err)
+		}
+		if kind == "D" {
+			discount = l.TTC
+			continue
+		}
+		lines = append(lines, l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("load order tax lines: %w", err)
+	}
+	return lines, discount, nil
 }
 
 func (r *receiptRepository) GetReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error) {
