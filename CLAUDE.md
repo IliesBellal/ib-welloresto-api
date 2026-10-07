@@ -88,6 +88,7 @@ Required at runtime (no `.env` in repo):
 - Stripe: `STRIPE_API_KEY`, `STRIPE_ONBOARDING_RETURN_URL`, `STRIPE_ONBOARDING_REFRESH_URL`
 - Uber Eats, Deliveroo, Brevo, Cloudflare R2, FCM credentials
 - AI: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` (optional — AI features error at runtime without them)
+- Fiscal: `FISCAL_SIGNING_KEY` (required, HMAC of the fiscal chains). The hourly fiscal-closure job (`RunFiscalClosures`) needs no configuration: a merchant without closures starts at the last completed day; earlier days are backfilled once with `cmd/backfill_fiscal_closures` (see [docs/attestation-conformite-feuille-de-route.md](docs/attestation-conformite-feuille-de-route.md))
 - AI task overrides: `AI_TASK_MENU_TRANSLATION_PROVIDER/MODEL/TEMPERATURE/MAX_TOKENS`, `AI_TASK_UPSELL_PROVIDER/MODEL/TEMPERATURE/MAX_TOKENS`, `AI_TASK_MENU_OCR_PROVIDER/MODEL/EFFORT/MAX_TOKENS/TIMEOUT_MS/ENABLED` (defaults: anthropic / `claude-opus-5-5` / `medium` / 16000 / 180000 / **false**; `EFFORT=none` = not sent), `AI_MENU_OCR_DEFAULT_CREDITS` (menu photo import credits per merchant, default 10 — see [docs/import-carte-ia-03-porte-ia.md](docs/import-carte-ia-03-porte-ia.md))
 
 ### Deprecations

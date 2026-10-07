@@ -1,3 +1,25 @@
+### Conformité caisse, lot B — clôtures fiscales et scellement des commandes (2026-10-07)
+
+**Contexte.** L'audit (`docs/attestation-conformite-00-audit.md`) relevait l'absence de clôtures journalières, mensuelles et annuelles scellées (C6, BOI §170) et des avoirs à TVA nulle (C9). Les décisions S1 à S7 de la feuille de route (`docs/attestation-conformite-feuille-de-route.md`) ont aussi déplacé le scellement des commandes. Brief, journal et mesures : `docs/attestation-conformite-02-lot-B-brief.md`.
+
+**Décisions.**
+- **Clôtures scellées** (`fiscal_closures`, migration 170, une table pour les trois périodes, chaîne `fiscal_closures`) :
+  - jour calendaire local de l'établissement ;
+  - chiffre d'affaires lu sur les tickets et avoirs du jour (nets des remises de caisse), paiements par moyen, ventilations par taux et par canal ;
+  - mois et année = somme des journées ;
+  - grand total de l'année et total perpétuel tenus en cumul ;
+  - valeur d'ouverture = tickets antérieurs (décision d'Ilies).
+- **Commandes scellées par leur clôture journalière** (empreinte de chacune, avec son statut). Les clôtures de commande n'écrivent plus que leur état et leur date, et la chaîne par commande du lot A est retirée. Conséquence : une modification avant le passage de nuit reste possible, ce qui permettra la réouverture encadrée du lot C.
+- **Tâche horaire sans configuration :** un établissement sans clôture commence au dernier jour échu. Le rattrapage antérieur se fait une fois avec `cmd/backfill_fiscal_closures`.
+- **Tickets :** `tax_details` ventilé par taux avec les règles de l'export comptable. Avoirs ventilés au prorata, une ligne par taux, `total_ht` juste.
+
+**Mesures :**
+- clôture d'une commande (avec ticket et audit) revenue au coût d'avant le chantier : p50 310 ms contre 298 ms depuis le poste ;
+- clôture journalière de l'établissement le plus actif : environ 150 ms ;
+- 0 fourche, 0 ticket en double.
+
+**Dépendance :** s'appuie sur la TVA figée et les remises de caisse (migration 164, `models` et `helpers`), commitées juste avant ce lot.
+
 ### Conformité caisse, lot A — empreintes complètes, chaînes sérialisées, plateformes dans la chaîne (2026-10-07)
 
 **Contexte.** Préalable à l'attestation éditeur (BOI-LETTRE-000242, de

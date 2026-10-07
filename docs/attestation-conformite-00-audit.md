@@ -185,6 +185,9 @@ Une fois C1 à C8 corrigés (C9 à C11 recommandés), et le contrôle d'intégri
 | Date | Lot | Constats | État |
 |---|---|---|---|
 | 2026-10-07 | A ([brief et journal](attestation-conformite-01-lot-A-brief.md), [decisions.md](decisions.md)) | C3, C5, C10 | **Traités** sur staging (migrations 168 et 169 appliquées). Production : migrations avant le déploiement du code, après la requête de contrôle des doublons de tickets. |
-| — | B | C1, C2 | À faire. Points relevés pendant le lot A : `SyncOrderState` vers un état ouvert peut rouvrir une commande close ; 23 commandes annulées sur staging ont un ticket de vente sans avoir (clôture, réouverture, annulation). |
-| — | C | C6, C7 | À faire. |
-| — | D | C4, C8 | À faire. La commande de vérification réutilisera les chargeurs de charge utile de `internal/fiscal`. |
+| 2026-10-07 | — | — | **Suite réorganisée** (décisions S1 à S7) : voir la [feuille de route](attestation-conformite-feuille-de-route.md). |
+| 2026-10-07 | B ([brief et journal](attestation-conformite-02-lot-B-brief.md)) | C6, C9 | **Traités** : clôtures journalières, mensuelles et annuelles scellées (tâche horaire et rattrapage) ; commandes scellées par leur clôture journalière ; TVA ventilée sur les tickets et les avoirs. Migrations 170 et 171 appliquées sur staging. |
+| — | C ([brief](attestation-conformite-03-lot-C-brief.md)) | C1, C2 | À faire. Points relevés pendant le lot A : `SyncOrderState` vers un état ouvert peut rouvrir une commande close ; 23 commandes annulées sur staging ont un ticket de vente sans avoir. |
+| — | D | C7 | À faire : archive mensuelle. |
+| — | E | C4, C8 | À faire. La commande de vérification réutilisera les lectures de `internal/fiscal`. |
+| — | F | — | Version du logiciel et génération autonome de l'attestation. |
