@@ -6,7 +6,9 @@ import (
 	"fmt"
 
 	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/fiscal"
 	"welloresto-api/internal/logger"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 type OrdersRepository struct {
@@ -36,51 +38,67 @@ func (r *OrdersRepository) GetOrderIDsByBrandOrderID(ctx context.Context, brandO
 }
 
 // --- CANCEL ORDER ---
+//
+// Lot A conformité caisse (C10) : les commandes encore ouvertes sont
+// clôturées par la chaîne fiscale (fiscal.SealOrderClosure), dans une seule
+// transaction avec la désactivation des paiements (inchangée : lot B).
 func (r *OrdersRepository) CancelOrder(ctx context.Context, brandOrderID string) error {
-	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	// Guard against a late/duplicate webhook overwriting an order already
-	// finalized (delivered, denied, etc.) - mirrors the internal OrderStillOpen
-	// check used by DenyOrder/DeleteOrder.
-	// cancelled_by_type hardcoded to PLATFORM: this handler is the direct
-	// webhook write path (bypasses order_life_cycle.DeleteOrderLocal
-	// entirely), unconditionally triggered by Uber Eats itself.
-	_, err := db.ExecContext(ctx, `
-		UPDATE orders
-		SET brand_status = 'CANCELED',
-		    deletion_reason_id = '39',
-		    state = 'CLOSED',
-		    cancelled_by_type = 'PLATFORM'
-		WHERE brand_order_id = ? AND state = 'OPEN'
-	`, brandOrderID)
-	if err != nil {
-		log.Error("Error canceling order: " + err.Error())
-		return err
-	}
+	err := dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
+		db := dbx.GetDB(txCtx, r.database)
 
-	// MySQL's UPDATE...JOIN has no direct Postgres equivalent; Postgres uses
-	// UPDATE...FROM instead.
-	disablePaymentsQuery := `
-		UPDATE payments p
-		JOIN orders o ON p.order_id = o.order_id
-		SET p.enabled = FALSE
-		WHERE o.brand_order_id = ?
-	`
-	if dbx.ActiveDialect() == dbx.Postgres {
-		disablePaymentsQuery = `
-		UPDATE payments
-		SET enabled = FALSE
-		FROM orders
-		WHERE payments.order_id = orders.order_id AND orders.brand_order_id = ?
-	`
-	}
-	_, err = db.ExecContext(ctx, disablePaymentsQuery, brandOrderID)
+		// Guard against a late/duplicate webhook overwriting an order already
+		// finalized (delivered, denied, etc.) - mirrors the internal OrderStillOpen
+		// check used by DenyOrder/DeleteOrder.
+		// cancelled_by_type hardcoded to PLATFORM: this handler is the direct
+		// webhook write path (bypasses order_life_cycle.DeleteOrderLocal
+		// entirely), unconditionally triggered by Uber Eats itself.
+		open, err := fiscal.LockOpenOrdersByBrandOrderID(txCtx, db, brandOrderID)
+		if err != nil {
+			return err
+		}
+		for _, o := range open {
+			seal, err := fiscal.SealOrderClosure(txCtx, db, o.OrderID)
+			if err != nil {
+				return err
+			}
+			args := append(seal.Args(), o.OrderID)
+			if _, err := db.ExecContext(txCtx, `
+				UPDATE orders
+				SET brand_status = 'CANCELED',
+				    deletion_reason_id = '39',
+				    cancelled_by_type = 'PLATFORM',
+				    `+fiscal.SealColumns+`
+				WHERE order_id = ?
+			`, args...); err != nil {
+				log.Error("Error canceling order: " + err.Error())
+				return err
+			}
+		}
 
-	if err != nil {
-		log.Error("Error updating payment status: " + err.Error())
-	}
-
+		// MySQL's UPDATE...JOIN has no direct Postgres equivalent; Postgres uses
+		// UPDATE...FROM instead.
+		disablePaymentsQuery := `
+			UPDATE payments p
+			JOIN orders o ON p.order_id = o.order_id
+			SET p.enabled = FALSE
+			WHERE o.brand_order_id = ?
+		`
+		if dbx.ActiveDialect() == dbx.Postgres {
+			disablePaymentsQuery = `
+			UPDATE payments
+			SET enabled = FALSE
+			FROM orders
+			WHERE payments.order_id = orders.order_id AND orders.brand_order_id = ?
+		`
+		}
+		if _, err := db.ExecContext(txCtx, disablePaymentsQuery, brandOrderID); err != nil {
+			log.Error("Error updating payment status: " + err.Error())
+			return err
+		}
+		return nil
+	})
 	return err
 }
 
@@ -135,17 +153,42 @@ func (r *OrdersRepository) MarkEnRouteToDropoff(ctx context.Context, brandOrderI
 	return nil
 }
 
+// MarkFailed clôture en échec (brand_status FAILED) une commande dont Uber
+// signale l'échec de livraison. Lot A conformité caisse (C10) : les commandes
+// encore ouvertes sont clôturées par la chaîne fiscale ; une commande déjà
+// close ne reçoit que le statut, sans rechaînage ni nouvelle date de clôture.
 func (r *OrdersRepository) MarkFailed(ctx context.Context, brandOrderID string) error {
-	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	_, err := db.ExecContext(ctx, `
-		UPDATE orders
-		SET state = 'CLOSED',
-		    brand_status = 'FAILED'
-		WHERE brand_order_id = ?
-	`, brandOrderID)
-
+	err := dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
+		db := dbx.GetDB(txCtx, r.database)
+		if _, err := db.ExecContext(txCtx, `
+			UPDATE orders
+			SET brand_status = 'FAILED'
+			WHERE brand_order_id = ? AND state <> 'OPEN'
+		`, brandOrderID); err != nil {
+			return err
+		}
+		open, err := fiscal.LockOpenOrdersByBrandOrderID(txCtx, db, brandOrderID)
+		if err != nil {
+			return err
+		}
+		for _, o := range open {
+			seal, err := fiscal.SealOrderClosure(txCtx, db, o.OrderID)
+			if err != nil {
+				return err
+			}
+			if _, err := db.ExecContext(txCtx, `
+				UPDATE orders
+				SET brand_status = 'FAILED',
+				    `+fiscal.SealColumns+`
+				WHERE order_id = ?
+			`, append(seal.Args(), o.OrderID)...); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		log.Error("Error marking order as failed: " + err.Error())
 	}

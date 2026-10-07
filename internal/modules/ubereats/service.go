@@ -17,11 +17,34 @@ import (
 )
 
 type UberEatsService struct {
-	client *UberClient
-	repo   *UberRepository
-	db     *sql.DB // Nécessaire pour gérer les transactions (Begin/Commit)
-	config ConfigUberEats
-	redis  *redis.Client // Optionnel, pour le caching
+	client       *UberClient
+	repo         *UberRepository
+	db           *sql.DB // Nécessaire pour gérer les transactions (Begin/Commit)
+	config       ConfigUberEats
+	redis        *redis.Client // Optionnel, pour le caching
+	saleReceipts SaleReceiptIssuer
+}
+
+// SaleReceiptIssuer émet le ticket fiscal d'une vente clôturée
+// (OrdersLifeCycleService.HandlerFiscalReceiptGeneration). Injecté après
+// construction par SetSaleReceiptIssuer : order_life_cycle dépend de ce
+// module, l'inverse créerait un cycle d'import.
+type SaleReceiptIssuer interface {
+	HandlerFiscalReceiptGeneration(ctx context.Context, merchantID, orderID string) error
+}
+
+// SetSaleReceiptIssuer branche l'émission des tickets des ventes Uber Eats
+// clôturées par réconciliation (lot A conformité caisse, C10). Sans elle, une
+// telle clôture échoue plutôt que de sortir une vente sans ticket.
+func (s *UberEatsService) SetSaleReceiptIssuer(issuer SaleReceiptIssuer) {
+	s.saleReceipts = issuer
+}
+
+func (s *UberEatsService) saleReceiptFunc() SaleReceiptFunc {
+	if s.saleReceipts == nil {
+		return nil
+	}
+	return s.saleReceipts.HandlerFiscalReceiptGeneration
 }
 
 func NewUberEatsService(db *sql.DB, config ConfigUberEats, redisClient *redis.Client) *UberEatsService {
@@ -460,7 +483,7 @@ func (s *UberEatsService) FinishOrderIfDoesNotExist(ctx context.Context, token s
 
 	// 2. Gestion cas 404
 	if err != nil && err.Error() == "order_not_found" {
-		if err := s.repo.HandleOrderNotFound(ctx, uberOrderID); err != nil {
+		if err := s.repo.HandleOrderNotFound(ctx, uberOrderID, s.saleReceiptFunc()); err != nil {
 			return err
 		}
 		return nil
@@ -505,7 +528,7 @@ func (s *UberEatsService) FinishOrderIfDoesNotExist(ctx context.Context, token s
 	}
 
 	// 4. Update DB
-	if err := s.repo.SyncOrderState(ctx, uberOrderID, brandStatus, state, merchantApproval, deletionReasonID); err != nil {
+	if err := s.repo.SyncOrderState(ctx, uberOrderID, brandStatus, state, merchantApproval, deletionReasonID, s.saleReceiptFunc()); err != nil {
 		return err
 	}
 

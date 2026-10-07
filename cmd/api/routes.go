@@ -373,6 +373,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		mailService,
 		bookingsService,
 	)
+	// Ventes Uber Eats clôturées par réconciliation : ticket fiscal émis par
+	// le cycle de vie des commandes (lot A conformité caisse, C10). Injecté
+	// ici, uberService étant construit avant ordersLifeCycleService.
+	uberService.SetSaleReceiptIssuer(ordersLifeCycleService)
 
 	// ---- Delivery Sessions ----
 	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, notificationService, ordersLifeCycleService, merchantSMSService, uberService, log)

@@ -23,6 +23,7 @@ func TestUberEatsRepository_Postgres(t *testing.T) {
 		if mid == "" {
 			return
 		}
+		_, _ = db.ExecContext(ctx, `DELETE FROM payments WHERE merchant_id = $1`, mid)
 		_, _ = db.ExecContext(ctx, `DELETE FROM orderitems WHERE merchant_id = $1`, mid)
 		_, _ = db.ExecContext(ctx, `DELETE FROM orders WHERE merchant_id = $1`, mid)
 		_, _ = db.ExecContext(ctx, `DELETE FROM integration_uber_eats WHERE merchant_id = $1`, mid)
@@ -151,21 +152,38 @@ func TestUberEatsRepository_Postgres(t *testing.T) {
 		t.Fatalf("expected distributed_quantity = quantity (3), got %d", distributedQty)
 	}
 
-	// SyncOrderState CLOSED : la variante MySQL multi-table devient 2 requêtes PG
-	if err := repo.SyncOrderState(ctx, "itest-ue-ord-1", "COMPLETED", "CLOSED", "ACCEPTED", sql.NullInt64{}); err != nil {
+	// SyncOrderState CLOSED (vente) : une commande Uber porte son paiement
+	// UBER_EATS ; la clôture passe par la chaîne fiscale et émet le ticket
+	// (lot A conformité caisse, C10).
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO payments (merchant_id, user_id, order_id, amount, mop, enabled)
+		VALUES ($1, 'UBER_EATS', $2, 2500, 'UBER_EATS', true)`, merchantID, orderIntID); err != nil {
+		t.Fatalf("seed uber payment: %v", err)
+	}
+	var receiptsIssued []string
+	issueReceipt := func(_ context.Context, m, o string) error {
+		receiptsIssued = append(receiptsIssued, m+"/"+o)
+		return nil
+	}
+	if err := repo.SyncOrderState(ctx, "itest-ue-ord-1", "COMPLETED", "CLOSED", "ACCEPTED", sql.NullInt64{}, issueReceipt); err != nil {
 		t.Fatalf("SyncOrderState failed against postgres: %v", err)
 	}
 	var state string
 	var deliveredOn *time.Time
-	if err := db.QueryRowContext(ctx, `SELECT state, delivered_on FROM orders WHERE order_id = $1`, orderIntID).Scan(&state, &deliveredOn); err != nil {
+	var hashVersion int
+	if err := db.QueryRowContext(ctx, `SELECT state, delivered_on, hash_version FROM orders WHERE order_id = $1`, orderIntID).Scan(&state, &deliveredOn, &hashVersion); err != nil {
 		t.Fatalf("read back synced order: %v", err)
 	}
-	if state != "CLOSED" || deliveredOn == nil {
-		t.Fatalf("expected CLOSED + delivered_on set, got %s / %v", state, deliveredOn)
+	if state != "CLOSED" || deliveredOn == nil || hashVersion != 2 {
+		t.Fatalf("expected CLOSED + delivered_on set + sealed v2, got %s / %v / v%d", state, deliveredOn, hashVersion)
+	}
+	if len(receiptsIssued) != 1 || receiptsIssued[0] != merchantID+"/"+orderID {
+		t.Fatalf("expected one sale receipt for %s/%s, got %v", merchantID, orderID, receiptsIssued)
 	}
 
-	// HandleOrderNotFound (CASE brand_status)
-	if err := repo.HandleOrderNotFound(ctx, "itest-ue-ord-1"); err != nil {
+	// HandleOrderNotFound (CASE brand_status) sur une commande déjà close :
+	// statut seulement, la clôture scellée n'est pas réécrite.
+	if err := repo.HandleOrderNotFound(ctx, "itest-ue-ord-1", issueReceipt); err != nil {
 		t.Fatalf("HandleOrderNotFound failed against postgres: %v", err)
 	}
 
@@ -252,7 +270,7 @@ func TestUberEatsRepository_SyncOrderState_CancelledByType_Postgres(t *testing.T
 
 	t.Run("SyncOrderState DENIED, previously unset -> PLATFORM", func(t *testing.T) {
 		orderID := seedOrder(t, "itest-ue-cbt-denied", 1, nil)
-		if err := repo.SyncOrderState(ctx, "itest-ue-cbt-denied", "DENIED", "CLOSED", "DENIED", sql.NullInt64{Int64: 40, Valid: true}); err != nil {
+		if err := repo.SyncOrderState(ctx, "itest-ue-cbt-denied", "DENIED", "CLOSED", "DENIED", sql.NullInt64{Int64: 40, Valid: true}, func(context.Context, string, string) error { return nil }); err != nil {
 			t.Fatalf("SyncOrderState: %v", err)
 		}
 		if got := readCancelledByType(t, orderID); got != "PLATFORM" {
@@ -263,7 +281,7 @@ func TestUberEatsRepository_SyncOrderState_CancelledByType_Postgres(t *testing.T
 	t.Run("SyncOrderState CANCELED, already STAFF -> preserved", func(t *testing.T) {
 		staff := "STAFF"
 		orderID := seedOrder(t, "itest-ue-cbt-canceled-staff", 2, &staff)
-		if err := repo.SyncOrderState(ctx, "itest-ue-cbt-canceled-staff", "CANCELED", "CLOSED", "ACCEPTED", sql.NullInt64{Int64: 39, Valid: true}); err != nil {
+		if err := repo.SyncOrderState(ctx, "itest-ue-cbt-canceled-staff", "CANCELED", "CLOSED", "ACCEPTED", sql.NullInt64{Int64: 39, Valid: true}, func(context.Context, string, string) error { return nil }); err != nil {
 			t.Fatalf("SyncOrderState: %v", err)
 		}
 		if got := readCancelledByType(t, orderID); got != "STAFF" {
@@ -273,7 +291,7 @@ func TestUberEatsRepository_SyncOrderState_CancelledByType_Postgres(t *testing.T
 
 	t.Run("SyncOrderState COMPLETED does not classify a cancellation", func(t *testing.T) {
 		orderID := seedOrder(t, "itest-ue-cbt-completed", 3, nil)
-		if err := repo.SyncOrderState(ctx, "itest-ue-cbt-completed", "COMPLETED", "CLOSED", "ACCEPTED", sql.NullInt64{}); err != nil {
+		if err := repo.SyncOrderState(ctx, "itest-ue-cbt-completed", "COMPLETED", "CLOSED", "ACCEPTED", sql.NullInt64{}, func(context.Context, string, string) error { return nil }); err != nil {
 			t.Fatalf("SyncOrderState: %v", err)
 		}
 		var got sql.NullString
@@ -287,7 +305,7 @@ func TestUberEatsRepository_SyncOrderState_CancelledByType_Postgres(t *testing.T
 
 	t.Run("HandleOrderNotFound, previously unset -> PLATFORM", func(t *testing.T) {
 		orderID := seedOrder(t, "itest-ue-cbt-notfound", 4, nil)
-		if err := repo.HandleOrderNotFound(ctx, "itest-ue-cbt-notfound"); err != nil {
+		if err := repo.HandleOrderNotFound(ctx, "itest-ue-cbt-notfound", func(context.Context, string, string) error { return nil }); err != nil {
 			t.Fatalf("HandleOrderNotFound: %v", err)
 		}
 		if got := readCancelledByType(t, orderID); got != "PLATFORM" {
@@ -298,7 +316,7 @@ func TestUberEatsRepository_SyncOrderState_CancelledByType_Postgres(t *testing.T
 	t.Run("HandleOrderNotFound, already STAFF -> preserved", func(t *testing.T) {
 		staff := "STAFF"
 		orderID := seedOrder(t, "itest-ue-cbt-notfound-staff", 5, &staff)
-		if err := repo.HandleOrderNotFound(ctx, "itest-ue-cbt-notfound-staff"); err != nil {
+		if err := repo.HandleOrderNotFound(ctx, "itest-ue-cbt-notfound-staff", func(context.Context, string, string) error { return nil }); err != nil {
 			t.Fatalf("HandleOrderNotFound: %v", err)
 		}
 		if got := readCancelledByType(t, orderID); got != "STAFF" {

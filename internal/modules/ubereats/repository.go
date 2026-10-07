@@ -3,12 +3,15 @@ package ubereats
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
+	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/fiscal"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/modules/distributiontime"
-	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 type UberRepository struct {
@@ -414,31 +417,35 @@ func (r *UberRepository) SetOrderStatusReady(ctx context.Context, orderID string
 	return nil
 }
 
+// SaleReceiptFunc émet le ticket fiscal d'une vente plateforme qui vient
+// d'être clôturée, dans la transaction de la clôture
+// (OrdersLifeCycleService.HandlerFiscalReceiptGeneration, injecté : ce
+// module ne peut pas importer order_life_cycle, qui l'importe).
+type SaleReceiptFunc func(ctx context.Context, merchantID, orderID string) error
+
 // SyncOrderState met à jour la commande lors du finishOrderIfDoesNotExist (succès API)
-func (r *UberRepository) SyncOrderState(ctx context.Context, uberOrderID, status, state, approval string, reasonID sql.NullInt64) error {
-	db := dbx.GetDB(ctx, r.database)
-
-	// cancelled_by_type (PROMPT 11, §2) : ce chemin de réconciliation est
-	// appelé après l'échec d'un appel API Uber (Deny/Cancel/SetReady/Accept —
-	// voir service.go RecoverOrderState). Dans le cas Deny/Cancel, l'ordre
-	// d'exécution place toujours DenyOrderLocal/DeleteOrderLocal AVANT cet
-	// appel API (order_life_cycle/service.go SetOrderDenied/DeleteOrder) :
-	// cancelled_by_type porte alors déjà l'acteur réel (STAFF), qu'il ne faut
-	// pas écraser. `cancelled_by_type IS NULL` protège exactement ce cas —
-	// PLATFORM n'est posé que quand rien n'a encore classé l'annulation
-	// (reconciliation déclenchée par SetOrderReady/AcceptOrder, où Uber a
-	// fermé la commande de son propre chef, découvert incidemment). DENIED/
-	// CANCELED seuls comptent comme annulation ici ; DELIVERY_FAILED (déjà
-	// hors périmètre C2, voir lot 1) et les statuts non-terminaux (ACCEPTED,
-	// COMPLETED, EN_ROUTE_TO_DROPOFF) sont laissés intacts.
-	query := fmt.Sprintf(`
-		UPDATE orders
-		SET brand_status = ?, state = ?, merchant_approval = ?, deletion_reason_id = ?,
-		    cancelled_by_type = CASE WHEN cancelled_by_type IS NULL AND ? IN ('DENIED', 'CANCELED') THEN 'PLATFORM' ELSE cancelled_by_type END,
-		    delivered_on = CASE WHEN ? = 'COMPLETED' THEN %[1]s ELSE delivered_on END,
-		    last_update = %[1]s
-		WHERE brand_order_id = ?`, dbx.UTCNow())
-
+//
+// cancelled_by_type (PROMPT 11, §2) : ce chemin de réconciliation est
+// appelé après l'échec d'un appel API Uber (Deny/Cancel/SetReady/Accept —
+// voir service.go RecoverOrderState). Dans le cas Deny/Cancel, l'ordre
+// d'exécution place toujours DenyOrderLocal/DeleteOrderLocal AVANT cet
+// appel API (order_life_cycle/service.go SetOrderDenied/DeleteOrder) :
+// cancelled_by_type porte alors déjà l'acteur réel (STAFF), qu'il ne faut
+// pas écraser. `cancelled_by_type IS NULL` protège exactement ce cas —
+// PLATFORM n'est posé que quand rien n'a encore classé l'annulation
+// (reconciliation déclenchée par SetOrderReady/AcceptOrder, où Uber a
+// fermé la commande de son propre chef, découvert incidemment). DENIED/
+// CANCELED seuls comptent comme annulation ici ; DELIVERY_FAILED (déjà
+// hors périmètre C2, voir lot 1) et les statuts non-terminaux (ACCEPTED,
+// COMPLETED, EN_ROUTE_TO_DROPOFF) sont laissés intacts.
+//
+// Clôture (state CLOSED, lot A conformité caisse, C10) : les commandes encore
+// ouvertes passent par la chaîne fiscale (fiscal.SealOrderClosure) et, pour
+// une vente (COMPLETED, EN_ROUTE_TO_DROPOFF), reçoivent leur ticket ; une
+// vente pas entièrement payée reste ouverte. Les commandes déjà closes ne
+// reçoivent que la mise à jour de statut, sans rechaînage ni nouvelle date de
+// clôture.
+func (r *UberRepository) SyncOrderState(ctx context.Context, uberOrderID, status, state, approval string, reasonID sql.NullInt64, issueSaleReceipt SaleReceiptFunc) error {
 	// deletion_reason_id is varchar, not integer: pgx's stdlib driver can't
 	// encode a sql.NullInt64 directly into a text-typed column ("cannot find
 	// encode plan") — a pre-existing bug on Postgres found while adding the
@@ -452,64 +459,117 @@ func (r *UberRepository) SyncOrderState(ctx context.Context, uberOrderID, status
 		reasonIDArg = strconv.FormatInt(reasonID.Int64, 10)
 	}
 
-	_, err := db.ExecContext(ctx, query, status, state, approval, reasonIDArg, status, status, uberOrderID)
-	if err != nil {
+	if state != StateClosed {
+		db := dbx.GetDB(ctx, r.database)
+		query := fmt.Sprintf(`
+		UPDATE orders
+		SET brand_status = ?, state = ?, merchant_approval = ?, deletion_reason_id = ?,
+		    cancelled_by_type = CASE WHEN cancelled_by_type IS NULL AND ? IN ('DENIED', 'CANCELED') THEN 'PLATFORM' ELSE cancelled_by_type END,
+		    delivered_on = CASE WHEN ? = 'COMPLETED' THEN %[1]s ELSE delivered_on END,
+		    last_update = %[1]s
+		WHERE brand_order_id = ?`, dbx.UTCNow())
+		_, err := db.ExecContext(ctx, query, status, state, approval, reasonIDArg, status, status, uberOrderID)
 		return err
 	}
 
-	// Si CLOSED, mise a jour orderitems. La forme MySQL multi-table modifiait
-	// aussi orders.state via le `state = 'CLOSED'` non qualifie (orderitems n'a
-	// pas de colonne state) — Postgres ne peut pas modifier deux tables dans un
-	// UPDATE : deux requetes, meme effet.
-	if state == "CLOSED" {
-		if dbx.ActiveDialect() == dbx.Postgres {
-			if _, err := db.ExecContext(ctx, fmt.Sprintf(`
-				UPDATE orderitems
-				SET distributed_on = %s,
-				    isDistributed = '1'
-				FROM orders o
-				WHERE o.order_id = orderitems.order_id AND o.brand_order_id = ?`, dbx.UTCNow()), uberOrderID); err != nil {
-				return err
-			}
-			if _, err := db.ExecContext(ctx, `
-				UPDATE orders SET state = 'CLOSED' WHERE brand_order_id = ?`, uberOrderID); err != nil {
-				return err
-			}
-			return nil
+	businessSet := `brand_status = ?, merchant_approval = ?, deletion_reason_id = ?,
+		    cancelled_by_type = CASE WHEN cancelled_by_type IS NULL AND ? IN ('DENIED', 'CANCELED') THEN 'PLATFORM' ELSE cancelled_by_type END,
+		    last_update = ` + dbx.UTCNow()
+	businessArgs := []any{status, approval, reasonIDArg, status}
+	sale := status == StatusCompleted || status == StatusEnRoute
+
+	return dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
+		db := dbx.GetDB(txCtx, r.database)
+		if _, err := db.ExecContext(txCtx, `UPDATE orders SET `+businessSet+` WHERE brand_order_id = ? AND state <> 'OPEN'`,
+			append(append([]any{}, businessArgs...), uberOrderID)...); err != nil {
+			return err
 		}
-		queryItems := `
-			UPDATE orderitems
-			INNER JOIN orders o on o.order_id = orderitems.order_id
-			SET orderitems.distributed_on = UTC_TIMESTAMP,
-			    orderitems.isDistributed = '1',
-			    state = 'CLOSED'
-			WHERE o.brand_order_id = ?`
-		_, err := db.ExecContext(ctx, queryItems, uberOrderID)
+		open, err := fiscal.LockOpenOrdersByBrandOrderID(txCtx, db, uberOrderID)
 		if err != nil {
 			return err
 		}
-	}
-	return nil
+		for _, o := range open {
+			if err := closePlatformOrder(txCtx, db, o.OrderID, sale, businessSet, businessArgs, issueSaleReceipt); err != nil {
+				return err
+			}
+		}
+		_, err = db.ExecContext(txCtx, fmt.Sprintf(`
+			UPDATE orderitems
+			SET distributed_on = %s,
+			    isDistributed = '1'
+			FROM orders o
+			WHERE o.order_id = orderitems.order_id AND o.brand_order_id = ?`, dbx.UTCNow()), uberOrderID)
+		return err
+	})
 }
 
 // HandleOrderNotFound gère le cas 404 de l'API Uber (finishOrderIfDoesNotExist)
-func (r *UberRepository) HandleOrderNotFound(ctx context.Context, uberOrderID string) error {
-	db := dbx.GetDB(ctx, r.database)
-
-	// cancelled_by_type : même garde `IS NULL` que SyncOrderState (voir son
-	// commentaire) — n'attribue PLATFORM que si rien n'a déjà classé cette
-	// annulation (pas d'écrasement d'un DenyOrderLocal/DeleteOrderLocal
-	// STAFF déjà exécuté avant l'appel API qui a mené ici). Seule la branche
-	// CANCELED (READY_FOR_HANDOFF -> CLOSED n'est pas une annulation) compte.
-	query := fmt.Sprintf(`
-		UPDATE orders
-		SET brand_status = CASE WHEN brand_status = 'READY_FOR_HANDOFF' THEN 'CLOSED' ELSE 'CANCELED' END,
-		    state = 'CLOSED',
+//
+// cancelled_by_type : même garde `IS NULL` que SyncOrderState (voir son
+// commentaire) — n'attribue PLATFORM que si rien n'a déjà classé cette
+// annulation (pas d'écrasement d'un DenyOrderLocal/DeleteOrderLocal
+// STAFF déjà exécuté avant l'appel API qui a mené ici). Seule la branche
+// CANCELED (READY_FOR_HANDOFF -> CLOSED n'est pas une annulation) compte.
+//
+// Lot A conformité caisse (C10) : une commande ouverte est clôturée par la
+// chaîne fiscale ; READY_FOR_HANDOFF est une vente (ticket, reste ouverte si
+// pas entièrement payée), le reste une annulation. Les commandes déjà closes
+// ne reçoivent que la mise à jour de statut.
+func (r *UberRepository) HandleOrderNotFound(ctx context.Context, uberOrderID string, issueSaleReceipt SaleReceiptFunc) error {
+	businessSet := `brand_status = CASE WHEN brand_status = 'READY_FOR_HANDOFF' THEN 'CLOSED' ELSE 'CANCELED' END,
 		    cancelled_by_type = CASE WHEN cancelled_by_type IS NULL AND brand_status <> 'READY_FOR_HANDOFF' THEN 'PLATFORM' ELSE cancelled_by_type END,
-		    last_update = %s
-		WHERE brand_order_id = ?`, dbx.UTCNow())
-	_, err := db.ExecContext(ctx, query, uberOrderID)
-	return err
+		    last_update = ` + dbx.UTCNow()
+
+	return dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
+		db := dbx.GetDB(txCtx, r.database)
+		if _, err := db.ExecContext(txCtx, `UPDATE orders SET `+businessSet+` WHERE brand_order_id = ? AND state <> 'OPEN'`, uberOrderID); err != nil {
+			return err
+		}
+		open, err := fiscal.LockOpenOrdersByBrandOrderID(txCtx, db, uberOrderID)
+		if err != nil {
+			return err
+		}
+		for _, o := range open {
+			sale := o.BrandStatus == "READY_FOR_HANDOFF"
+			if err := closePlatformOrder(txCtx, db, o.OrderID, sale, businessSet, nil, issueSaleReceipt); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// closePlatformOrder clôture et scelle une commande plateforme encore ouverte
+// (verrouillée par fiscal.LockOpenOrdersByBrandOrderID) : mêmes colonnes
+// métier que le chemin appelant (businessSet/businessArgs), plus la clôture
+// scellée. Une vente doit être entièrement payée (sinon la commande reste
+// ouverte, l'erreur est journalisée) et reçoit son ticket.
+func closePlatformOrder(ctx context.Context, db *dbx.DB, orderID string, sale bool, businessSet string, businessArgs []any, issueSaleReceipt SaleReceiptFunc) error {
+	if sale {
+		paid, err := fiscal.OrderFullyPaid(ctx, db, orderID)
+		if err != nil {
+			return err
+		}
+		if !paid {
+			logger.FromContext(ctx).Error(fmt.Sprintf("ubereats: platform sale %s not fully paid, left open", orderID))
+			return nil
+		}
+		if issueSaleReceipt == nil {
+			return errors.New("ubereats: sale receipt issuer not configured")
+		}
+	}
+	seal, err := fiscal.SealOrderClosure(ctx, db, orderID)
+	if err != nil {
+		return err
+	}
+	args := append(append(append([]any{}, businessArgs...), seal.Args()...), orderID)
+	if _, err := db.ExecContext(ctx, `UPDATE orders SET `+businessSet+`, `+fiscal.SealColumns+` WHERE order_id = ?`, args...); err != nil {
+		return err
+	}
+	if sale {
+		return issueSaleReceipt(ctx, seal.MerchantID, orderID)
+	}
+	return nil
 }
 
 // UpdateBusyModeData met à jour les données de "Busy Mode"

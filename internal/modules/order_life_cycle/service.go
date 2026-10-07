@@ -411,7 +411,18 @@ func (s *OrdersLifeCycleService) AssertOrderFullyPaid(ctx context.Context, order
 }
 
 func (s *OrdersLifeCycleService) SetDeliveredExternal(ctx context.Context, MerchantID, UserID, orderID string) error {
-	// We don't check if order is still opened as it can be already closed by the merchant but we receive the delivery confirmation from the integrator (ex: Uber Eats)
+	// La confirmation de livraison d'une plateforme (Uber Eats) arrive souvent
+	// après la clôture en caisse. Une commande déjà close n'est ni reclôturée
+	// ni rechaînée, et ne reçoit pas de second ticket (lot A conformité
+	// caisse, C10) : avant, sa clôture était réécrite et un second ticket de
+	// vente émis.
+	orderStillOpen, err := s.ordersLifeCycleRepo.OrderStillOpen(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if !orderStillOpen {
+		return nil
+	}
 	return s.ExecuteOrderMutation(ctx, MerchantID, UserID, orderID, models.ActionOrderClose, models.ResourceOrder, true, func(txCtx context.Context) error {
 		if err := s.customersService.ProcessOrderLoyalty(txCtx, orderID); err != nil {
 			return err

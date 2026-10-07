@@ -167,6 +167,40 @@ func TestFiscalLock_NoDeadlockBetweenOrderRowAndChains_Postgres(t *testing.T) {
 	}
 }
 
+// Lot A conformité caisse (C10) : la confirmation de livraison Uber arrive
+// souvent après la clôture en caisse. Elle ne doit ni reclôturer la commande
+// (empreinte et date de clôture réécrites) ni émettre un second ticket.
+func TestSetDeliveredExternal_AlreadyClosed_NoOp_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+	env := newFiscalTestEnv(t, db, "siret-fext")
+	order := env.newOrder(t, 1200)
+	env.pay(t, order, 1200, "CB", nil)
+	env.close(t, order, 1200)
+
+	snapshot := func() (hash string, closedAt time.Time, receipts int) {
+		t.Helper()
+		if err := db.QueryRowContext(ctx, `
+			SELECT o.hash, o.delivered_on, (SELECT count(*) FROM receipts r WHERE r.order_id = o.order_id)
+			FROM orders o WHERE o.order_id = $1`, order).Scan(&hash, &closedAt, &receipts); err != nil {
+			t.Fatalf("read order: %v", err)
+		}
+		return
+	}
+	hashBefore, closedBefore, receiptsBefore := snapshot()
+
+	// Seul le dépôt sert avant le retour anticipé sur une commande close.
+	svc := &OrdersLifeCycleService{ordersLifeCycleRepo: env.repo}
+	if err := svc.SetDeliveredExternal(ctx, env.merchantID, models.UberEatsWebhookUserID, order); err != nil {
+		t.Fatalf("SetDeliveredExternal on a closed order: %v", err)
+	}
+	hashAfter, closedAfter, receiptsAfter := snapshot()
+	if hashAfter != hashBefore || !closedAfter.Equal(closedBefore) || receiptsAfter != receiptsBefore || receiptsBefore != 1 {
+		t.Fatalf("closed order changed: hash %v→%v, closed_at %v→%v, receipts %d→%d",
+			hashBefore != "", hashAfter == hashBefore, closedBefore, closedAfter, receiptsBefore, receiptsAfter)
+	}
+}
+
 type fiscalTestEnv struct {
 	db         *sql.DB
 	merchantID string
