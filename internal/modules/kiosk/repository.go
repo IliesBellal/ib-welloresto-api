@@ -467,6 +467,7 @@ func (r *Repository) GetSettingsByMerchant(ctx context.Context, merchantID strin
 	query := `
 	SELECT merchant_id, fulfillment_dine_in, fulfillment_take_away, force_fulfillment_type, pager_number_required,
 	       show_allergens, inactivity_timeout_sec, upsell_enabled, pay_at_counter_enabled, card_payment_enabled,
+	       card_payment_pos_toggle, card_payment_closed_at,
 	       show_promo_badge, logo_url, idle_image_url, idle_video_url, primary_color, created_at, updated_at
 	FROM kiosk_settings
 	WHERE merchant_id = ?`
@@ -475,6 +476,7 @@ func (r *Repository) GetSettingsByMerchant(ctx context.Context, merchantID strin
 	err := db.QueryRowContext(ctx, query, merchantID).Scan(
 		&row.MerchantID, &row.FulfillmentDineIn, &row.FulfillmentTakeAway, &row.ForceFulfillmentType, &row.PagerNumberRequired,
 		&row.ShowAllergens, &row.InactivityTimeoutSec, &row.UpsellEnabled, &row.PayAtCounterEnabled, &row.CardPaymentEnabled,
+		&row.CardPaymentPOSToggle, &row.CardPaymentClosedAt,
 		&row.ShowPromoBadge, &row.LogoURL, &row.IdleImageURL, &row.IdleVideoURL, &row.PrimaryColor, &row.CreatedAt, &row.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -486,7 +488,22 @@ func (r *Repository) GetSettingsByMerchant(ctx context.Context, merchantID strin
 	return &row, nil
 }
 
+// SetCardPaymentClosedAt enregistre la fermeture (closedAt non nil) ou la
+// réouverture (nil) du paiement carte depuis le POS. Ne crée jamais la ligne :
+// le droit card_payment_pos_toggle n'existe que sur une ligne déjà présente
+// (voir Service.SetCardPaymentOpenFromPOS).
+func (r *Repository) SetCardPaymentClosedAt(ctx context.Context, merchantID string, closedAt *time.Time) error {
+	db := dbx.GetDB(ctx, r.database)
+	_, err := db.ExecContext(ctx,
+		`UPDATE kiosk_settings SET card_payment_closed_at = ? WHERE merchant_id = ?`,
+		closedAt, merchantID)
+	return err
+}
+
 // UpsertSettings crée ou met à jour les paramètres Kiosk d'un merchant.
+// card_payment_pos_toggle et card_payment_closed_at n'y figurent pas
+// volontairement : le droit est posé à la main, l'état passe par
+// SetCardPaymentClosedAt.
 func (r *Repository) UpsertSettings(ctx context.Context, s *KioskSettingsRow) error {
 	db := dbx.GetDB(ctx, r.database)
 

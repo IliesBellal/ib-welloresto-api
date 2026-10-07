@@ -310,6 +310,57 @@ func (h *AdminHandler) SetKioskStatusFromPOS(w http.ResponseWriter, r *http.Requ
 	models.SendJSON(w, http.StatusOK, "kiosk", "set_kiosk_status_from_pos", resp)
 }
 
+// GetKioskCardPayment handles GET /pos/kiosk/card-payment — état du paiement
+// carte borne ouvert/fermé depuis le POS (available=false si l'établissement
+// n'a pas cette fonctionnalité).
+func (h *AdminHandler) GetKioskCardPayment(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	user := middleware.GetUser(r)
+	if user == nil {
+		models.SendErrorJSON(w, "kiosk", "get_kiosk_card_payment", models.ErrUnauthorized)
+		return
+	}
+
+	resp, err := h.service.GetCardPaymentStateForPOS(ctx, user.MerchantID)
+	if err != nil {
+		log.Error("kiosk pos: get card payment state failed", zap.Error(err))
+		models.SendErrorJSON(w, "kiosk", "get_kiosk_card_payment", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "kiosk", "get_kiosk_card_payment", resp)
+}
+
+// SetKioskCardPayment handles POST /pos/kiosk/card-payment — ouvre ou ferme
+// le paiement carte de toutes les bornes de l'établissement ({"open": bool}).
+func (h *AdminHandler) SetKioskCardPayment(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	user := middleware.GetUser(r)
+	if user == nil {
+		models.SendErrorJSON(w, "kiosk", "set_kiosk_card_payment", models.ErrUnauthorized)
+		return
+	}
+
+	var req SetKioskCardPaymentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Open == nil {
+		models.SendErrorJSON(w, "kiosk", "set_kiosk_card_payment", models.ErrInvalidRequestBody)
+		return
+	}
+
+	resp, err := h.service.SetCardPaymentOpenFromPOS(ctx, user.MerchantID, *req.Open)
+	if err != nil {
+		log.Warn("kiosk pos: set card payment state failed", zap.Error(err))
+		models.SendErrorJSON(w, "kiosk", "set_kiosk_card_payment", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "kiosk", "set_kiosk_card_payment", resp)
+}
+
 func (h *AdminHandler) ListEnrollmentCodes(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)

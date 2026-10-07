@@ -262,7 +262,7 @@ func (h *Handler) GetKioskSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.service.GetSettings(ctx, authenticatedKiosk.MerchantID)
+	resp, err := h.service.GetSettingsForKiosk(ctx, authenticatedKiosk.MerchantID)
 	if err != nil {
 		log.Error("kiosk get settings failed", zap.Error(err))
 		models.SendErrorJSON(w, "kiosk", "get_settings", err)

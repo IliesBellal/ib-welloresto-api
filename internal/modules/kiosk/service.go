@@ -32,6 +32,7 @@ import (
 	"welloresto-api/internal/modules/order_life_cycle"
 	"welloresto-api/internal/modules/orders"
 	"welloresto-api/internal/modules/upsell"
+	"welloresto-api/internal/timeutil"
 	"welloresto-api/internal/utils/dbutils"
 	"welloresto-api/internal/utils/security"
 )
@@ -901,6 +902,97 @@ func (s *Service) broadcastKioskStatus(merchantID, kioskID string, enabled bool,
 	})
 }
 
+// ---- Paiement carte ouvert/fermé depuis le POS ----
+//
+// Réservé aux établissements dont kiosk_settings.card_payment_pos_toggle est
+// activé (à la main, par l'équipe Wello). Le gérant ferme la carte quand il
+// préfère encaisser lui-même, la rouvre pendant un rush. Ouvert par défaut,
+// rouvert automatiquement à minuit (heure locale du merchant) : seule la
+// date de dernière fermeture est stockée, comparée à la journée courante —
+// aucune tâche planifiée. Voir docs/KIOSK_DECISIONS.md.
+
+// cardPaymentClosedToday dit si le paiement carte a été fermé depuis le POS
+// dans la journée locale (loc) contenant now. Toujours false sans le droit,
+// ou si "payer en caisse" est désactivé (la carte est alors le seul moyen de
+// paiement : la fermer laisserait la borne sans issue).
+func cardPaymentClosedToday(row *KioskSettingsRow, now time.Time, loc *time.Location) bool {
+	if !row.CardPaymentPOSToggle || !row.PayAtCounterEnabled || row.CardPaymentClosedAt == nil {
+		return false
+	}
+	dayStart, _ := timeutil.LocalDayBounds(now, loc)
+	return !row.CardPaymentClosedAt.Before(dayStart)
+}
+
+// cardPaymentClosedNow — cardPaymentClosedToday à l'instant présent, dans le
+// fuseau du merchant. Ne lit le fuseau que si une fermeture est enregistrée.
+func (s *Service) cardPaymentClosedNow(ctx context.Context, merchantID string, row *KioskSettingsRow) (bool, error) {
+	if !row.CardPaymentPOSToggle || row.CardPaymentClosedAt == nil {
+		return false, nil
+	}
+	tz, err := s.repo.GetMerchantTimezone(ctx, merchantID)
+	if err != nil {
+		return false, err
+	}
+	return cardPaymentClosedToday(row, time.Now(), helpers.MerchantLocation(ctx, tz)), nil
+}
+
+// GetCardPaymentStateForPOS — GET /pos/kiosk/card-payment. Available=false
+// (sans erreur) quand l'établissement n'a pas le droit : le POS n'affiche
+// alors rien.
+func (s *Service) GetCardPaymentStateForPOS(ctx context.Context, merchantID string) (*KioskCardPaymentStateResponse, error) {
+	row, err := s.repo.GetKioskSettings(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	if !row.CardPaymentPOSToggle {
+		return &KioskCardPaymentStateResponse{}, nil
+	}
+	closed, err := s.cardPaymentClosedNow(ctx, merchantID, row)
+	if err != nil {
+		return nil, err
+	}
+	return &KioskCardPaymentStateResponse{
+		Available:          true,
+		Open:               !closed,
+		CardPaymentEnabled: row.CardPaymentEnabled,
+		LockedOpen:         !row.PayAtCounterEnabled,
+	}, nil
+}
+
+// SetCardPaymentOpenFromPOS — POST /pos/kiosk/card-payment. Diffuse
+// kiosk_settings_updated pour que les bornes et les autres POS du merchant
+// se resynchronisent immédiatement.
+func (s *Service) SetCardPaymentOpenFromPOS(ctx context.Context, merchantID string, open bool) (*KioskCardPaymentStateResponse, error) {
+	row, err := s.repo.GetKioskSettings(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	if !row.CardPaymentPOSToggle {
+		return nil, models.ErrKioskCardPaymentToggleUnavailable
+	}
+
+	var closedAt *time.Time
+	if !open {
+		if !row.PayAtCounterEnabled {
+			return nil, models.ErrKioskCardPaymentLockedOpen
+		}
+		now := time.Now().UTC()
+		closedAt = &now
+	}
+	if err := s.repo.SetCardPaymentClosedAt(ctx, merchantID, closedAt); err != nil {
+		return nil, err
+	}
+
+	if s.notificationSvc != nil {
+		s.notificationSvc.BroadcastToMerchant(merchantID, map[string]interface{}{
+			"type":         notification.WSEventKioskSettingsUpdated,
+			"triggered_by": "pos",
+		})
+	}
+
+	return s.GetCardPaymentStateForPOS(ctx, merchantID)
+}
+
 // ListEnrollmentCodes liste les codes d'enrôlement en attente (non utilisés,
 // non expirés) d'un merchant — jamais le code en clair ni son hash.
 func (s *Service) ListEnrollmentCodes(ctx context.Context, merchantID string) (*ListEnrollmentCodesResponse, error) {
@@ -954,7 +1046,35 @@ func (s *Service) GetSettings(ctx context.Context, merchantID string) (*KioskSet
 	if err != nil {
 		return nil, err
 	}
+	return s.settingsResponse(ctx, merchantID, row)
+}
 
+// GetSettingsForKiosk — GET /kiosk/settings : mêmes paramètres que
+// GetSettings, sauf card_payment_enabled qui reflète la disponibilité
+// effective de la carte (false si fermée depuis le POS aujourd'hui). Le
+// back-office continue de lire et d'éditer la valeur brute via GetSettings.
+// Une borne d'une version antérieure respecte donc la fermeture sans mise à
+// jour (au prochain rechargement de ses paramètres).
+func (s *Service) GetSettingsForKiosk(ctx context.Context, merchantID string) (*KioskSettingsResponse, error) {
+	row, err := s.repo.GetKioskSettings(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	closed, err := s.cardPaymentClosedNow(ctx, merchantID, row)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := s.settingsResponse(ctx, merchantID, row)
+	if err != nil {
+		return nil, err
+	}
+	if closed {
+		resp.CardPaymentEnabled = false
+	}
+	return resp, nil
+}
+
+func (s *Service) settingsResponse(ctx context.Context, merchantID string, row *KioskSettingsRow) (*KioskSettingsResponse, error) {
 	// terminal_location_id vit dans stripe_accounts (pas kiosk_settings) : lu à
 	// part, null si Terminal non activé pour ce merchant — jamais une erreur.
 	terminalLocationID, err := s.repo.GetTerminalLocationID(ctx, merchantID)
@@ -1780,6 +1900,16 @@ func (s *Service) CreateOrder(ctx context.Context, req *models.RequestObject, ki
 	switch paymentMethod {
 	case kioskPaymentMethodCard:
 		if !settings.CardPaymentEnabled {
+			return nil, models.ErrKioskCardPaymentDisabled
+		}
+		// Fermé depuis le POS : bloque seulement les nouvelles commandes
+		// carte, jamais un paiement déjà engagé sur une commande existante
+		// (TerminalProcessPayment n'est volontairement pas concerné).
+		closed, err := s.cardPaymentClosedNow(ctx, kiosk.MerchantID, settings)
+		if err != nil {
+			return nil, err
+		}
+		if closed {
 			return nil, models.ErrKioskCardPaymentDisabled
 		}
 	case "", kioskPaymentMethodCounter:

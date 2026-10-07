@@ -466,7 +466,13 @@ var (
 	ErrKioskAdminPinNotConfigured = errors.New("kiosk_admin_pin_not_configured")
 
 	// Erreurs du module Kiosk — paiement carte (Stripe Terminal)
-	ErrKioskCardPaymentDisabled   = errors.New("kiosk_card_payment_disabled")
+	ErrKioskCardPaymentDisabled = errors.New("kiosk_card_payment_disabled")
+	// ErrKioskCardPaymentToggleUnavailable : l'établissement n'a pas le droit
+	// d'ouvrir/fermer le paiement carte depuis le POS (card_payment_pos_toggle).
+	ErrKioskCardPaymentToggleUnavailable = errors.New("kiosk_card_payment_toggle_unavailable")
+	// ErrKioskCardPaymentLockedOpen : fermeture refusée, "payer en caisse" est
+	// désactivé — la borne n'aurait plus aucun moyen de paiement.
+	ErrKioskCardPaymentLockedOpen = errors.New("kiosk_card_payment_locked_open")
 	ErrKioskPaymentMethodInvalid  = errors.New("kiosk_payment_method_invalid")
 	ErrKioskOrderNotCardPending   = errors.New("kiosk_order_not_card_pending")
 	ErrKioskAmountMismatch        = errors.New("kiosk_amount_mismatch")
@@ -1522,6 +1528,16 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusForbidden
 		errorStatus = "kiosk_card_payment_disabled"
 		errorMsg = "Card payment is disabled for this merchant's kiosks."
+
+	case errors.Is(err, ErrKioskCardPaymentToggleUnavailable):
+		status = http.StatusForbidden
+		errorStatus = "kiosk_card_payment_toggle_unavailable"
+		errorMsg = "Opening/closing kiosk card payment from the POS is not enabled for this merchant."
+
+	case errors.Is(err, ErrKioskCardPaymentLockedOpen):
+		status = http.StatusConflict
+		errorStatus = "kiosk_card_payment_locked_open"
+		errorMsg = "Card payment cannot be closed while pay-at-counter is disabled: kiosks would have no payment method left."
 
 	case errors.Is(err, ErrKioskPaymentMethodInvalid):
 		status = http.StatusBadRequest

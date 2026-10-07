@@ -69,6 +69,11 @@ type KioskSettingsRow struct {
 	UpsellEnabled        bool
 	PayAtCounterEnabled  bool
 	CardPaymentEnabled   bool
+	// CardPaymentPOSToggle / CardPaymentClosedAt : ouverture/fermeture du
+	// paiement carte depuis le POS (migration 167, voir
+	// cardPaymentClosedToday). Jamais écrits par UpsertSettings.
+	CardPaymentPOSToggle bool
+	CardPaymentClosedAt  *time.Time
 	ShowPromoBadge       bool
 	LogoURL              *string
 	IdleImageURL         *string
@@ -187,6 +192,28 @@ type AppVersionCheckResponse struct {
 	DownloadURL    *string `json:"download_url,omitempty"`
 	VersionCode    *int    `json:"version_code,omitempty"`
 	ChecksumSHA256 *string `json:"checksum_sha256,omitempty"`
+}
+
+// KioskCardPaymentStateResponse — GET/POST /pos/kiosk/card-payment (staff,
+// depuis l'app POS) : état du paiement carte borne ouvert/fermé au fil du
+// service. Available=false (droit card_payment_pos_toggle absent) => le POS
+// n'affiche rien, les autres champs sont à leur valeur zéro.
+type KioskCardPaymentStateResponse struct {
+	Available bool `json:"available"`
+	// Open : paiement carte ouvert aujourd'hui (pas fermé depuis le POS
+	// depuis minuit, heure locale du merchant).
+	Open bool `json:"open"`
+	// CardPaymentEnabled : réglage back-office brut. false => la borne ne
+	// propose pas la carte, quel que soit Open.
+	CardPaymentEnabled bool `json:"card_payment_enabled"`
+	// LockedOpen : "payer en caisse" désactivé, la carte est le seul moyen
+	// de paiement de la borne et ne peut pas être fermée.
+	LockedOpen bool `json:"locked_open"`
+}
+
+// SetKioskCardPaymentRequest — body de POST /pos/kiosk/card-payment.
+type SetKioskCardPaymentRequest struct {
+	Open *bool `json:"open"`
 }
 
 // SetKioskStatusRequest — body de POST /pos/kiosk/{kiosk_id}/status (staff,
@@ -382,9 +409,9 @@ type KioskUpsellSuggestion struct {
 // que upsell.UpsellResult (suggestion_id/source), Suggestions dans la forme
 // KioskUpsellSuggestion ci-dessus plutôt que upsell.SuggestedItem.
 type KioskUpsellResult struct {
-	SuggestionID string                   `json:"suggestion_id,omitempty"`
-	Suggestions  []KioskUpsellSuggestion  `json:"suggestions"`
-	Source       string                   `json:"source"`
+	SuggestionID string                  `json:"suggestion_id,omitempty"`
+	Suggestions  []KioskUpsellSuggestion `json:"suggestions"`
+	Source       string                  `json:"source"`
 }
 
 // KioskProductComponent — composants retirables d'un produit (ex. "sans

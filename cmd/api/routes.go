@@ -1977,6 +1977,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 
 	// --- KIOSK (POS Flutter, staff) ---
 	r.With(authMiddleware).Post("/pos/kiosk/{kiosk_id}/status", kioskAdminHandler.SetKioskStatusFromPOS)
+	// Paiement carte borne ouvert/fermé au fil du service (établissements
+	// avec kiosk_settings.card_payment_pos_toggle, voir docs/KIOSK_DECISIONS.md).
+	r.With(authMiddleware).Get("/pos/kiosk/card-payment", kioskAdminHandler.GetKioskCardPayment)
+	r.With(authMiddleware).Post("/pos/kiosk/card-payment", kioskAdminHandler.SetKioskCardPayment)
 
 	// --- KIOSK (back-office) ---
 	r.Route("/pos/settings/kiosk", func(r chi.Router) {

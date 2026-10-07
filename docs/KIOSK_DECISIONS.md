@@ -4935,3 +4935,60 @@ passent par une conversion ISO (`helpers.ISOWeekday`, `openinghours.isoWeekday`,
 restants de `scannorder/service.go` (corrigés en aval) sont passés sur
 `helpers.ISOWeekday`. Fronts : ScanNOrder lit 0 et 7 comme dimanche ; POS
 utilise `DateTime.weekday` (ISO natif) ; Uber Eats reçoit des noms de jours.
+
+## Paiement carte ouvert/fermé depuis le POS (2026-10-06)
+
+Demande client : garder la carte sur borne, mais pouvoir la fermer depuis le
+POS quand le gérant préfère encaisser lui-même (peu de monde) et la rouvrir
+pendant un rush.
+
+### Décisions (utilisateur)
+
+- **Global à l'établissement**, pas par borne.
+- **Réservé à certains établissements** : droit `kiosk_settings.card_payment_pos_toggle`
+  (migration 167), activé à la main par l'équipe Wello. Absent = fonctionnalité
+  invisible (POS n'affiche rien, borne inchangée).
+- **Ouvert par défaut, rouvert automatiquement à minuit** (heure locale du
+  merchant). Un service qui déborde après minuit voit la carte se rouvrir : accepté.
+- Pas de traçabilité de qui a ouvert/fermé.
+
+### Implémentation
+
+- Seule la date de dernière fermeture est stockée (`card_payment_closed_at`) ;
+  fermé = cette date tombe dans la journée locale courante
+  (`timeutil.LocalDayBounds`). Aucune tâche planifiée. Réouverture = `NULL`.
+- Distinct de `card_payment_enabled` (réglage back-office, « j'accepte la
+  carte ») : le POS ne l'écrase jamais. Disponibilité effective =
+  `card_payment_enabled` ET pas fermé aujourd'hui.
+- `GET /kiosk/settings` (`Service.GetSettingsForKiosk`) renvoie la
+  disponibilité effective dans `card_payment_enabled` : une borne déjà
+  déployée respecte la fermeture sans mise à jour, à son prochain
+  rechargement de paramètres. `GET /pos/settings/kiosk/settings` garde la
+  valeur brute (édition back-office).
+- `POST /kiosk/orders` refuse une nouvelle commande carte fermée
+  (`kiosk_card_payment_disabled`, 403). Un paiement déjà engagé n'est jamais
+  coupé (`/kiosk/terminal/payment` non concerné), l'appairage du lecteur non plus.
+- **Pas de cul-de-sac** : si « payer en caisse » est désactivé, la carte est
+  le seul moyen de paiement et ne peut pas être fermée
+  (`kiosk_card_payment_locked_open`, 409 ; une fermeture antérieure est
+  ignorée).
+- POS : `GET /pos/kiosk/card-payment` → `{available, open,
+  card_payment_enabled, locked_open}` (`available=false` sans erreur si pas
+  le droit) ; `POST /pos/kiosk/card-payment` `{"open": bool}`
+  (`kiosk_card_payment_toggle_unavailable`, 403, si pas le droit).
+- Temps réel : `kiosk_settings_updated` (`{"type", "triggered_by": "pos"}`)
+  diffusé au hub merchant, notification sans état — la borne relit
+  `GET /kiosk/settings`, les autres POS `GET /pos/kiosk/card-payment`.
+
+### Activer pour un établissement
+
+```sql
+UPDATE kiosk_settings SET card_payment_pos_toggle = true WHERE merchant_id = '<id>';
+```
+
+La ligne `kiosk_settings` doit exister (créée au premier enregistrement des
+paramètres Kiosk dans le back-office).
+
+Tests : `kiosk/card_payment_toggle_test.go` (fermé aujourd'hui, rouvert à
+minuit, sans droit, payer en caisse désactivé, changement d'heure).
+Déploiement : migration 167 **avant** l'API.

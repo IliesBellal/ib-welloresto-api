@@ -631,6 +631,8 @@ client appelant encore en `GET` doit migrer vers `POST` (voir
 | Méthode | Route | Auth | Droit requis |
 |---|---|---|---|
 | POST | `/pos/kiosk/{kiosk_id}/status` | authMiddleware | aucun |
+| GET | `/pos/kiosk/card-payment` | authMiddleware | aucun |
+| POST | `/pos/kiosk/card-payment` | authMiddleware | aucun (même niveau que `/pos/kiosk/{kiosk_id}/status` : geste de service en salle) |
 | POST | `/pos/settings/kiosk/enrollment-codes` | authMiddleware | `kiosk.manage` (RBAC lot 10) |
 | GET | `/pos/settings/kiosk/enrollment-codes` | authMiddleware | aucun |
 | DELETE | `/pos/settings/kiosk/enrollment-codes/{code_id}` | authMiddleware | `kiosk.manage` (RBAC lot 10) |

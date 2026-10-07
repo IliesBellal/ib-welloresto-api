@@ -29,6 +29,11 @@ const (
 	// WSEventKioskUnavailable : envoyé par la borne elle-même quand elle
 	// détecte un problème (perte réseau récupérée, erreur critique).
 	WSEventKioskUnavailable = "kiosk_unavailable"
+	// WSEventKioskSettingsUpdated : un paramètre borne vient de changer
+	// (aujourd'hui : paiement carte ouvert/fermé depuis le POS). Notification
+	// sans état : la borne relit GET /kiosk/settings, le POS
+	// GET /pos/kiosk/card-payment.
+	WSEventKioskSettingsUpdated = "kiosk_settings_updated"
 
 	// ─── Événements de synchronisation temps réel (WS uniquement, pas de FCM) ──
 	//
