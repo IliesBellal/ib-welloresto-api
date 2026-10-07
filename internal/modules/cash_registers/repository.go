@@ -2,20 +2,20 @@ package cash_registers
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
 	"strings"
 	"time"
 	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/fiscal"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
-	"welloresto-api/internal/utils/security"
+	"welloresto-api/internal/utils/dbutils"
 
 	"go.uber.org/zap"
 )
@@ -418,7 +418,31 @@ func paymentsRequalifySQL(cond string) string {
 		  AND p.merchant_id = ?`
 }
 
+// errCashRegisterClosedConcurrently : une fermeture concurrente du même
+// registre a été validée entre le contrôle « déjà fermé » et le scellement.
+// Fait annuler la transaction (sinon les lignes du Z seraient insérées une
+// seconde fois), puis est rendu à l'appelant comme un registre déjà fermé.
+var errCashRegisterClosedConcurrently = errors.New("cash register closed concurrently")
+
+// CloseCashRegister ferme et scelle un registre dans une seule transaction
+// (ou celle de l'appelant) : une erreur en cours de route n'y laisse plus les
+// lignes du Z insérées sans fermeture, qu'une nouvelle tentative dupliquait
+// (lot A conformité caisse, solution C). Le verrou de la chaîne
+// n'est pris qu'au scellement, pas pendant le calcul du rapport.
 func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegisterID string, merchantID string, req *models.CloseCashRegisterRequest) (bool, error) {
+	var alreadyClosed bool
+	err := dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
+		var err error
+		alreadyClosed, err = r.closeCashRegister(txCtx, cashRegisterID, merchantID, req)
+		return err
+	})
+	if errors.Is(err, errCashRegisterClosedConcurrently) {
+		return true, nil
+	}
+	return alreadyClosed, err
+}
+
+func (r *CashRegisterRepository) closeCashRegister(ctx context.Context, cashRegisterID string, merchantID string, req *models.CloseCashRegisterRequest) (bool, error) {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
@@ -516,45 +540,57 @@ func (r *CashRegisterRepository) CloseCashRegister(ctx context.Context, cashRegi
 	calculatedFinalCash := initialCashFund + cashSales
 	// -------------------------------------------------------------
 
-	// 6. LOGIQUE FISCALE : Récupération du précédent hash
+	// 6. LOGIQUE FISCALE : verrou de l'établissement, puis dernière fermeture
+	// chaînée (les fermetures sans empreinte, antérieures à la chaîne, sont
+	// ignorées).
+	if err := fiscal.LockChain(ctx, fiscal.ChainCashRegisters, merchantID); err != nil {
+		return false, err
+	}
 	var prevHash sql.NullString
 	err = db.QueryRowContext(ctx, `
-		SELECT hash FROM cash_registers 
-		WHERE merchant_id = ? AND end_date IS NOT NULL AND cash_register_id != ?
+		SELECT hash FROM cash_registers
+		WHERE merchant_id = ? AND hash IS NOT NULL AND cash_register_id != ?
 		ORDER BY end_date DESC LIMIT 1
 	`, merchantID, cashRegisterID).Scan(&prevHash)
 
 	if err != nil && err != sql.ErrNoRows {
 		return false, fmt.Errorf("erreur récupération prev_hash: %w", err)
 	}
+	actualPrevHash := fiscal.PrevOrGenesis(prevHash.String)
 
-	actualPrevHash := "GENESIS_HASH"
-	if prevHash.Valid && prevHash.String != "" {
-		actualPrevHash = prevHash.String
+	// 7. LOGIQUE FISCALE : empreinte v2 de la fermeture (dates, fonds de caisse
+	// et lignes du Z ; l'ancienne formule ne couvrait que le fond final).
+	closedAt := fiscal.Now()
+	payload, err := fiscal.LoadCashRegisterClosure(ctx, db, cashRegisterID, closedAt, calculatedFinalCash)
+	if err != nil {
+		return false, err
+	}
+	newHash, signature, err := fiscal.Seal(fiscal.ChainCashRegisters, actualPrevHash, payload)
+	if err != nil {
+		return false, err
 	}
 
-	// 7. LOGIQUE FISCALE : Calcul du nouveau Hash (utilisation de calculatedFinalCash et correction de %.2d en %.2f)
-	dataToHash := fmt.Sprintf("%s|%s|%.2f|%s", cashRegisterID, merchantID, float64(calculatedFinalCash), actualPrevHash)
-	hashBytes := sha256.Sum256([]byte(dataToHash))
-	newHash := hex.EncodeToString(hashBytes[:])
-
-	signature := security.SignHash(newHash)
-
 	// 8. Fermer le registre (avec MAJ des infos fiscales et du calculatedFinalCash)
-	_, err = db.ExecContext(ctx, fmt.Sprintf(`
+	res, err := db.ExecContext(ctx, `
 		UPDATE cash_registers
-		SET end_date = %s,
+		SET end_date = ?,
 			closed = true,
 			final_cash_fund = ?,
 			previous_hash = ?,
 			hash = ?,
-			signature = ?
+			signature = ?,
+			hash_version = ?
 		WHERE cash_register_id = ?
 			AND closed = false
-	`, dbx.UTCNow()), calculatedFinalCash, actualPrevHash, newHash, signature, cashRegisterID)
+	`, closedAt, calculatedFinalCash, actualPrevHash, newHash, signature, fiscal.HashVersion, cashRegisterID)
 
 	if err != nil {
 		return false, err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return false, err
+	} else if n == 0 {
+		return false, errCashRegisterClosedConcurrently
 	}
 
 	return false, nil

@@ -7,9 +7,13 @@ import (
 	"database/sql"
 	"math"
 	"strconv"
+	"sync"
 	"testing"
+	"time"
 
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/database/dbx/pgtest"
+	"welloresto-api/internal/fiscal"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
 )
@@ -408,13 +412,67 @@ func TestCashRegisterLifecycle_Postgres(t *testing.T) {
 	addPayment("CB", 200, nil)               // non rattaché : seul 'KIOSK' est requalifié
 
 	// --- CloseCashRegister ---
-	already, err := repo.CloseCashRegister(ctx, regID, merchantID, &models.CloseCashRegisterRequest{})
+	// Deux fermetures simultanées du même registre (double appui, deux
+	// appareils) : une seule ferme, l'autre répond « déjà fermé », et les
+	// lignes du Z ne sont écrites qu'une fois (lot A conformité caisse : la
+	// fermeture est une seule transaction, annulée si un autre l'a scellée).
+	var (
+		wg              sync.WaitGroup
+		closeAlready    [2]bool
+		closeErrs       [2]error
+		startConcurrent = make(chan struct{})
+	)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-startConcurrent
+			closeAlready[i], closeErrs[i] = repo.CloseCashRegister(ctx, regID, merchantID, &models.CloseCashRegisterRequest{})
+		}(i)
+	}
+	close(startConcurrent)
+	wg.Wait()
+	for i, err := range closeErrs {
+		if err != nil {
+			t.Fatalf("CloseCashRegister #%d failed against postgres: %v", i, err)
+		}
+	}
+	if closeAlready[0] == closeAlready[1] {
+		t.Fatalf("expected exactly one close to report not-already-closed, got %v", closeAlready)
+	}
+	var duplicateZLines int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) - count(DISTINCT mop) FROM cash_registers_items WHERE cash_register_id = $1`, regID).Scan(&duplicateZLines); err != nil {
+		t.Fatalf("count Z lines: %v", err)
+	}
+	if duplicateZLines != 0 {
+		t.Fatalf("expected one Z line per payment method, got %d duplicates", duplicateZLines)
+	}
+
+	// Empreinte v2 de la fermeture : recalculée à l'identique depuis la base.
+	var (
+		endDate                         time.Time
+		storedFinal, version            int
+		prevHash, storedHash, storedSig string
+	)
+	if err := db.QueryRowContext(ctx, `
+		SELECT end_date, final_cash_fund, previous_hash, hash, signature, hash_version
+		FROM cash_registers WHERE cash_register_id = $1`, regID).
+		Scan(&endDate, &storedFinal, &prevHash, &storedHash, &storedSig, &version); err != nil {
+		t.Fatalf("read back sealed register: %v", err)
+	}
+	payload, err := fiscal.LoadCashRegisterClosure(ctx, dbx.GetDB(ctx, db), regID, endDate, storedFinal)
 	if err != nil {
-		t.Fatalf("CloseCashRegister failed against postgres: %v", err)
+		t.Fatalf("LoadCashRegisterClosure: %v", err)
 	}
-	if already {
-		t.Fatal("expected first close to report not-already-closed")
+	recomputed, recomputedSig, err := fiscal.Seal(fiscal.ChainCashRegisters, prevHash, payload)
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
 	}
+	if version != fiscal.HashVersion || recomputed != storedHash || recomputedSig != storedSig || len(payload.Items) == 0 {
+		t.Fatalf("register seal not reproducible: version=%d items=%d hash match=%v sig match=%v",
+			version, len(payload.Items), recomputed == storedHash, recomputedSig == storedSig)
+	}
+	var already bool
 
 	var requalified int
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM payments WHERE merchant_id = $1 AND cash_register_id = $2`, merchantID, regID).Scan(&requalified); err != nil {
