@@ -2,7 +2,6 @@ package order_life_cycle
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -11,6 +10,7 @@ import (
 	"strings"
 	"time"
 	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/fiscal"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
@@ -18,7 +18,6 @@ import (
 	"welloresto-api/internal/modules/deliverytime"
 	"welloresto-api/internal/modules/distributiontime"
 	"welloresto-api/internal/utils/dbutils"
-	"welloresto-api/internal/utils/security"
 
 	"go.uber.org/zap"
 )
@@ -145,8 +144,23 @@ func (r *OrdersLifeCycleRepository) GetActiveCashRegisterID(ctx context.Context,
 	return cashRegisterID.String, nil
 }
 
-// Nouvelle version qui retourne l'ID du paiement créé
+// Nouvelle version qui retourne l'ID du paiement créé.
+//
+// Ouvre sa propre transaction (ou rejoint celle de l'appelant) : le verrou
+// fiscal de l'établissement n'a d'effet que dans une transaction, et cette
+// fonction est appelée de partout, y compris hors transaction (paiements
+// saisis à la création de commande) — solution C du lot A conformité caisse.
 func (r *OrdersLifeCycleRepository) AddPaymentAndReturnID(ctx context.Context, payment models.Payment) (int64, error) {
+	var paymentID int64
+	err := dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
+		var err error
+		paymentID, err = r.addPaymentAndReturnID(txCtx, payment)
+		return err
+	})
+	return paymentID, err
+}
+
+func (r *OrdersLifeCycleRepository) addPaymentAndReturnID(ctx context.Context, payment models.Payment) (int64, error) {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
@@ -173,22 +187,32 @@ func (r *OrdersLifeCycleRepository) AddPaymentAndReturnID(ctx context.Context, p
 		}
 	}
 
-	// 2. RÉCUPÉRATION DU HASH PRÉCÉDENT (Chaînage Fiscal)
+	// 2. Chaînage fiscal (lot A conformité caisse) : verrou de l'établissement,
+	// puis dernier paiement chaîné. Les paiements sans empreinte (antérieurs à
+	// la chaîne) sont ignorés : ils faisaient redémarrer la chaîne à vide.
+	if err := fiscal.LockChain(ctx, fiscal.ChainPayments, payment.MerchantID); err != nil {
+		return 0, err
+	}
 	var prevHash sql.NullString
-	_ = db.QueryRowContext(ctx, `
-		SELECT hash FROM payments 
-		WHERE merchant_id = ? 
-		ORDER BY payment_date DESC LIMIT 1 
-		FOR UPDATE
-	`, payment.MerchantID).Scan(&prevHash)
+	if err := db.QueryRowContext(ctx, `
+		SELECT hash FROM payments
+		WHERE merchant_id = ? AND hash IS NOT NULL
+		ORDER BY payment_date DESC, payment_id DESC LIMIT 1
+	`, payment.MerchantID).Scan(&prevHash); err != nil && err != sql.ErrNoRows {
+		return 0, fmt.Errorf("read previous payment hash: %w", err)
+	}
+	prev := fiscal.PrevOrGenesis(prevHash.String)
 
-	now := time.Now().UTC()
-	paymentDate := now.Format(time.RFC3339)
-
-	// Calcul du hash du nouveau paiement
-	payload := fmt.Sprintf("%s|%s|%d|%s|%s", prevHash.String, paymentDate, payment.Amount, payment.MOP, payment.OrderID)
-	newHash := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
-	signature := security.SignHash(newHash)
+	now := fiscal.Now()
+	sealed, err := fiscal.NewPaymentPayload(payment.MerchantID, payment.OrderID, payment.Amount, payment.MOP,
+		string(payment.OperationType), now, payment.UserID, payment.Comment)
+	if err != nil {
+		return 0, err
+	}
+	newHash, signature, err := fiscal.Seal(fiscal.ChainPayments, prev, sealed)
+	if err != nil {
+		return 0, err
+	}
 
 	// cash_register_id vide -> NULL : un paiement sans caisse (ex. borne Kiosk /
 	// Stripe Terminal) ne rattache pas d'identifiant de caisse. Les appelants
@@ -203,9 +227,9 @@ func (r *OrdersLifeCycleRepository) AddPaymentAndReturnID(ctx context.Context, p
 	// 3. Insérer le paiement avec son hash
 	paymentID, err := db.InsertReturningID(ctx, `
 	INSERT INTO payments
-	(merchant_id, cash_register_id, order_id, amount, net_amount, mop, comment, payment_date, user_id, status_check, previous_hash, hash, signature, operation_type)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, "payment_id", payment.MerchantID, cashRegisterID, payment.OrderID, payment.Amount, payment.Amount, payment.MOP, payment.Comment, now, payment.UserID, payment.StatusCheck, prevHash.String, newHash, signature, payment.OperationType)
+	(merchant_id, cash_register_id, order_id, amount, net_amount, mop, comment, payment_date, user_id, status_check, previous_hash, hash, signature, operation_type, hash_version)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, "payment_id", payment.MerchantID, cashRegisterID, payment.OrderID, payment.Amount, payment.Amount, payment.MOP, payment.Comment, now, payment.UserID, payment.StatusCheck, prev, newHash, signature, payment.OperationType, fiscal.HashVersion)
 
 	if err != nil {
 		log.Error("Error inserting payment: " + err.Error())
@@ -701,55 +725,48 @@ func (r *OrdersLifeCycleRepository) MarkOrderAsDeliveryStarted(ctx context.Conte
 	return &info, nil
 }
 
+// sealOrderClosure scelle la clôture de orderID (lot A conformité caisse) :
+// voir fiscal.SealOrderClosure, partagée avec les clôtures plateformes. Doit
+// être appelée dans la transaction qui écrit la clôture.
+func (r *OrdersLifeCycleRepository) sealOrderClosure(ctx context.Context, orderID string) (*fiscal.OrderClosureSeal, error) {
+	return fiscal.SealOrderClosure(ctx, dbx.GetDB(ctx, r.database), orderID)
+}
+
+// DenyOrderLocal ouvre sa propre transaction (ou rejoint celle de l'appelant)
+// pour que le verrou fiscal tienne jusqu'à l'écriture de la clôture.
 func (r *OrdersLifeCycleRepository) DenyOrderLocal(ctx context.Context, orderID, deletionReasonID, comment, userID string) error {
+	return dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
+		return r.denyOrderLocal(txCtx, orderID, deletionReasonID, comment, userID)
+	})
+}
+
+func (r *OrdersLifeCycleRepository) denyOrderLocal(ctx context.Context, orderID, deletionReasonID, comment, userID string) error {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	// 1) Get metadata needed for the fiscal chain
-	var merchantID string
-	var currentPrice int
-	if err := db.QueryRowContext(ctx, `SELECT merchant_id, price FROM orders WHERE order_id = ?`, orderID).Scan(&merchantID, &currentPrice); err != nil {
+	seal, err := r.sealOrderClosure(ctx, orderID)
+	if err != nil {
 		log.Error(err.Error())
 		return err
 	}
 
-	// 1.bis : RÉCUPÉRATION DU HASH PRÉCÉDENT (Chaînage Fiscal pour Orders)
-	var prevHash sql.NullString
-	_ = db.QueryRowContext(ctx, `
-        SELECT hash FROM orders
-        WHERE merchant_id = ? AND state = 'CLOSED'
-        ORDER BY delivered_on DESC, order_id DESC LIMIT 1
-        FOR UPDATE
-    `, merchantID).Scan(&prevHash)
-
-	actualPrevHash := "GENESIS_HASH"
-	if prevHash.Valid && prevHash.String != "" {
-		actualPrevHash = prevHash.String
-	}
-
-	now := time.Now().UTC()
-	deliveredOn := now.Format(time.RFC3339)
-
-	// Calcul du hash de clôture de commande
-	payload := fmt.Sprintf("%s|%s|%d|%s", actualPrevHash, deliveredOn, currentPrice, orderID)
-	newHash := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
-	signature := security.SignHash(newHash)
-
-	_, err := db.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
         UPDATE orders
-        SET last_update = `+dbx.UTCNow()+`,
+        SET last_update = ?,
             brand_status = 'DENIED',
             merchant_approval = 'DENIED',
             state = 'CLOSED',
-            delivered_on = `+dbx.UTCNow()+`,
+            delivered_on = ?,
             deletion_reason_id = ?,
             deletion_comment = ?,
             cancelled_by_type = ?,
             previous_hash = ?,
             hash = ?,
-            signature = ?
+            signature = ?,
+            hash_version = ?
         WHERE order_id = ?`,
-		deletionReasonID, comment, classifyCancelledByType(userID), actualPrevHash, newHash, signature, orderID,
+		seal.ClosedAt, seal.ClosedAt, deletionReasonID, comment, classifyCancelledByType(userID),
+		seal.Prev, seal.Hash, seal.Signature, fiscal.HashVersion, orderID,
 	)
 	if err != nil {
 		log.Error(err.Error())
@@ -841,50 +858,39 @@ func (r *OrdersLifeCycleRepository) OrderStillOpen(ctx context.Context, orderID 
 	return count > 0, nil
 }
 
+// DeleteOrderLocal ouvre sa propre transaction (ou rejoint celle de
+// l'appelant) pour que le verrou fiscal tienne jusqu'à l'écriture de la
+// clôture.
 func (r *OrdersLifeCycleRepository) DeleteOrderLocal(ctx context.Context, orderID string, reasonID string, comment string, userID string) error {
+	return dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
+		return r.deleteOrderLocal(txCtx, orderID, reasonID, comment, userID)
+	})
+}
+
+func (r *OrdersLifeCycleRepository) deleteOrderLocal(ctx context.Context, orderID string, reasonID string, comment string, userID string) error {
 	db := dbx.GetDB(ctx, r.database)
 
-	// 1) Get metadata
-	qOrder := `SELECT brand, brand_order_id, merchant_id, fulfillment_type, price FROM orders WHERE order_id = ?`
-	meta := &DeliveredOrderMetadata{}
-	var currentPrice int
-	if err := db.QueryRowContext(ctx, qOrder, orderID).Scan(&meta.Brand, &meta.BrandOrderID, &meta.MerchantID, &meta.FulfillmentType, &currentPrice); err != nil {
+	seal, err := r.sealOrderClosure(ctx, orderID)
+	if err != nil {
 		return err
 	}
 
-	// 1.bis : RÉCUPÉRATION DU HASH PRÉCÉDENT (Chaînage Fiscal pour Orders)
-	var prevHash sql.NullString
-	_ = db.QueryRowContext(ctx, `
-        SELECT hash FROM orders 
-        WHERE merchant_id = ? AND state = 'CLOSED' 
-        ORDER BY delivered_on DESC, order_id DESC LIMIT 1 
-        FOR UPDATE
-    `, meta.MerchantID).Scan(&prevHash)
-
-	now := time.Now().UTC()
-	deliveredOn := now.Format(time.RFC3339)
-
-	// Calcul du hash de clôture de commande
-	payload := fmt.Sprintf("%s|%s|%d|%s", prevHash.String, deliveredOn, currentPrice, orderID)
-	newHash := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
-	signature := security.SignHash(newHash)
-
-	// 2) Update orders table avec Hash de clôture
-
-	_, err := db.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
         UPDATE orders
         SET deletion_reason_id = ?,
             deletion_comment = ?,
-            last_update = `+dbx.UTCNow()+`,
+            last_update = ?,
             state = 'CLOSED',
             brand_status = 'CANCELED',
-            delivered_on = `+dbx.UTCNow()+`,
-			previous_hash = ?,
-			hash = ?,
-			signature = ?,
-			cancelled_by_type = ?
+            delivered_on = ?,
+            previous_hash = ?,
+            hash = ?,
+            signature = ?,
+            hash_version = ?,
+            cancelled_by_type = ?
         WHERE order_id = ?`,
-		reasonID, comment, prevHash, newHash, signature, classifyCancelledByType(userID), orderID,
+		reasonID, comment, seal.ClosedAt, seal.ClosedAt, seal.Prev, seal.Hash, seal.Signature,
+		fiscal.HashVersion, classifyCancelledByType(userID), orderID,
 	)
 	if err != nil {
 		return err
@@ -926,19 +932,34 @@ func (r *OrdersLifeCycleRepository) GetOrderPaymentBalance(ctx context.Context, 
 	return price, paidAmount, nil
 }
 
+// SetDeliveredLocal ouvre sa propre transaction (ou rejoint celle de
+// l'appelant) pour que le verrou fiscal tienne jusqu'à l'écriture de la
+// clôture. DeliverOrder l'appelle dans la transaction qui écrit aussi le
+// ticket.
 func (r *OrdersLifeCycleRepository) SetDeliveredLocal(ctx context.Context, orderID string) (*DeliveredOrderMetadata, error) {
+	var meta *DeliveredOrderMetadata
+	err := dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
+		var err error
+		meta, err = r.setDeliveredLocal(txCtx, orderID)
+		return err
+	})
+	return meta, err
+}
+
+func (r *OrdersLifeCycleRepository) setDeliveredLocal(ctx context.Context, orderID string) (*DeliveredOrderMetadata, error) {
 	db := dbx.GetDB(ctx, r.database)
 
-	// 0.1 Lock order row
+	// 0.1 Lock order row (et métadonnées, lues dans la même requête)
 	const qLockOrder = `
-		SELECT price
+		SELECT price, brand, brand_order_id, merchant_id, fulfillment_type
 		FROM orders
 		WHERE order_id = ?
 		FOR UPDATE
 		`
 
 	var price int
-	if err := db.QueryRowContext(ctx, qLockOrder, orderID).Scan(&price); err != nil {
+	meta := &DeliveredOrderMetadata{}
+	if err := db.QueryRowContext(ctx, qLockOrder, orderID).Scan(&price, &meta.Brand, &meta.BrandOrderID, &meta.MerchantID, &meta.FulfillmentType); err != nil {
 		return nil, err
 	}
 
@@ -963,30 +984,11 @@ WHERE order_id = ?
 		}
 	}
 
-	// 1) Get metadata
-	qOrder := `SELECT brand, brand_order_id, merchant_id, fulfillment_type, price FROM orders WHERE order_id = ?`
-	meta := &DeliveredOrderMetadata{}
-	var currentPrice int
-	if err := db.QueryRowContext(ctx, qOrder, orderID).Scan(&meta.Brand, &meta.BrandOrderID, &meta.MerchantID, &meta.FulfillmentType, &currentPrice); err != nil {
+	// 1) Scellement fiscal de la clôture (lot A conformité caisse)
+	seal, err := r.sealOrderClosure(ctx, orderID)
+	if err != nil {
 		return nil, err
 	}
-
-	// 1.bis : RÉCUPÉRATION DU HASH PRÉCÉDENT (Chaînage Fiscal pour Orders)
-	var prevHash sql.NullString
-	_ = db.QueryRowContext(ctx, `
-        SELECT hash FROM orders 
-        WHERE merchant_id = ? AND state = 'CLOSED' 
-        ORDER BY delivered_on DESC, order_id DESC LIMIT 1 
-        FOR UPDATE
-    `, meta.MerchantID).Scan(&prevHash)
-
-	now := time.Now().UTC()
-	deliveredOn := now.Format(time.RFC3339)
-
-	// Calcul du hash de clôture de commande
-	payload := fmt.Sprintf("%s|%s|%d|%s", prevHash.String, deliveredOn, currentPrice, orderID)
-	newHash := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
-	signature := security.SignHash(newHash)
 
 	// 2) Update orders table avec Hash de clôture
 	qUpd := `
@@ -999,10 +1001,11 @@ WHERE order_id = ?
         delivered_on = ?,
         previous_hash = ?,
         hash = ?,
-		signature = ?
+        signature = ?,
+        hash_version = ?
     WHERE order_id = ?
     `
-	if _, err := db.ExecContext(ctx, qUpd, now, now, prevHash.String, newHash, signature, orderID); err != nil {
+	if _, err := db.ExecContext(ctx, qUpd, seal.ClosedAt, seal.ClosedAt, seal.Prev, seal.Hash, seal.Signature, fiscal.HashVersion, orderID); err != nil {
 		return nil, err
 	}
 

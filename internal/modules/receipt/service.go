@@ -2,15 +2,14 @@ package receipt
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
+	"welloresto-api/internal/fiscal"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
-	"welloresto-api/internal/utils/security"
 )
 
 type ReceiptService interface {
@@ -43,16 +42,7 @@ func (s *receiptService) GenerateFiscalReceipt(ctx context.Context, order *model
 	paymentsJSON, _ := json.Marshal(payments)
 	taxDetailsJSON := []byte("{}") // À remplacer par ta logique de ventilation TVA si nécessaire
 
-	// 4. Calcul du Hash et Signature
-	now := time.Now().UTC()
-
-	// Formule du chaînage (respecte bien l'ordre et les types)
-	// $$ H_n = \text{SHA256}(H_{n-1} | ReceiptNumber | TotalTTC | Date) $$
-	payload := fmt.Sprintf("%s|%s|%d|%s", lastHash, newNumber, order.TTC, now.Format(time.RFC3339))
-	newHash := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
-	signature := security.SignHash(newHash) // La fonction HMAC qu'on a vu précédemment
-
-	// 5. Création et Sauvegarde
+	// 4. Création, scellement et sauvegarde
 	receipt := &models.Receipt{
 		ReceiptID:        helpers.GeneratePrefixedID(helpers.ReceiptIDPrefix),
 		MerchantID:       *order.MerchantID,
@@ -63,13 +53,33 @@ func (s *receiptService) GenerateFiscalReceipt(ctx context.Context, order *model
 		TaxDetails:       taxDetailsJSON,
 		ItemsSnapshot:    itemsJSON,
 		PaymentsSnapshot: paymentsJSON,
-		CreatedAt:        now,
+		CreatedAt:        fiscal.Now(),
 		PrevHash:         lastHash,
-		Hash:             newHash,
-		Signature:        signature,
+	}
+	if err := sealReceipt(receipt); err != nil {
+		return err
 	}
 
 	return s.repo.InsertReceipt(ctx, receipt)
+}
+
+// sealReceipt scelle un ticket ou un avoir (lot A conformité caisse) :
+// empreinte v2 de l'en-tête et du détail (articles, paiements, TVA), chaînée
+// sur le ticket précédent de l'établissement. L'ancienne formule ne couvrait
+// que le numéro, le TTC et la date.
+func sealReceipt(receipt *models.Receipt) error {
+	receipt.PrevHash = fiscal.PrevOrGenesis(receipt.PrevHash)
+	payload, err := fiscal.NewReceiptPayload(receipt.MerchantID, receipt.ReceiptNumber, receipt.OrderID, receipt.CreatedAt,
+		receipt.TotalTTC, receipt.TotalHT, receipt.TaxDetails, receipt.ItemsSnapshot, receipt.PaymentsSnapshot)
+	if err != nil {
+		return err
+	}
+	receipt.Hash, receipt.Signature, err = fiscal.Seal(fiscal.ChainReceipts, receipt.PrevHash, payload)
+	if err != nil {
+		return err
+	}
+	receipt.HashVersion = fiscal.HashVersion
+	return nil
 }
 
 // generateNextReceiptNumber transforme "F-2026-000045" en "F-2026-000046"
@@ -121,14 +131,7 @@ func (s *receiptService) GenerateRefundReceipt(ctx context.Context, merchantID s
 	}
 	payJSON, _ := json.Marshal(paySnap)
 
-	// 3. Cryptographie
-	now := time.Now().UTC()
-	// Le chaînage est respecté, même avec un montant négatif
-	payload := fmt.Sprintf("%s|%s|%d|%s", lastHash, newNumber, refundAmountNegative, now.Format(time.RFC3339))
-	newHash := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
-	signature := security.SignHash(newHash)
-
-	// 4. Insertion
+	// 3. Scellement (le chaînage est respecté, même avec un montant négatif)
 	receipt := &models.Receipt{
 		ReceiptID:        newTechID,
 		MerchantID:       merchantID,
@@ -139,12 +142,14 @@ func (s *receiptService) GenerateRefundReceipt(ctx context.Context, merchantID s
 		TaxDetails:       []byte("{}"),
 		ItemsSnapshot:    itemsJSON,
 		PaymentsSnapshot: payJSON,
-		CreatedAt:        now,
+		CreatedAt:        fiscal.Now(),
 		PrevHash:         lastHash,
-		Hash:             newHash,
-		Signature:        signature,
+	}
+	if err := sealReceipt(receipt); err != nil {
+		return err
 	}
 
+	// 4. Insertion
 	return s.repo.InsertReceipt(ctx, receipt)
 }
 

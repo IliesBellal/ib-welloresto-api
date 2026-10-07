@@ -16,6 +16,7 @@ type Receipt struct {
 	PrevHash         string    `json:"prev_hash" db:"prev_hash"`
 	Hash             string    `json:"hash" db:"hash"`
 	Signature        string    `json:"signature" db:"signature"`
+	HashVersion      int       `json:"-" db:"hash_version"` // 0 à l'insertion = 1 (formule historique)
 }
 
 // Structures pour faciliter la génération du JSON

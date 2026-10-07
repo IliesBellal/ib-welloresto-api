@@ -9,6 +9,7 @@ import (
 
 	"welloresto-api/internal/database/dbx/pgtest"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 func TestReceiptRepository_Postgres(t *testing.T) {
@@ -24,8 +25,19 @@ func TestReceiptRepository_Postgres(t *testing.T) {
 
 	repo := NewReceiptRepository(db)
 
+	// GetLastReceiptData prend le verrou de la chaîne receipts de l'établissement : elle
+	// s'appelle dans la transaction qui insère le ticket suivant.
+	lastReceipt := func() (num, hash string, err error) {
+		err = dbutils.RunInTx(ctx, db, func(txCtx context.Context) error {
+			var e error
+			num, hash, e = repo.GetLastReceiptData(txCtx, merchantID)
+			return e
+		})
+		return
+	}
+
 	// Premier reçu : la table est vide pour ce marchand
-	lastNum, lastHash, err := repo.GetLastReceiptData(ctx, merchantID)
+	lastNum, lastHash, err := lastReceipt()
 	if err != nil {
 		t.Fatalf("GetLastReceiptData (empty) failed: %v", err)
 	}
@@ -52,7 +64,7 @@ func TestReceiptRepository_Postgres(t *testing.T) {
 		t.Fatalf("InsertReceipt failed against postgres: %v", err)
 	}
 
-	lastNum, lastHash, err = repo.GetLastReceiptData(ctx, merchantID)
+	lastNum, lastHash, err = lastReceipt()
 	if err != nil {
 		t.Fatalf("GetLastReceiptData failed: %v", err)
 	}

@@ -161,34 +161,39 @@ func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.Deny
 		return nil
 	}
 
-	// 1 — Local DB operations
-	if err := s.ordersLifeCycleRepo.DeleteOrderLocal(
-		ctx,
-		in.OrderID,
-		in.DeletionReasonID,
-		in.DeletionComment,
-		in.UserID,
-	); err != nil {
-		return err
-	}
+	// 1 — Local DB operations, dans une même transaction (celle de l'appelant
+	// s'il en a une) : appelée hors transaction (webhooks, borne,
+	// Scan'n'Order), une erreur au milieu laissait une commande annulée avec
+	// ses paiements encore actifs (lot A conformité caisse, solution C).
+	if err := dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
+		if err := s.ordersLifeCycleRepo.DeleteOrderLocal(
+			txCtx,
+			in.OrderID,
+			in.DeletionReasonID,
+			in.DeletionComment,
+			in.UserID,
+		); err != nil {
+			return err
+		}
 
-	// Reactivate rewards
-	if err := s.customersService.ReactivateRewards(ctx, in.OrderID); err != nil {
-		return fmt.Errorf("reactivate rewards: %w", err)
-	}
+		// Reactivate rewards
+		if err := s.customersService.ReactivateRewards(txCtx, in.OrderID); err != nil {
+			return fmt.Errorf("reactivate rewards: %w", err)
+		}
 
-	// Delete QR
-	if err := s.ordersLifeCycleRepo.DeleteQRCode(ctx, in.OrderID); err != nil {
-		return err
-	}
+		// Delete QR
+		if err := s.ordersLifeCycleRepo.DeleteQRCode(txCtx, in.OrderID); err != nil {
+			return err
+		}
 
-	// Disable payments
-	if err := s.ordersLifeCycleRepo.DisablePayments(ctx, in.OrderID); err != nil {
-		return err
-	}
+		// Disable payments
+		if err := s.ordersLifeCycleRepo.DisablePayments(txCtx, in.OrderID); err != nil {
+			return err
+		}
 
-	// Clear bookings
-	if err := s.ordersLifeCycleRepo.ClearBookings(ctx, in.OrderID); err != nil {
+		// Clear bookings
+		return s.ordersLifeCycleRepo.ClearBookings(txCtx, in.OrderID)
+	}); err != nil {
 		return err
 	}
 	if s.redis != nil {
@@ -270,17 +275,25 @@ func (s *OrdersLifeCycleService) HandlerFiscalReceiptGeneration(ctx context.Cont
 
 func (s *OrdersLifeCycleService) DeliverOrder(ctx context.Context, UserID, MerchantID, orderID string) error {
 
-	// 1) Mettre la commande en Delivered (local DB updates)
+	// 1) Mettre la commande en Delivered (local DB updates) et émettre son
+	// ticket, dans une même transaction (celle de l'appelant s'il en a une) :
+	// appelée hors transaction (tâche de clôture automatique), la commande
+	// pouvait rester clôturée sans ticket si l'émission échouait (lot A
+	// conformité caisse, solution C).
 	// orderMeta contient Brand, BrandOrderID, etc.
-	orderMeta, err := s.ordersLifeCycleRepo.SetDeliveredLocal(ctx, orderID)
+	var orderMeta *DeliveredOrderMetadata
+	err := dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
+		var err error
+		if orderMeta, err = s.ordersLifeCycleRepo.SetDeliveredLocal(txCtx, orderID); err != nil {
+			return err
+		}
+		if err := s.HandlerFiscalReceiptGeneration(txCtx, MerchantID, orderID); err != nil {
+			logger.FromContext(ctx).Error(err.Error())
+			return err
+		}
+		return nil
+	})
 	if err != nil {
-		return err
-	}
-
-	err = s.HandlerFiscalReceiptGeneration(ctx, MerchantID, orderID)
-
-	if err != nil {
-		logger.FromContext(ctx).Error(err.Error())
 		return err
 	}
 
@@ -822,21 +835,27 @@ func (s *OrdersLifeCycleService) SetOrderDenied(ctx context.Context, OrderID str
 		return err
 	}
 
-	// 2) Update local order immediately and update payments
-	err = s.ordersLifeCycleRepo.DenyOrderLocal(ctx,
-		OrderID,
-		in.DeletionReasonID,
-		in.DeletionComment,
-		in.UserID,
-	)
+	// 2) Update local order immediately and update payments, dans une même
+	// transaction (celle de l'appelant s'il en a une) : le refus n'était
+	// jamais transactionnel (lot A conformité caisse, solution C).
+	err = dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
+		if err := s.ordersLifeCycleRepo.DenyOrderLocal(txCtx,
+			OrderID,
+			in.DeletionReasonID,
+			in.DeletionComment,
+			in.UserID,
+		); err != nil {
+			return err
+		}
+
+		// Cancel stripe payments
+		if err := s.ordersLifeCycleRepo.DisablePayments(txCtx, OrderID); err != nil {
+			return fmt.Errorf("stripe cancel: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
 		return err
-	}
-
-	// Cancel stripe payments
-	err = s.ordersLifeCycleRepo.DisablePayments(ctx, OrderID)
-	if err != nil {
-		return fmt.Errorf("stripe cancel: %w", err)
 	}
 	if s.redis != nil {
 		key := helpers.GetRedisOrderKey(in.MerchantID, OrderID)

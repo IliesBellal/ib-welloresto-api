@@ -4,8 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"welloresto-api/internal/models"
 	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/fiscal"
+	"welloresto-api/internal/models"
 )
 
 type ReceiptRepository interface {
@@ -23,22 +24,28 @@ func NewReceiptRepository(db *sql.DB) ReceiptRepository {
 	return &receiptRepository{database: db}
 }
 
-// GetLastReceiptData verrouille la lecture pour éviter les doublons de numérotation
+// GetLastReceiptData prend le verrou de la chaîne receipts de l'établissement puis lit le
+// dernier ticket : numérotation et chaînage restent sérialisés jusqu'à la fin
+// de la transaction de l'appelant, qui doit en avoir une (l'insertion du
+// ticket suivant doit s'y faire). L'ancien FOR UPDATE laissait deux
+// transactions concurrentes relire le même dernier ticket : même numéro, même
+// parent (lot A conformité caisse, constat C5).
 func (r *receiptRepository) GetLastReceiptData(ctx context.Context, merchantID string) (string, string, error) {
 	db := dbx.GetDB(ctx, r.database)
+
+	if err := fiscal.LockChain(ctx, fiscal.ChainReceipts, merchantID); err != nil {
+		return "", "", err
+	}
 
 	var lastNumber sql.NullString
 	var lastHash sql.NullString
 
-	// Le FOR UPDATE est capital ici : si 2 commandes sont payées à la même milliseconde,
-	// la base de données mettra la 2ème en attente pour garantir la séquence.
 	err := db.QueryRowContext(ctx, `
-		SELECT receipt_number, hash 
-		FROM receipts 
-		WHERE merchant_id = ? 
-		ORDER BY created_at DESC, receipt_number DESC 
-		LIMIT 1 
-		FOR UPDATE
+		SELECT receipt_number, hash
+		FROM receipts
+		WHERE merchant_id = ?
+		ORDER BY created_at DESC, receipt_number DESC
+		LIMIT 1
 	`, merchantID).Scan(&lastNumber, &lastHash)
 
 	if err == sql.ErrNoRows {
@@ -54,16 +61,20 @@ func (r *receiptRepository) GetLastReceiptData(ctx context.Context, merchantID s
 func (r *receiptRepository) InsertReceipt(ctx context.Context, receipt *models.Receipt) error {
 	db := dbx.GetDB(ctx, r.database)
 
+	hashVersion := receipt.HashVersion
+	if hashVersion == 0 {
+		hashVersion = 1
+	}
 	query := `
-		INSERT INTO receipts 
-		(receipt_id, merchant_id, order_id, receipt_number, total_ttc, total_ht, tax_details, items_snapshot, payments_snapshot, created_at, prev_hash, hash, signature)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO receipts
+		(receipt_id, merchant_id, order_id, receipt_number, total_ttc, total_ht, tax_details, items_snapshot, payments_snapshot, created_at, prev_hash, hash, signature, hash_version)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	_, err := db.ExecContext(ctx, query,
 		receipt.ReceiptID, receipt.MerchantID, receipt.OrderID, receipt.ReceiptNumber,
 		receipt.TotalTTC, receipt.TotalHT, receipt.TaxDetails,
 		receipt.ItemsSnapshot, receipt.PaymentsSnapshot,
-		receipt.CreatedAt, receipt.PrevHash, receipt.Hash, receipt.Signature,
+		receipt.CreatedAt, receipt.PrevHash, receipt.Hash, receipt.Signature, hashVersion,
 	)
 	return err
 }
