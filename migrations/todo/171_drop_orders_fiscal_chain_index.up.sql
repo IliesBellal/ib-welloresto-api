@@ -1,0 +1,15 @@
+-- Conformité caisse, lot B (docs/attestation-conformite-02-lot-B-brief.md,
+-- décision S1) : les commandes ne portent plus leur propre empreinte — elles
+-- sont scellées par la clôture journalière (table fiscal_closures, migration
+-- 170). L'index de tête de la chaîne orders (migration 169) ne sert plus et
+-- coûterait à chaque écriture de commande.
+--
+-- Les colonnes orders.hash / previous_hash / signature / hash_version restent
+-- (lignes v1 et v2 déjà écrites, vérifiables).
+--
+-- ATTENTION - DROP INDEX CONCURRENTLY doit être joué hors bloc
+-- transactionnel, comme les autres index CONCURRENTLY de ce dépôt.
+--
+-- ORDRE DE DÉPLOIEMENT : après le déploiement du code du lot B (le code du
+-- lot A seul s'en sert encore pour trouver le dernier maillon).
+DROP INDEX CONCURRENTLY IF EXISTS idx_orders_fiscal_chain_head;
