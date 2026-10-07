@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strconv"
 	"testing"
+	"time"
 
 	"welloresto-api/internal/database/dbx/pgtest"
 	"welloresto-api/internal/models"
@@ -345,7 +346,9 @@ func TestOrderLifeCycleRepository_Postgres(t *testing.T) {
 		t.Fatalf("GetOrderBrand = (%q, %v)", brand, err)
 	}
 
-	// --- clôture avec chaînage fiscal : re-payer intégralement puis livrer ---
+	// --- clôture : re-payer intégralement puis livrer. La commande est datée
+	// (delivered_on) et scellée par sa clôture journalière, plus sur sa ligne
+	// (lot B conformité caisse) ---
 	if _, err := repo.AddPaymentAndReturnID(ctx, models.Payment{
 		MerchantID: merchantID, CashRegisterID: crStr, OrderID: orderID,
 		Amount: 2000, MOP: "ES", UserID: createdBy, OperationType: models.OperationTypeSale,
@@ -358,9 +361,10 @@ func TestOrderLifeCycleRepository_Postgres(t *testing.T) {
 	}
 	var state string
 	var orderHash *string
-	_ = db.QueryRowContext(ctx, `SELECT state, hash FROM orders WHERE order_id = $1`, orderID).Scan(&state, &orderHash)
-	if state != "CLOSED" || orderHash == nil || *orderHash == "" {
-		t.Fatalf("clôture = (%q, hash=%v)", state, orderHash)
+	var closedAt *time.Time
+	_ = db.QueryRowContext(ctx, `SELECT state, hash, delivered_on FROM orders WHERE order_id = $1`, orderID).Scan(&state, &orderHash, &closedAt)
+	if state != "CLOSED" || orderHash != nil || closedAt == nil {
+		t.Fatalf("clôture = (%q, hash=%v, delivered_on=%v), want CLOSED, no row hash, dated", state, orderHash, closedAt)
 	}
 	if open, _ := repo.OrderStillOpen(ctx, orderID); open {
 		t.Fatalf("OrderStillOpen après clôture")

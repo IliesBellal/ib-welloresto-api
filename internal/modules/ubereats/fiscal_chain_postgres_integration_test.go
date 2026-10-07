@@ -9,16 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/database/dbx/pgtest"
-	"welloresto-api/internal/fiscal"
 )
 
-// Lot A conformité caisse, C10 (docs/attestation-conformite-01-lot-A-brief.md,
-// phase 4) : les clôtures Uber Eats par réconciliation passent par la chaîne
-// fiscale. Vente entièrement payée : clôture scellée + ticket ; vente pas
-// entièrement payée : reste ouverte ; annulation : clôture scellée sans
-// ticket ; commande déjà close : statut seulement, scellement intact.
+// Conformité caisse, C10 (lots A et B) : les clôtures Uber Eats par
+// réconciliation. Vente entièrement payée : clôture datée + ticket ; vente pas
+// entièrement payée : reste ouverte ; annulation : clôture datée sans ticket ;
+// commande déjà close : statut seulement, date de clôture intacte. Les
+// commandes sont scellées par leur clôture journalière (fiscal.CloseDueDays).
 func TestUberReconciliation_FiscalChain_Postgres(t *testing.T) {
 	db := pgtest.Open(t)
 	ctx := context.Background()
@@ -73,18 +71,17 @@ func TestUberReconciliation_FiscalChain_Postgres(t *testing.T) {
 		return strconv.FormatInt(id, 10)
 	}
 	type row struct {
-		state, brandStatus      string
-		prev, hash, cancelledBy sql.NullString
-		deliveredOn             sql.NullTime
-		version                 int
+		state, brandStatus string
+		hash, cancelledBy  sql.NullString
+		deliveredOn        sql.NullTime
 	}
 	read := func(t *testing.T, orderID string) row {
 		t.Helper()
 		var r row
 		if err := db.QueryRowContext(ctx, `
-			SELECT state, brand_status, previous_hash, hash, cancelled_by_type, delivered_on, hash_version
+			SELECT state, brand_status, hash, cancelled_by_type, delivered_on
 			FROM orders WHERE order_id = $1`, orderID).
-			Scan(&r.state, &r.brandStatus, &r.prev, &r.hash, &r.cancelledBy, &r.deliveredOn, &r.version); err != nil {
+			Scan(&r.state, &r.brandStatus, &r.hash, &r.cancelledBy, &r.deliveredOn); err != nil {
 			t.Fatalf("read order: %v", err)
 		}
 		return r
@@ -95,36 +92,27 @@ func TestUberReconciliation_FiscalChain_Postgres(t *testing.T) {
 		return nil
 	}
 
-	// Vente entièrement payée : clôture scellée, reproductible, et ticket.
+	// Vente entièrement payée : clôturée et datée (sa clôture journalière la
+	// scellera), ticket émis ; plus d'empreinte sur la ligne (lot B).
 	sale := seed(t, "itest-c10-sale", true)
 	if err := repo.SyncOrderState(ctx, "itest-c10-sale", StatusCompleted, StateClosed, "ACCEPTED", sql.NullInt64{}, issuer); err != nil {
 		t.Fatalf("SyncOrderState (sale): %v", err)
 	}
 	saleRow := read(t, sale)
-	if saleRow.state != "CLOSED" || saleRow.brandStatus != StatusCompleted || saleRow.version != fiscal.HashVersion || !saleRow.hash.Valid {
-		t.Fatalf("sale: expected CLOSED/COMPLETED sealed v2, got %+v", saleRow)
-	}
-	if saleRow.prev.String != fiscal.GenesisHash {
-		t.Fatalf("sale: first link of the merchant chain, expected GENESIS_HASH, got %q", saleRow.prev.String)
-	}
-	payload, err := fiscal.LoadOrderClosure(ctx, dbx.GetDB(ctx, db), sale, saleRow.deliveredOn.Time)
-	if err != nil {
-		t.Fatalf("LoadOrderClosure: %v", err)
-	}
-	if h, _, _ := fiscal.Seal(fiscal.ChainOrders, saleRow.prev.String, payload); h != saleRow.hash.String {
-		t.Fatal("sale: closure seal not reproducible from the database")
+	if saleRow.state != "CLOSED" || saleRow.brandStatus != StatusCompleted || !saleRow.deliveredOn.Valid || saleRow.hash.Valid {
+		t.Fatalf("sale: expected CLOSED/COMPLETED dated, no row seal, got %+v", saleRow)
 	}
 	if len(issued) != 1 || issued[0] != merchantID+"/"+sale {
 		t.Fatalf("sale: expected one receipt for %s/%s, got %v", merchantID, sale, issued)
 	}
 
-	// Vente pas entièrement payée : reste ouverte, rien n'est scellé ni émis.
+	// Vente pas entièrement payée : reste ouverte, rien n'est émis.
 	unpaid := seed(t, "itest-c10-unpaid", false)
 	if err := repo.SyncOrderState(ctx, "itest-c10-unpaid", StatusCompleted, StateClosed, "ACCEPTED", sql.NullInt64{}, issuer); err != nil {
 		t.Fatalf("SyncOrderState (unpaid): %v", err)
 	}
-	if r := read(t, unpaid); r.state != "OPEN" || r.hash.Valid || len(issued) != 1 {
-		t.Fatalf("unpaid sale: expected left OPEN, unsealed, no receipt; got %+v, receipts %v", r, issued)
+	if r := read(t, unpaid); r.state != "OPEN" || r.deliveredOn.Valid || len(issued) != 1 {
+		t.Fatalf("unpaid sale: expected left OPEN, undated, no receipt; got %+v, receipts %v", r, issued)
 	}
 
 	// Vente sans émetteur de ticket branché : échec, rien n'est écrit.
@@ -132,31 +120,32 @@ func TestUberReconciliation_FiscalChain_Postgres(t *testing.T) {
 	if err := repo.SyncOrderState(ctx, "itest-c10-noissuer", StatusCompleted, StateClosed, "ACCEPTED", sql.NullInt64{}, nil); err == nil {
 		t.Fatal("sale without receipt issuer: expected an error")
 	}
-	if r := read(t, noIssuer); r.state != "OPEN" || r.hash.Valid {
-		t.Fatalf("sale without receipt issuer: expected rolled back (OPEN, unsealed), got %+v", r)
+	if r := read(t, noIssuer); r.state != "OPEN" || r.deliveredOn.Valid {
+		t.Fatalf("sale without receipt issuer: expected rolled back (OPEN, undated), got %+v", r)
 	}
 
-	// Annulation : clôture scellée, chaînée sur la vente, sans ticket.
+	// Annulation : clôturée et datée, sans ticket.
 	canceled := seed(t, "itest-c10-cancel", true)
 	if err := repo.SyncOrderState(ctx, "itest-c10-cancel", StatusCanceled, StateClosed, "ACCEPTED", sql.NullInt64{Int64: 39, Valid: true}, issuer); err != nil {
 		t.Fatalf("SyncOrderState (cancel): %v", err)
 	}
 	cancelRow := read(t, canceled)
 	if cancelRow.state != "CLOSED" || cancelRow.brandStatus != StatusCanceled || cancelRow.cancelledBy.String != "PLATFORM" ||
-		!cancelRow.deliveredOn.Valid || cancelRow.version != fiscal.HashVersion || cancelRow.prev.String != saleRow.hash.String {
-		t.Fatalf("cancel: expected CLOSED/CANCELED/PLATFORM sealed after the sale, got %+v", cancelRow)
+		!cancelRow.deliveredOn.Valid || cancelRow.hash.Valid {
+		t.Fatalf("cancel: expected CLOSED/CANCELED/PLATFORM dated, got %+v", cancelRow)
 	}
 	if len(issued) != 1 {
 		t.Fatalf("cancel: no receipt expected, got %v", issued)
 	}
 
-	// Commande déjà close (la vente) : statut seulement, scellement intact.
+	// Commande déjà close (la vente) : statut seulement, date de clôture
+	// inchangée (elle rattache la commande à sa clôture journalière).
 	time.Sleep(10 * time.Millisecond)
 	if err := repo.HandleOrderNotFound(ctx, "itest-c10-sale", issuer); err != nil {
 		t.Fatalf("HandleOrderNotFound (closed): %v", err)
 	}
 	after := read(t, sale)
-	if after.brandStatus != "CANCELED" || after.hash != saleRow.hash || after.deliveredOn != saleRow.deliveredOn || len(issued) != 1 {
-		t.Fatalf("closed order: expected status-only update (CANCELED), seal and closing date unchanged, no receipt; got %+v", after)
+	if after.brandStatus != "CANCELED" || after.deliveredOn != saleRow.deliveredOn || len(issued) != 1 {
+		t.Fatalf("closed order: expected status-only update (CANCELED), closing date unchanged, no receipt; got %+v", after)
 	}
 }

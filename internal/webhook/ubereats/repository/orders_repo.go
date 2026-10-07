@@ -39,9 +39,10 @@ func (r *OrdersRepository) GetOrderIDsByBrandOrderID(ctx context.Context, brandO
 
 // --- CANCEL ORDER ---
 //
-// Lot A conformité caisse (C10) : les commandes encore ouvertes sont
-// clôturées par la chaîne fiscale (fiscal.SealOrderClosure), dans une seule
-// transaction avec la désactivation des paiements (inchangée : lot B).
+// Conformité caisse (C10) : les commandes encore ouvertes sont clôturées
+// (date de clôture, qui les rattache à leur clôture journalière scellée),
+// dans une seule transaction avec la désactivation des paiements (inchangée
+// ici : lot C).
 func (r *OrdersRepository) CancelOrder(ctx context.Context, brandOrderID string) error {
 	log := logger.FromContext(ctx)
 
@@ -59,17 +60,13 @@ func (r *OrdersRepository) CancelOrder(ctx context.Context, brandOrderID string)
 			return err
 		}
 		for _, o := range open {
-			seal, err := fiscal.SealOrderClosure(txCtx, db, o.OrderID)
-			if err != nil {
-				return err
-			}
-			args := append(seal.Args(), o.OrderID)
+			args := append(fiscal.ClosureArgs(), o.OrderID)
 			if _, err := db.ExecContext(txCtx, `
 				UPDATE orders
 				SET brand_status = 'CANCELED',
 				    deletion_reason_id = '39',
 				    cancelled_by_type = 'PLATFORM',
-				    `+fiscal.SealColumns+`
+				    `+fiscal.ClosureColumns+`
 				WHERE order_id = ?
 			`, args...); err != nil {
 				log.Error("Error canceling order: " + err.Error())
@@ -154,9 +151,9 @@ func (r *OrdersRepository) MarkEnRouteToDropoff(ctx context.Context, brandOrderI
 }
 
 // MarkFailed clôture en échec (brand_status FAILED) une commande dont Uber
-// signale l'échec de livraison. Lot A conformité caisse (C10) : les commandes
-// encore ouvertes sont clôturées par la chaîne fiscale ; une commande déjà
-// close ne reçoit que le statut, sans rechaînage ni nouvelle date de clôture.
+// signale l'échec de livraison. Conformité caisse (C10) : les commandes encore
+// ouvertes sont clôturées (date de clôture) ; une commande déjà close ne
+// reçoit que le statut, sans nouvelle date de clôture.
 func (r *OrdersRepository) MarkFailed(ctx context.Context, brandOrderID string) error {
 	log := logger.FromContext(ctx)
 
@@ -174,16 +171,12 @@ func (r *OrdersRepository) MarkFailed(ctx context.Context, brandOrderID string) 
 			return err
 		}
 		for _, o := range open {
-			seal, err := fiscal.SealOrderClosure(txCtx, db, o.OrderID)
-			if err != nil {
-				return err
-			}
 			if _, err := db.ExecContext(txCtx, `
 				UPDATE orders
 				SET brand_status = 'FAILED',
-				    `+fiscal.SealColumns+`
+				    `+fiscal.ClosureColumns+`
 				WHERE order_id = ?
-			`, append(seal.Args(), o.OrderID)...); err != nil {
+			`, append(fiscal.ClosureArgs(), o.OrderID)...); err != nil {
 				return err
 			}
 		}

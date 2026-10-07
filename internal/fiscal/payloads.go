@@ -136,9 +136,11 @@ type OrderClosurePayload struct {
 }
 
 // LoadOrderClosure lit l'en-tête et les lignes d'une commande. deliveredOn est
-// la date de clôture écrite avec l'empreinte.
+// sa date de clôture. Même charge utile que le chargement groupé des clôtures
+// journalières (loadDayOrderClosures), dont l'empreinte de chaque commande
+// est tirée.
 func LoadOrderClosure(ctx context.Context, db *dbx.DB, orderID string, deliveredOn time.Time) (OrderClosurePayload, error) {
-	p, err := loadOrderClosure(ctx, db, orderID, false)
+	p, err := loadOrderClosure(ctx, db, orderID)
 	if err != nil {
 		return OrderClosurePayload{}, err
 	}
@@ -146,19 +148,9 @@ func LoadOrderClosure(ctx context.Context, db *dbx.DB, orderID string, delivered
 	return p, nil
 }
 
-// LoadOrderClosureForUpdate lit la commande à sceller en verrouillant sa
-// ligne jusqu'à la fin de la transaction : une modification concurrente de la
-// commande ne peut plus s'intercaler entre la lecture et l'écriture de
-// l'empreinte. DeliveredOn reste vide : l'appelant le fixe une fois le verrou
-// de la chaîne obtenu, pour que les dates de clôture suivent l'ordre de la
-// chaîne.
-func LoadOrderClosureForUpdate(ctx context.Context, db *dbx.DB, orderID string) (OrderClosurePayload, error) {
-	return loadOrderClosure(ctx, db, orderID, true)
-}
-
 // loadOrderClosure lit en-tête et lignes en une seule requête (un seul aller-
 // retour : la clôture est sur le chemin de chaque encaissement final).
-func loadOrderClosure(ctx context.Context, db *dbx.DB, orderID string, forUpdate bool) (OrderClosurePayload, error) {
+func loadOrderClosure(ctx context.Context, db *dbx.DB, orderID string) (OrderClosurePayload, error) {
 	query := `
 		SELECT o.merchant_id, o.order_id, o.order_type, o.price, o.ht, o.tva, o.delivery_fees, o.cart_discount_amount,
 		       oi.order_item_id, oi.product_id, oi.quantity, oi.base_price, oi.price, oi.tva_rate, oi.discount_id
@@ -166,9 +158,6 @@ func loadOrderClosure(ctx context.Context, db *dbx.DB, orderID string, forUpdate
 		LEFT JOIN orderitems oi ON oi.order_id = o.order_id
 		WHERE o.order_id = ?
 		ORDER BY oi.order_item_id`
-	if forUpdate {
-		query += ` FOR UPDATE OF o`
-	}
 	rows, err := db.QueryContext(ctx, query, orderID)
 	if err != nil {
 		return OrderClosurePayload{}, fmt.Errorf("fiscal: load order %s: %w", orderID, err)

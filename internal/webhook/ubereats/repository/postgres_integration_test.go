@@ -82,18 +82,18 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 		t.Fatalf("CancelOrder failed against postgres: %v", err)
 	}
 	var deletionReasonID, cancelledByType string
-	var cancelVersion int
-	var cancelHash sql.NullString
-	if err := db.QueryRowContext(ctx, `SELECT brand_status, deletion_reason_id, cancelled_by_type, hash_version, hash FROM orders WHERE order_id = $1`, orderID).
-		Scan(&brandStatus, &deletionReasonID, &cancelledByType, &cancelVersion, &cancelHash); err != nil {
+	var cancelClosedAt sql.NullTime
+	if err := db.QueryRowContext(ctx, `SELECT brand_status, deletion_reason_id, cancelled_by_type, delivered_on FROM orders WHERE order_id = $1`, orderID).
+		Scan(&brandStatus, &deletionReasonID, &cancelledByType, &cancelClosedAt); err != nil {
 		t.Fatalf("read back order after CancelOrder: %v", err)
 	}
 	if brandStatus != "CANCELED" || deletionReasonID != "39" {
 		t.Fatalf("unexpected order state after CancelOrder: status=%q reason=%q", brandStatus, deletionReasonID)
 	}
-	// Lot A conformité caisse (C10) : la clôture passe par la chaîne fiscale.
-	if cancelVersion != 2 || !cancelHash.Valid {
-		t.Fatalf("expected CancelOrder closure sealed v2, got version=%d hash=%v", cancelVersion, cancelHash)
+	// Conformité caisse (C10) : la clôture porte sa date (rattachement à la
+	// clôture journalière, qui la scelle).
+	if !cancelClosedAt.Valid {
+		t.Fatal("expected CancelOrder closure dated (delivered_on)")
 	}
 	// PROMPT 11, §2: this handler is a direct webhook write path bypassing
 	// order_life_cycle.DeleteOrderLocal entirely, unconditionally triggered by
@@ -124,16 +124,15 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 		t.Fatalf("MarkFailed failed against postgres: %v", err)
 	}
 	var state string
-	var failedVersion int
-	var failedPrev sql.NullString
-	if err := db.QueryRowContext(ctx, `SELECT state, brand_status, hash_version, previous_hash FROM orders WHERE order_id = $1`, orderID2).Scan(&state, &brandStatus, &failedVersion, &failedPrev); err != nil {
+	var failedClosedAt sql.NullTime
+	if err := db.QueryRowContext(ctx, `SELECT state, brand_status, delivered_on FROM orders WHERE order_id = $1`, orderID2).Scan(&state, &brandStatus, &failedClosedAt); err != nil {
 		t.Fatalf("read back order after MarkFailed: %v", err)
 	}
 	if state != "CLOSED" || brandStatus != "FAILED" {
 		t.Fatalf("unexpected order state after MarkFailed: state=%q status=%q", state, brandStatus)
 	}
-	if failedVersion != 2 || failedPrev.String != cancelHash.String {
-		t.Fatalf("expected MarkFailed closure sealed v2 and chained on the canceled order, got version=%d prev=%v", failedVersion, failedPrev)
+	if !failedClosedAt.Valid {
+		t.Fatal("expected MarkFailed closure dated (delivered_on)")
 	}
 
 	// CancelOrder must not touch an order already finalized (audit item #6 —
@@ -153,13 +152,13 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 		t.Fatalf("CancelOrder (already closed) failed against postgres: %v", err)
 	}
 	var brandStatus3, state3 string
-	var hash3 sql.NullString
-	if err := db.QueryRowContext(ctx, `SELECT brand_status, state, hash FROM orders WHERE order_id = $1`, orderID3).
-		Scan(&brandStatus3, &state3, &hash3); err != nil {
+	var closedAt3 sql.NullTime
+	if err := db.QueryRowContext(ctx, `SELECT brand_status, state, delivered_on FROM orders WHERE order_id = $1`, orderID3).
+		Scan(&brandStatus3, &state3, &closedAt3); err != nil {
 		t.Fatalf("read back order 3 after CancelOrder: %v", err)
 	}
-	if brandStatus3 != "CLOSED" || state3 != "CLOSED" || hash3.Valid {
-		t.Fatalf("CancelOrder must not alter (nor seal) an already-closed order, got status=%q state=%q hash=%v", brandStatus3, state3, hash3)
+	if brandStatus3 != "CLOSED" || state3 != "CLOSED" || closedAt3.Valid {
+		t.Fatalf("CancelOrder must not alter (nor date) an already-closed order, got status=%q state=%q delivered_on=%v", brandStatus3, state3, closedAt3)
 	}
 }
 

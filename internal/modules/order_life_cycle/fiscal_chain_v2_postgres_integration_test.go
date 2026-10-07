@@ -24,7 +24,7 @@ import (
 )
 
 // Lot A conformité caisse (docs/attestation-conformite-01-lot-A-brief.md) :
-// chaque ligne écrite par les chaînes orders, payments, receipts et
+// chaque ligne écrite par les chaînes payments, receipts et
 // audit_logs doit pouvoir être re-scellée à partir de sa relecture en base
 // (même empreinte, même signature), et chaque chaîne doit rester linéaire,
 // y compris avec 10 écritures simultanées sur un même établissement.
@@ -169,7 +169,7 @@ func TestFiscalLock_NoDeadlockBetweenOrderRowAndChains_Postgres(t *testing.T) {
 
 // Lot A conformité caisse (C10) : la confirmation de livraison Uber arrive
 // souvent après la clôture en caisse. Elle ne doit ni reclôturer la commande
-// (empreinte et date de clôture réécrites) ni émettre un second ticket.
+// (date de clôture réécrite) ni émettre un second ticket.
 func TestSetDeliveredExternal_AlreadyClosed_NoOp_Postgres(t *testing.T) {
 	db := pgtest.Open(t)
 	ctx := context.Background()
@@ -178,26 +178,26 @@ func TestSetDeliveredExternal_AlreadyClosed_NoOp_Postgres(t *testing.T) {
 	env.pay(t, order, 1200, "CB", nil)
 	env.close(t, order, 1200)
 
-	snapshot := func() (hash string, closedAt time.Time, receipts int) {
+	snapshot := func() (lastUpdate, closedAt time.Time, receipts int) {
 		t.Helper()
 		if err := db.QueryRowContext(ctx, `
-			SELECT o.hash, o.delivered_on, (SELECT count(*) FROM receipts r WHERE r.order_id = o.order_id)
-			FROM orders o WHERE o.order_id = $1`, order).Scan(&hash, &closedAt, &receipts); err != nil {
+			SELECT o.last_update, o.delivered_on, (SELECT count(*) FROM receipts r WHERE r.order_id = o.order_id)
+			FROM orders o WHERE o.order_id = $1`, order).Scan(&lastUpdate, &closedAt, &receipts); err != nil {
 			t.Fatalf("read order: %v", err)
 		}
 		return
 	}
-	hashBefore, closedBefore, receiptsBefore := snapshot()
+	updatedBefore, closedBefore, receiptsBefore := snapshot()
 
 	// Seul le dépôt sert avant le retour anticipé sur une commande close.
 	svc := &OrdersLifeCycleService{ordersLifeCycleRepo: env.repo}
 	if err := svc.SetDeliveredExternal(ctx, env.merchantID, models.UberEatsWebhookUserID, order); err != nil {
 		t.Fatalf("SetDeliveredExternal on a closed order: %v", err)
 	}
-	hashAfter, closedAfter, receiptsAfter := snapshot()
-	if hashAfter != hashBefore || !closedAfter.Equal(closedBefore) || receiptsAfter != receiptsBefore || receiptsBefore != 1 {
-		t.Fatalf("closed order changed: hash %v→%v, closed_at %v→%v, receipts %d→%d",
-			hashBefore != "", hashAfter == hashBefore, closedBefore, closedAfter, receiptsBefore, receiptsAfter)
+	updatedAfter, closedAfter, receiptsAfter := snapshot()
+	if !updatedAfter.Equal(updatedBefore) || !closedAfter.Equal(closedBefore) || receiptsAfter != receiptsBefore || receiptsBefore != 1 {
+		t.Fatalf("closed order changed: last_update %v→%v, closed_at %v→%v, receipts %d→%d",
+			updatedBefore, updatedAfter, closedBefore, closedAfter, receiptsBefore, receiptsAfter)
 	}
 }
 
@@ -329,7 +329,6 @@ type chainRow struct {
 func (e *fiscalTestEnv) verifyAll(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
-	dbw := dbx.GetDB(ctx, e.db)
 
 	var rows []chainRow
 	// payments
@@ -366,38 +365,17 @@ func (e *fiscalTestEnv) verifyAll(t *testing.T) {
 	pr.Close()
 	checkChain(t, "payments", rows)
 
-	// orders (clôtures chaînées)
-	rows = nil
-	or, err := e.db.QueryContext(ctx, `
-		SELECT order_id::text, delivered_on, previous_hash, hash, signature, hash_version
-		FROM orders WHERE merchant_id = $1 AND hash IS NOT NULL ORDER BY delivered_on, order_id`, e.merchantID)
-	if err != nil {
+	// orders : plus d'empreinte par commande (scellées par leur clôture
+	// journalière, lot B) ; chaque clôture porte sa date de clôture.
+	var closedOrders, sealedOnRow, undated int
+	if err := e.db.QueryRowContext(ctx, `
+		SELECT count(*), count(*) FILTER (WHERE hash IS NOT NULL), count(*) FILTER (WHERE delivered_on IS NULL)
+		FROM orders WHERE merchant_id = $1 AND state = 'CLOSED'`, e.merchantID).Scan(&closedOrders, &sealedOnRow, &undated); err != nil {
 		t.Fatal(err)
 	}
-	type orderRow struct {
-		id string
-		at time.Time
-		r  chainRow
+	if closedOrders == 0 || sealedOnRow != 0 || undated != 0 {
+		t.Fatalf("orders: %d closed, %d sealed on their row (want 0), %d without delivered_on (want 0)", closedOrders, sealedOnRow, undated)
 	}
-	var orders []orderRow
-	for or.Next() {
-		var o orderRow
-		if err := or.Scan(&o.id, &o.at, &o.r.prev, &o.r.hash, &o.r.sig, &o.r.version); err != nil {
-			t.Fatal(err)
-		}
-		orders = append(orders, o)
-	}
-	or.Close()
-	for _, o := range orders {
-		p, err := fiscal.LoadOrderClosure(ctx, dbw, o.id, o.at)
-		if err != nil {
-			t.Fatal(err)
-		}
-		o.r.key = "order " + o.id
-		o.r.recomputed, o.r.recomputedSig, _ = fiscal.Seal(fiscal.ChainOrders, o.r.prev, p)
-		rows = append(rows, o.r)
-	}
-	checkChain(t, "orders", rows)
 
 	// receipts
 	rows = nil

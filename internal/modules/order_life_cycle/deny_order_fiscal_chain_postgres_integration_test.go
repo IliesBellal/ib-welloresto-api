@@ -4,11 +4,13 @@ package order_life_cycle
 
 import (
 	"context"
-	"database/sql"
 	"strconv"
 	"testing"
+	"time"
 
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/database/dbx/pgtest"
+	"welloresto-api/internal/fiscal"
 	"welloresto-api/internal/modules/customers"
 )
 
@@ -16,10 +18,11 @@ import (
 // seul des trois points de clôture de commande (SetDeliveredLocal,
 // DeleteOrderLocal, DenyOrderLocal) à ne jamais écrire hash/previous_hash/
 // signature — une commande refusée par le marchand sortait de la chaîne
-// fiscale sans laisser de trace. Vérifie ici que ce n'est plus le cas, et
-// que le chaînage (previous_hash -> hash de la commande précédente) est
-// effectif entre deux refus successifs du même marchand.
-func TestOrderLifeCycleRepository_DenyOrderLocal_FiscalChain_Postgres(t *testing.T) {
+// fiscale sans laisser de trace. Depuis le lot B conformité caisse, les
+// commandes sont scellées par leur clôture journalière : vérifie qu'un refus
+// est daté (delivered_on), sans empreinte sur la ligne, et qu'il figure avec
+// son statut dans la clôture de son jour.
+func TestOrderLifeCycleRepository_DenyOrderLocal_SealedByDayClosure_Postgres(t *testing.T) {
 	db := pgtest.Open(t)
 	ctx := context.Background()
 
@@ -65,49 +68,38 @@ func TestOrderLifeCycleRepository_DenyOrderLocal_FiscalChain_Postgres(t *testing
 		return strconv.FormatInt(orderID, 10)
 	}
 
-	readFiscalColumns := func(t *testing.T, orderID string) (previousHash, hash, signature sql.NullString) {
-		t.Helper()
-		if err := db.QueryRowContext(ctx, `SELECT previous_hash, hash, signature FROM orders WHERE order_id = $1`, orderID).
-			Scan(&previousHash, &hash, &signature); err != nil {
-			t.Fatalf("read back fiscal columns: %v", err)
-		}
-		return
-	}
-
-	// Premier refus pour ce marchand : aucune commande CLOSED précédente ->
-	// GENESIS_HASH, comme cash_registers pour son propre premier maillon.
 	orderA := newOpenOrder(t, 3000)
-	if err := repo.DenyOrderLocal(ctx, orderA, "1", "itest deny fiscal chain A", "226"); err != nil {
-		t.Fatalf("DenyOrderLocal (A): %v", err)
-	}
-	prevA, hashA, sigA := readFiscalColumns(t, orderA)
-	if !hashA.Valid || hashA.String == "" {
-		t.Fatalf("DenyOrderLocal (A): expected non-null/non-empty hash, got %v", hashA)
-	}
-	if !sigA.Valid || sigA.String == "" {
-		t.Fatalf("DenyOrderLocal (A): expected non-null/non-empty signature, got %v", sigA)
-	}
-	if !prevA.Valid || prevA.String != "GENESIS_HASH" {
-		t.Fatalf("DenyOrderLocal (A): expected previous_hash=GENESIS_HASH, got %v", prevA)
+	orderB := newOpenOrder(t, 3001)
+	for _, id := range []string{orderA, orderB} {
+		if err := repo.DenyOrderLocal(ctx, id, "1", "itest deny "+id, "226"); err != nil {
+			t.Fatalf("DenyOrderLocal (%s): %v", id, err)
+		}
 	}
 
-	// Deuxième refus pour le même marchand : previous_hash doit chaîner sur
-	// le hash de la commande A.
-	orderB := newOpenOrder(t, 3001)
-	if err := repo.DenyOrderLocal(ctx, orderB, "1", "itest deny fiscal chain B", "226"); err != nil {
-		t.Fatalf("DenyOrderLocal (B): %v", err)
+	var deliveredOn time.Time
+	for _, id := range []string{orderA, orderB} {
+		var state, status string
+		var hashed bool
+		if err := db.QueryRowContext(ctx, `SELECT state, brand_status, delivered_on, hash IS NOT NULL FROM orders WHERE order_id = $1`, id).
+			Scan(&state, &status, &deliveredOn, &hashed); err != nil {
+			t.Fatalf("read back denied order %s: %v", id, err)
+		}
+		if state != "CLOSED" || status != "DENIED" || hashed {
+			t.Fatalf("denied order %s: state=%s status=%s row hash=%v; want CLOSED/DENIED without row hash", id, state, status, hashed)
+		}
 	}
-	prevB, hashB, sigB := readFiscalColumns(t, orderB)
-	if !hashB.Valid || hashB.String == "" {
-		t.Fatalf("DenyOrderLocal (B): expected non-null/non-empty hash, got %v", hashB)
+
+	// Les deux refus figurent, avec leur statut, dans la clôture de leur jour.
+	day := time.Date(deliveredOn.UTC().Year(), deliveredOn.UTC().Month(), deliveredOn.UTC().Day(), 0, 0, 0, 0, time.UTC)
+	closure, err := fiscal.ComputeDayClosure(ctx, dbx.GetDB(ctx, db), merchantID, "UTC", time.UTC, day)
+	if err != nil {
+		t.Fatalf("ComputeDayClosure: %v", err)
 	}
-	if !sigB.Valid || sigB.String == "" {
-		t.Fatalf("DenyOrderLocal (B): expected non-null/non-empty signature, got %v", sigB)
+	found := map[string]string{}
+	for _, o := range closure.Orders {
+		found[strconv.FormatInt(o.OrderID, 10)] = o.Status
 	}
-	if !prevB.Valid || prevB.String != hashA.String {
-		t.Fatalf("DenyOrderLocal (B): expected previous_hash=%q (hash of A), got %v", hashA.String, prevB)
-	}
-	if hashB.String == hashA.String {
-		t.Fatalf("DenyOrderLocal (A) and (B): expected distinct hashes, both are %q", hashA.String)
+	if found[orderA] != "DENIED" || found[orderB] != "DENIED" {
+		t.Fatalf("denied orders missing from their day closure: %+v", closure.Orders)
 	}
 }

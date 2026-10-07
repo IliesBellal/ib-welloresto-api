@@ -439,12 +439,12 @@ type SaleReceiptFunc func(ctx context.Context, merchantID, orderID string) error
 // hors périmètre C2, voir lot 1) et les statuts non-terminaux (ACCEPTED,
 // COMPLETED, EN_ROUTE_TO_DROPOFF) sont laissés intacts.
 //
-// Clôture (state CLOSED, lot A conformité caisse, C10) : les commandes encore
-// ouvertes passent par la chaîne fiscale (fiscal.SealOrderClosure) et, pour
-// une vente (COMPLETED, EN_ROUTE_TO_DROPOFF), reçoivent leur ticket ; une
-// vente pas entièrement payée reste ouverte. Les commandes déjà closes ne
-// reçoivent que la mise à jour de statut, sans rechaînage ni nouvelle date de
-// clôture.
+// Clôture (state CLOSED, conformité caisse, C10) : les commandes encore
+// ouvertes sont clôturées (date de clôture, qui les rattache à leur clôture
+// journalière scellée) et, pour une vente (COMPLETED, EN_ROUTE_TO_DROPOFF),
+// reçoivent leur ticket ; une vente pas entièrement payée reste ouverte. Les
+// commandes déjà closes ne reçoivent que la mise à jour de statut, sans
+// nouvelle date de clôture.
 func (r *UberRepository) SyncOrderState(ctx context.Context, uberOrderID, status, state, approval string, reasonID sql.NullInt64, issueSaleReceipt SaleReceiptFunc) error {
 	// deletion_reason_id is varchar, not integer: pgx's stdlib driver can't
 	// encode a sql.NullInt64 directly into a text-typed column ("cannot find
@@ -489,7 +489,7 @@ func (r *UberRepository) SyncOrderState(ctx context.Context, uberOrderID, status
 			return err
 		}
 		for _, o := range open {
-			if err := closePlatformOrder(txCtx, db, o.OrderID, sale, businessSet, businessArgs, issueSaleReceipt); err != nil {
+			if err := closePlatformOrder(txCtx, db, o, sale, businessSet, businessArgs, issueSaleReceipt); err != nil {
 				return err
 			}
 		}
@@ -511,10 +511,10 @@ func (r *UberRepository) SyncOrderState(ctx context.Context, uberOrderID, status
 // STAFF déjà exécuté avant l'appel API qui a mené ici). Seule la branche
 // CANCELED (READY_FOR_HANDOFF -> CLOSED n'est pas une annulation) compte.
 //
-// Lot A conformité caisse (C10) : une commande ouverte est clôturée par la
-// chaîne fiscale ; READY_FOR_HANDOFF est une vente (ticket, reste ouverte si
-// pas entièrement payée), le reste une annulation. Les commandes déjà closes
-// ne reçoivent que la mise à jour de statut.
+// Conformité caisse (C10) : une commande ouverte est clôturée (date de
+// clôture) ; READY_FOR_HANDOFF est une vente (ticket, reste ouverte si pas
+// entièrement payée), le reste une annulation. Les commandes déjà closes ne
+// reçoivent que la mise à jour de statut.
 func (r *UberRepository) HandleOrderNotFound(ctx context.Context, uberOrderID string, issueSaleReceipt SaleReceiptFunc) error {
 	businessSet := `brand_status = CASE WHEN brand_status = 'READY_FOR_HANDOFF' THEN 'CLOSED' ELSE 'CANCELED' END,
 		    cancelled_by_type = CASE WHEN cancelled_by_type IS NULL AND brand_status <> 'READY_FOR_HANDOFF' THEN 'PLATFORM' ELSE cancelled_by_type END,
@@ -531,7 +531,7 @@ func (r *UberRepository) HandleOrderNotFound(ctx context.Context, uberOrderID st
 		}
 		for _, o := range open {
 			sale := o.BrandStatus == "READY_FOR_HANDOFF"
-			if err := closePlatformOrder(txCtx, db, o.OrderID, sale, businessSet, nil, issueSaleReceipt); err != nil {
+			if err := closePlatformOrder(txCtx, db, o, sale, businessSet, nil, issueSaleReceipt); err != nil {
 				return err
 			}
 		}
@@ -539,35 +539,31 @@ func (r *UberRepository) HandleOrderNotFound(ctx context.Context, uberOrderID st
 	})
 }
 
-// closePlatformOrder clôture et scelle une commande plateforme encore ouverte
-// (verrouillée par fiscal.LockOpenOrdersByBrandOrderID) : mêmes colonnes
-// métier que le chemin appelant (businessSet/businessArgs), plus la clôture
-// scellée. Une vente doit être entièrement payée (sinon la commande reste
-// ouverte, l'erreur est journalisée) et reçoit son ticket.
-func closePlatformOrder(ctx context.Context, db *dbx.DB, orderID string, sale bool, businessSet string, businessArgs []any, issueSaleReceipt SaleReceiptFunc) error {
+// closePlatformOrder clôture une commande plateforme encore ouverte (verrouillée
+// par fiscal.LockOpenOrdersByBrandOrderID) : mêmes colonnes métier que le
+// chemin appelant (businessSet/businessArgs), plus état et date de clôture.
+// Une vente doit être entièrement payée (sinon la commande reste ouverte,
+// l'erreur est journalisée) et reçoit son ticket.
+func closePlatformOrder(ctx context.Context, db *dbx.DB, o fiscal.OpenPlatformOrder, sale bool, businessSet string, businessArgs []any, issueSaleReceipt SaleReceiptFunc) error {
 	if sale {
-		paid, err := fiscal.OrderFullyPaid(ctx, db, orderID)
+		paid, err := fiscal.OrderFullyPaid(ctx, db, o.OrderID)
 		if err != nil {
 			return err
 		}
 		if !paid {
-			logger.FromContext(ctx).Error(fmt.Sprintf("ubereats: platform sale %s not fully paid, left open", orderID))
+			logger.FromContext(ctx).Error(fmt.Sprintf("ubereats: platform sale %s not fully paid, left open", o.OrderID))
 			return nil
 		}
 		if issueSaleReceipt == nil {
 			return errors.New("ubereats: sale receipt issuer not configured")
 		}
 	}
-	seal, err := fiscal.SealOrderClosure(ctx, db, orderID)
-	if err != nil {
-		return err
-	}
-	args := append(append(append([]any{}, businessArgs...), seal.Args()...), orderID)
-	if _, err := db.ExecContext(ctx, `UPDATE orders SET `+businessSet+`, `+fiscal.SealColumns+` WHERE order_id = ?`, args...); err != nil {
+	args := append(append(append([]any{}, businessArgs...), fiscal.ClosureArgs()...), o.OrderID)
+	if _, err := db.ExecContext(ctx, `UPDATE orders SET `+businessSet+`, `+fiscal.ClosureColumns+` WHERE order_id = ?`, args...); err != nil {
 		return err
 	}
 	if sale {
-		return issueSaleReceipt(ctx, seal.MerchantID, orderID)
+		return issueSaleReceipt(ctx, o.MerchantID, o.OrderID)
 	}
 	return nil
 }

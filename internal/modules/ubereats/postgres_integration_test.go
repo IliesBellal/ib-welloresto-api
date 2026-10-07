@@ -153,8 +153,7 @@ func TestUberEatsRepository_Postgres(t *testing.T) {
 	}
 
 	// SyncOrderState CLOSED (vente) : une commande Uber porte son paiement
-	// UBER_EATS ; la clôture passe par la chaîne fiscale et émet le ticket
-	// (lot A conformité caisse, C10).
+	// UBER_EATS ; la clôture émet le ticket (conformité caisse, C10).
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO payments (merchant_id, user_id, order_id, amount, mop, enabled)
 		VALUES ($1, 'UBER_EATS', $2, 2500, 'UBER_EATS', true)`, merchantID, orderIntID); err != nil {
@@ -170,12 +169,11 @@ func TestUberEatsRepository_Postgres(t *testing.T) {
 	}
 	var state string
 	var deliveredOn *time.Time
-	var hashVersion int
-	if err := db.QueryRowContext(ctx, `SELECT state, delivered_on, hash_version FROM orders WHERE order_id = $1`, orderIntID).Scan(&state, &deliveredOn, &hashVersion); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT state, delivered_on FROM orders WHERE order_id = $1`, orderIntID).Scan(&state, &deliveredOn); err != nil {
 		t.Fatalf("read back synced order: %v", err)
 	}
-	if state != "CLOSED" || deliveredOn == nil || hashVersion != 2 {
-		t.Fatalf("expected CLOSED + delivered_on set + sealed v2, got %s / %v / v%d", state, deliveredOn, hashVersion)
+	if state != "CLOSED" || deliveredOn == nil {
+		t.Fatalf("expected CLOSED + delivered_on set, got %s / %v", state, deliveredOn)
 	}
 	if len(receiptsIssued) != 1 || receiptsIssued[0] != merchantID+"/"+orderID {
 		t.Fatalf("expected one sale receipt for %s/%s, got %v", merchantID, orderID, receiptsIssued)

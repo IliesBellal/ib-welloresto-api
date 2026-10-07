@@ -725,15 +725,11 @@ func (r *OrdersLifeCycleRepository) MarkOrderAsDeliveryStarted(ctx context.Conte
 	return &info, nil
 }
 
-// sealOrderClosure scelle la clôture de orderID (lot A conformité caisse) :
-// voir fiscal.SealOrderClosure, partagée avec les clôtures plateformes. Doit
-// être appelée dans la transaction qui écrit la clôture.
-func (r *OrdersLifeCycleRepository) sealOrderClosure(ctx context.Context, orderID string) (*fiscal.OrderClosureSeal, error) {
-	return fiscal.SealOrderClosure(ctx, dbx.GetDB(ctx, r.database), orderID)
-}
-
-// DenyOrderLocal ouvre sa propre transaction (ou rejoint celle de l'appelant)
-// pour que le verrou fiscal tienne jusqu'à l'écriture de la clôture.
+// DenyOrderLocal ouvre sa propre transaction (ou rejoint celle de l'appelant) :
+// la clôture et la remise à disposition des récompenses sont atomiques. La
+// commande n'est plus scellée ici : sa clôture journalière la scelle
+// (fiscal.CloseDueDays, lot B conformité caisse) ; delivered_on la rattache à
+// son jour.
 func (r *OrdersLifeCycleRepository) DenyOrderLocal(ctx context.Context, orderID, deletionReasonID, comment, userID string) error {
 	return dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
 		return r.denyOrderLocal(txCtx, orderID, deletionReasonID, comment, userID)
@@ -744,13 +740,8 @@ func (r *OrdersLifeCycleRepository) denyOrderLocal(ctx context.Context, orderID,
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	seal, err := r.sealOrderClosure(ctx, orderID)
-	if err != nil {
-		log.Error(err.Error())
-		return err
-	}
-
-	_, err = db.ExecContext(ctx, `
+	closedAt := fiscal.Now()
+	_, err := db.ExecContext(ctx, `
         UPDATE orders
         SET last_update = ?,
             brand_status = 'DENIED',
@@ -759,14 +750,9 @@ func (r *OrdersLifeCycleRepository) denyOrderLocal(ctx context.Context, orderID,
             delivered_on = ?,
             deletion_reason_id = ?,
             deletion_comment = ?,
-            cancelled_by_type = ?,
-            previous_hash = ?,
-            hash = ?,
-            signature = ?,
-            hash_version = ?
+            cancelled_by_type = ?
         WHERE order_id = ?`,
-		seal.ClosedAt, seal.ClosedAt, deletionReasonID, comment, classifyCancelledByType(userID),
-		seal.Prev, seal.Hash, seal.Signature, fiscal.HashVersion, orderID,
+		closedAt, closedAt, deletionReasonID, comment, classifyCancelledByType(userID), orderID,
 	)
 	if err != nil {
 		log.Error(err.Error())
@@ -859,8 +845,7 @@ func (r *OrdersLifeCycleRepository) OrderStillOpen(ctx context.Context, orderID 
 }
 
 // DeleteOrderLocal ouvre sa propre transaction (ou rejoint celle de
-// l'appelant) pour que le verrou fiscal tienne jusqu'à l'écriture de la
-// clôture.
+// l'appelant). Scellement : par la clôture journalière (cf. DenyOrderLocal).
 func (r *OrdersLifeCycleRepository) DeleteOrderLocal(ctx context.Context, orderID string, reasonID string, comment string, userID string) error {
 	return dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
 		return r.deleteOrderLocal(txCtx, orderID, reasonID, comment, userID)
@@ -870,12 +855,8 @@ func (r *OrdersLifeCycleRepository) DeleteOrderLocal(ctx context.Context, orderI
 func (r *OrdersLifeCycleRepository) deleteOrderLocal(ctx context.Context, orderID string, reasonID string, comment string, userID string) error {
 	db := dbx.GetDB(ctx, r.database)
 
-	seal, err := r.sealOrderClosure(ctx, orderID)
-	if err != nil {
-		return err
-	}
-
-	_, err = db.ExecContext(ctx, `
+	closedAt := fiscal.Now()
+	_, err := db.ExecContext(ctx, `
         UPDATE orders
         SET deletion_reason_id = ?,
             deletion_comment = ?,
@@ -883,14 +864,9 @@ func (r *OrdersLifeCycleRepository) deleteOrderLocal(ctx context.Context, orderI
             state = 'CLOSED',
             brand_status = 'CANCELED',
             delivered_on = ?,
-            previous_hash = ?,
-            hash = ?,
-            signature = ?,
-            hash_version = ?,
             cancelled_by_type = ?
         WHERE order_id = ?`,
-		reasonID, comment, seal.ClosedAt, seal.ClosedAt, seal.Prev, seal.Hash, seal.Signature,
-		fiscal.HashVersion, classifyCancelledByType(userID), orderID,
+		reasonID, comment, closedAt, closedAt, classifyCancelledByType(userID), orderID,
 	)
 	if err != nil {
 		return err
@@ -933,9 +909,8 @@ func (r *OrdersLifeCycleRepository) GetOrderPaymentBalance(ctx context.Context, 
 }
 
 // SetDeliveredLocal ouvre sa propre transaction (ou rejoint celle de
-// l'appelant) pour que le verrou fiscal tienne jusqu'à l'écriture de la
-// clôture. DeliverOrder l'appelle dans la transaction qui écrit aussi le
-// ticket.
+// l'appelant) ; DeliverOrder l'appelle dans la transaction qui écrit aussi le
+// ticket. Scellement : par la clôture journalière (cf. DenyOrderLocal).
 func (r *OrdersLifeCycleRepository) SetDeliveredLocal(ctx context.Context, orderID string) (*DeliveredOrderMetadata, error) {
 	var meta *DeliveredOrderMetadata
 	err := dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
@@ -984,13 +959,8 @@ WHERE order_id = ?
 		}
 	}
 
-	// 1) Scellement fiscal de la clôture (lot A conformité caisse)
-	seal, err := r.sealOrderClosure(ctx, orderID)
-	if err != nil {
-		return nil, err
-	}
-
-	// 2) Update orders table avec Hash de clôture
+	// 1) Clôture : delivered_on rattache la commande à sa clôture journalière
+	closedAt := fiscal.Now()
 	qUpd := `
     UPDATE orders
     SET last_update = ?,
@@ -998,14 +968,10 @@ WHERE order_id = ?
         state = 'CLOSED',
         isPaid = TRUE,
         isDistributed = TRUE,
-        delivered_on = ?,
-        previous_hash = ?,
-        hash = ?,
-        signature = ?,
-        hash_version = ?
+        delivered_on = ?
     WHERE order_id = ?
     `
-	if _, err := db.ExecContext(ctx, qUpd, seal.ClosedAt, seal.ClosedAt, seal.Prev, seal.Hash, seal.Signature, fiscal.HashVersion, orderID); err != nil {
+	if _, err := db.ExecContext(ctx, qUpd, closedAt, closedAt, orderID); err != nil {
 		return nil, err
 	}
 
