@@ -1,3 +1,47 @@
+### Conformité caisse, lot A — empreintes complètes, chaînes sérialisées, plateformes dans la chaîne (2026-10-07)
+
+**Contexte.** Préalable à l'attestation éditeur (BOI-LETTRE-000242, de
+nouveau admise depuis le 21/02/2026). L'audit
+(`docs/attestation-conformite-00-audit.md`) relevait des empreintes qui ne
+couvraient pas le détail exigé par le BOI §50 (C3), des chaînes qui
+fourchaient sous concurrence avec des numéros de ticket en double (C5), et
+des clôtures Uber Eats hors chaîne (C10). Brief, journal et mesures :
+`docs/attestation-conformite-01-lot-A-brief.md`.
+
+**Décisions.**
+- **Empreinte v2** (`internal/fiscal`) :
+  - SHA-256 de `{chain, v, prev, data}` en JSON canonique, puis HMAC ;
+  - colonne `hash_version` (migration 168) : les lignes existantes restent en v1, non modifiées ;
+  - périmètre par chaîne et exclusions (statut de service, `enabled`, `cash_register_id`, frais Stripe) : voir le brief, phase 3 ;
+  - journal d'audit désormais signé.
+- **Un verrou consultatif par chaîne et par établissement** (`fiscal.LockChain`), pris juste avant la lecture du dernier maillon.
+  - Pourquoi pas un verrou unique par établissement : il créait un interblocage avec le verrou de ligne de la commande (audit écrit en fin de mutation). Un test reproduit ce cas.
+  - Le dernier maillon ne retient que les lignes chaînées : les lignes sans empreinte et sans date, triées en tête par `DESC`, faisaient redémarrer les chaînes (196 redémarrages `orders` sur staging).
+- **Index partiels** de recherche du dernier maillon et **unicité du numéro de ticket** (migration 169).
+- **Transactions (solution C, validée par Ilies) :**
+  - `DeliverOrder` (clôture + ticket), `DeleteOrder`, `SetOrderDenied` et `CloseCashRegister` sont atomiques ;
+  - `AddPaymentAndReturnID`, `InsertLogWithChain` et les trois clôtures de commande ouvrent leur transaction (réentrante) ;
+  - une fermeture de registre concurrente est annulée et rendue « déjà fermée », sans lignes de Z dupliquées.
+- **Plateformes (C10) :**
+  - les clôtures Uber Eats (réconciliation `SyncOrderState` / `HandleOrderNotFound`, webhooks `CancelOrder` / `MarkFailed`) passent par `fiscal.SealOrderClosure` ;
+  - une vente reçoit son ticket, via `SaleReceiptIssuer`, injecté pour éviter un cycle d'import ;
+  - une vente pas entièrement payée reste ouverte (décision d'Ilies) ;
+  - une commande déjà close ne reçoit que la mise à jour de statut ;
+  - `SetDeliveredExternal` ne fait plus rien sur une commande close : avant, elle était reclôturée et recevait un second ticket ;
+  - les annulations plateformes reçoivent désormais un `delivered_on`, comme les annulations caisse.
+- **Deliveroo :** `UpdateOrderRejected` et `DisablePayments` du webhook n'ont aucun appelant. Les refus passent par `DeleteOrder`, déjà chaîné. Code mort laissé en place.
+
+**Mesures** (contre staging) :
+- 10 encaissements et 10 clôtures simultanés : 0 fourche et 0 ticket en double, contre 13 fourches et 2 doublons avant ;
+- recherche du dernier maillon côté base : 80–106 ms → < 1 ms ;
+- depuis le poste local, +1 requête par chaîne écrite (le verrou), soit +21 ms par requête sur ce banc ;
+- l'API et la base de production étant dans la même région (confirmé par Ilies), le critère de performance est rempli.
+
+**Ouvert, hors lot A :**
+- C1 / C2 (lot B) : réouverture, annulations de paiement, webhooks qui désactivent des paiements ;
+- `SyncOrderState` vers un état ouvert peut rouvrir une commande close ;
+- C4 (commande de vérification, qui réutilisera les chargeurs de `internal/fiscal`), C6, C7, C8, C9.
+
 ### Upsell — Kill-switch LLM (AI_TASK_UPSELL_ENABLED) (2026-09-22)
 
 **Contexte.** Suite à un incident de facturation Anthropic (crédit épuisé,
