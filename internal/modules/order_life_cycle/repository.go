@@ -1507,6 +1507,7 @@ func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models
 	return &models.CreateOrderResult{
 		Status:   "success",
 		OrderID:  orderID,
+		PublicID: helpers.SafeString(req.Order.PublicID),
 		OrderNum: &orderNum,
 		Action:   action,
 	}, nil
@@ -2104,7 +2105,7 @@ func (r *OrdersLifeCycleRepository) insertOrderBase(ctx context.Context, req *mo
 	if req.Order.Customer != nil {
 		customer_id = req.Order.Customer.CustomerID
 	}
-	PublicID := helpers.GeneratePrefixedID("order-")
+	PublicID := helpers.GeneratePrefixedID(helpers.OrderPublicIDPrefix)
 	estimatedReady := normalizeEstimatedReady(req.Order.EstimatedReady)
 	isScheduled := resolveIsScheduled(req.Order.IsScheduled, estimatedReady)
 	deliveryTravelSeconds := r.resolveDeliveryTravelSeconds(ctx, req)
@@ -2128,6 +2129,7 @@ func (r *OrdersLifeCycleRepository) insertOrderBase(ctx context.Context, req *mo
 		return "no_order_created", err
 	}
 	req.Order.OrderID = helpers.Int64ToStringPtr(lastID)
+	req.Order.PublicID = &PublicID
 
 	err = r.insertOrderComment(ctx, req)
 

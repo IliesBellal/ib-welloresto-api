@@ -17,6 +17,7 @@ type MarketingRepository interface {
 	GetMarketingSettings(ctx context.Context, merchantID string) (*MarketingSettings, error)
 	GetSMSUnitPrice(ctx context.Context, merchantID string) (float64, error)
 	RecordSMSCost(ctx context.Context, merchantID string, count int, unitPrice float64) error
+	GetOrderTrackingRef(ctx context.Context, merchantID, orderID string) (*OrderTrackingRef, error)
 }
 
 type marketingRepository struct {
@@ -88,6 +89,22 @@ func (r *marketingRepository) GetSMSUnitPrice(ctx context.Context, merchantID st
 		return 0, err
 	}
 	return unitPrice, nil
+}
+
+// GetOrderTrackingRef renvoie ce qu'un SMS de suivi peut montrer au client
+// d'une commande : son id public (lien) et son numéro de retrait.
+func (r *marketingRepository) GetOrderTrackingRef(ctx context.Context, merchantID, orderID string) (*OrderTrackingRef, error) {
+	db := dbx.GetDB(ctx, r.db)
+
+	var publicID, orderNum sql.NullString
+	err := db.QueryRowContext(ctx,
+		`SELECT public_id, order_num FROM orders WHERE order_id = ? AND merchant_id = ?`,
+		orderID, merchantID,
+	).Scan(&publicID, &orderNum)
+	if err != nil {
+		return nil, err
+	}
+	return &OrderTrackingRef{PublicID: publicID.String, OrderNum: orderNum.String}, nil
 }
 
 func (r *marketingRepository) RecordSMSCost(

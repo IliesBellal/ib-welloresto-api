@@ -22,4 +22,7 @@ type Config struct {
 	// jamais lu directement ici pour ne pas importer internal/config (voir
 	// commentaire de ce fichier).
 	StripeTestMode bool
+	// ScanNOrderBaseURL : SCANNORDER_BASE_URL, base du lien de suivi imprimé
+	// en QR (qr_payload, tracking_url). Vide = helpers.DefaultScanNOrderBaseURL.
+	ScanNOrderBaseURL string
 }

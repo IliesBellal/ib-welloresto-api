@@ -72,6 +72,11 @@ const (
 	SubscriptionOverrideIDPrefix         = "sbov"
 	PlatformBillingCustomerIDPrefix      = "pbc"
 	SepaMandateIDPrefix                  = "sepa"
+	// OrderPublicIDPrefix préfixe orders.public_id, l'id exposé au client
+	// final (liens ScanNOrder). GeneratePrefixedID ajoutant son propre "-",
+	// les valeurs réelles ont la forme "order--<uuid>" : conservée telle
+	// quelle (docs/SCANNORDER_PUBLIC_ORDER_ID.md, D5).
+	OrderPublicIDPrefix = "order-"
 
 	// Module CDS (Customer Display System) — écran d'affichage client.
 	// Préfixes distincts de ceux du kiosk : les deux parcs sont séparés

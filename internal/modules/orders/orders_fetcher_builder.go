@@ -669,7 +669,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		o.merchant_approval, o.delivery_fees, o.last_update,
 		o.fulfillment_type,
 		CASE WHEN o.use_customer_temporary_address THEN 1 ELSE 0 END AS use_customer_temporary_address,
-		o.creation_date, o.places_settings, o.pager_number,
+		o.creation_date, o.places_settings, o.pager_number, o.public_id,
 
 		c.customer_id, c.customer_name, c.customer_last_name, c.customer_first_name, c.customer_tel,
 		c.customer_lat, c.customer_lng,
@@ -722,7 +722,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				cAddr, cFloor, cDoor, cAddAddr, cBusName, cBirth,
 				cInfo, cTempAddr, cTempFloor, cTempDoor, cTempAddAddr sql.NullString
 
-			var delTel, delUserName, cashRegisterID sql.NullString
+			var delTel, delUserName, cashRegisterID, publicID sql.NullString
 
 			if err := rows.Scan(
 				&orderID, &orderNum, &orderType, &state, &scheduled,
@@ -732,7 +732,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				&isPaid, &isDistributed, &productionReadyAt, &deliveryArrivalAt,
 				&merchantApproval, &deliveryFees, &lastUpdate,
 				&fulfillmentType, &useCustomerTemporaryAddress,
-				&creationDate, &placesSettings, &pagerNumber,
+				&creationDate, &placesSettings, &pagerNumber, &publicID,
 
 				&customerID, &cName, &cLastName, &cFirstName, &cTel, &customerLat, &customerLng,
 				&cTempPhone, &cTempPhoneCode, &customerNbOrders, &cZoneCode,
@@ -750,6 +750,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 
 			// --- Mapping Order ---
 			ord.OrderID = orderID.String
+			ord.PublicID = helpers.NullStringToPtr(publicID)
 			ord.MerchantID = &merchantID.String
 			ord.OrderNum = helpers.NullStringToPtr(orderNum)
 			ord.Brand = helpers.NullStringToPtr(brand)

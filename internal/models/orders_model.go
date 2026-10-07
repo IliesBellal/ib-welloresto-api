@@ -227,6 +227,7 @@ type Customer struct {
 
 type Order struct {
 	OrderID               string           `json:"order_id"`
+	PublicID              *string          `json:"public_id"` // seul id à mettre dans un lien client ; nil avant le 2026-06-18
 	MerchantID            *string          `json:"merchant_id,omitempty"`
 	OrderNum              *string          `json:"order_num"`
 	DeliverySessionID     *string          `json:"delivery_session_id"`

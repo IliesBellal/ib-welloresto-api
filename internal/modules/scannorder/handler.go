@@ -2,6 +2,7 @@ package scannorder
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
@@ -98,6 +99,10 @@ func (h *Handler) GetOrderSNO(w http.ResponseWriter, r *http.Request) {
 	qrCode := chi.URLParam(r, "merchant_slug")
 
 	orders, err := h.service.GetOrderSNO(ctx, qrCode, orderIDStr)
+	if errors.Is(err, models.ErrNotFound) {
+		models.SendErrorJSON(w, "scannorder", "get_order_sno", err)
+		return
+	}
 	if err != nil {
 		log.Error("GetOrderSNO failed", zap.Error(err))
 		models.SendJSON(w, http.StatusInternalServerError, "scannorder", "get_order_sno", map[string]string{"error": err.Error(), "message": err.Error()})

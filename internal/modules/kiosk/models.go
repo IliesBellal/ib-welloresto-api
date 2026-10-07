@@ -436,9 +436,9 @@ type CounterPaymentResponse struct {
 	PickupCode    string `json:"pickup_code"`
 
 	// QRPayload — URL de suivi ScanNOrder de la commande
-	// (https://scannorder.welloresto.fr/restaurants/{slug}/order/{order_id}),
-	// imprimée en QR sur le ticket. Retombe sur "KIOSK:{order_id}:{pickup_code}"
-	// si le merchant n'a pas de slug (qrcodes.code) configuré.
+	// ({SCANNORDER_BASE_URL}/restaurant/{slug}/order/{public_id}), imprimée en
+	// QR sur le ticket. Retombe sur "KIOSK:{order_id}:{pickup_code}" si le
+	// merchant n'a pas de slug (qrcodes.code) ou la commande pas d'id public.
 	QRPayload string `json:"qr_payload"`
 }
 
@@ -449,6 +449,11 @@ type KioskOrderResponse struct {
 	FulfillmentType string `json:"fulfillment_type,omitempty"`
 	TotalCents      int64  `json:"total_cents"`
 	CreatedAt       string `json:"created_at,omitempty"`
+	// TrackingURL — lien de suivi ScanNOrder (même forme que
+	// CounterPaymentResponse.QRPayload), à afficher/imprimer en QR quel que
+	// soit le mode de paiement. Vide si le merchant n'a pas de slug ou la
+	// commande pas d'id public (docs/SCANNORDER_PUBLIC_ORDER_ID.md).
+	TrackingURL string `json:"tracking_url,omitempty"`
 }
 
 // KioskDiscount reprend exactement les champs JSON de scannorder.Discount

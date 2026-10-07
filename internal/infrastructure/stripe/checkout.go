@@ -95,17 +95,23 @@ func (c *StripeManager) CreateCheckoutSession(req CheckoutSessionRequestObject) 
 
 	qrCode := req.QRCode
 	orderID := *order.OrderID
-	baseURL := req.BaseURL
 	sessionType := req.CheckoutSessionType
 
-	successURL := baseURL + "/restaurant/" + qrCode + "/order/" + orderID
+	// Retour client vers la page de suivi : id public uniquement, l'id interne
+	// ne reste que dans les metadata lues par le webhook (docs/
+	// SCANNORDER_PUBLIC_ORDER_ID.md, D7).
+	successURL := helpers.ScanNOrderOrderURL(req.BaseURL, qrCode, helpers.SafeString(order.PublicID))
 	cancelURL := successURL
 	captureMethod := stripe.PaymentIntentCaptureMethodManual
 
 	if sessionType == "partial_order" {
-		successURL = baseURL + "restaurant/" + qrCode
+		successURL = helpers.ScanNOrderBaseURL(req.BaseURL) + "/restaurant/" + qrCode
 		cancelURL = successURL
 		captureMethod = stripe.PaymentIntentCaptureMethodAutomatic
+	}
+
+	if successURL == "" {
+		return nil, fmt.Errorf("checkout session: missing public id or QR code for order %s", orderID)
 	}
 
 	params := &stripe.CheckoutSessionParams{

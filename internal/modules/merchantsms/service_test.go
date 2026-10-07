@@ -23,6 +23,20 @@ type fakeRepo struct {
 	unitPrice    float64
 	unitPriceErr error
 	recorded     []recordedCost
+	trackingRef  *OrderTrackingRef
+	trackingErr  error
+}
+
+const testPublicID = "order--ffe6c970-0701-4dd2-88ce-4e61a0da1d86"
+
+func (f *fakeRepo) GetOrderTrackingRef(ctx context.Context, merchantID, orderID string) (*OrderTrackingRef, error) {
+	if f.trackingErr != nil {
+		return nil, f.trackingErr
+	}
+	if f.trackingRef != nil {
+		return f.trackingRef, nil
+	}
+	return &OrderTrackingRef{PublicID: testPublicID, OrderNum: "17"}, nil
 }
 
 func (f *fakeRepo) GetMarketingSettings(ctx context.Context, merchantID string) (*MarketingSettings, error) {
@@ -154,12 +168,41 @@ func TestSendOrderTrackingSMS(t *testing.T) {
 		if err := svc.SendOrderTrackingSMS(context.Background(), "merchant_1", "42", "06 12 34 56 78"); err != nil {
 			t.Fatalf("SendOrderTrackingSMS() error = %v", err)
 		}
-		want := sentSMS{"Brasserie", "+33612345678", "Commande #42 : https://scannorder.welloresto.fr/restaurant/qr1/42"}
+		// Lien vers /order/{id public}, numéro de retrait dans {order_id} :
+		// l'id interne "42" n'apparaît nulle part.
+		want := sentSMS{"Brasserie", "+33612345678", "Commande #17 : https://scannorder.welloresto.fr/restaurant/qr1/order/" + testPublicID}
 		if len(sender.sent) != 1 || sender.sent[0] != want {
 			t.Fatalf("sent = %+v, want %+v", sender.sent, want)
 		}
 		if got := repo.records(); len(got) != 1 {
 			t.Fatalf("recorded = %+v, want 1 SMS", got)
+		}
+	})
+
+	t.Run("base SCANNORDER_BASE_URL configurée", func(t *testing.T) {
+		sender := &fakeSender{}
+		svc := NewService(&fakeRepo{settings: enabled()}, sender, nil)
+		svc.SetScanNOrderBaseURL("https://scannorder-staging.example/")
+
+		if err := svc.SendOrderTrackingSMS(context.Background(), "merchant_1", "42", "+33612345678"); err != nil {
+			t.Fatalf("SendOrderTrackingSMS() error = %v", err)
+		}
+		want := "Commande #17 : https://scannorder-staging.example/restaurant/qr1/order/" + testPublicID
+		if len(sender.sent) != 1 || sender.sent[0].message != want {
+			t.Fatalf("sent = %+v, want message %q", sender.sent, want)
+		}
+	})
+
+	t.Run("commande sans id public : rien envoyé", func(t *testing.T) {
+		repo := &fakeRepo{settings: enabled(), trackingRef: &OrderTrackingRef{OrderNum: "17"}}
+		sender := &fakeSender{}
+		svc := NewService(repo, sender, nil)
+
+		if err := svc.SendOrderTrackingSMS(context.Background(), "merchant_1", "42", "+33612345678"); err == nil {
+			t.Fatalf("SendOrderTrackingSMS() error = nil, want an error")
+		}
+		if len(sender.sent) != 0 || len(repo.records()) != 0 {
+			t.Fatalf("sent = %+v / recorded = %+v, want nothing", sender.sent, repo.records())
 		}
 	})
 

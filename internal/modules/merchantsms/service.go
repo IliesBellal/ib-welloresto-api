@@ -40,6 +40,14 @@ type Service struct {
 	repo   MarketingRepository
 	sender Sender
 	log    *zap.Logger
+	// scannorderBaseURL : SCANNORDER_BASE_URL, base du lien du SMS de suivi
+	// (cf. SetScanNOrderBaseURL). Vide = helpers.DefaultScanNOrderBaseURL.
+	scannorderBaseURL string
+}
+
+// SetScanNOrderBaseURL fixe la base du lien envoyé dans le SMS de suivi.
+func (s *Service) SetScanNOrderBaseURL(baseURL string) {
+	s.scannorderBaseURL = baseURL
 }
 
 func NewService(repo MarketingRepository, sender Sender, log *zap.Logger) *Service {
@@ -106,11 +114,16 @@ func (s *Service) SendOrderTrackingSMS(
 		return fmt.Errorf("invalid phone")
 	}
 
-	trackingURL := fmt.Sprintf(
-		"https://scannorder.welloresto.fr/restaurant/%s/%s",
-		settings.QRCode,
-		orderID,
-	)
+	// orderID est l'id interne : il sert à retrouver la commande, jamais à
+	// être montré au client (lien = id public, {order_id} = numéro de retrait).
+	ref, err := s.repo.GetOrderTrackingRef(ctx, merchantID, orderID)
+	if err != nil {
+		return fmt.Errorf("order tracking ref: %w", err)
+	}
+	trackingURL := helpers.ScanNOrderOrderURL(s.scannorderBaseURL, settings.QRCode, ref.PublicID)
+	if trackingURL == "" {
+		return fmt.Errorf("order %s has no public id or merchant has no QR code", orderID)
+	}
 
 	message := strings.ReplaceAll(
 		settings.TrackingTemplate,
@@ -118,7 +131,7 @@ func (s *Service) SendOrderTrackingSMS(
 		trackingURL,
 	)
 
-	message = strings.ReplaceAll(message, "{order_id}", orderID)
+	message = strings.ReplaceAll(message, "{order_id}", ref.OrderNum)
 
 	_, err = s.Send(ctx, merchantID, senderName(settings.SMSSenderName), phone, message)
 	return err

@@ -55,6 +55,15 @@ type StripeWebhookService struct {
 	// merchantSMS envoie le SMS de confirmation ScanNOrder en le comptabilisant
 	// dans le compteur SMS de l'établissement (cf. SetMerchantSMS).
 	merchantSMS merchantOrderConfirmationSMS
+	// scannorderBaseURL : SCANNORDER_BASE_URL, base des liens de suivi du mail
+	// et du SMS de confirmation (cf. SetScanNOrderBaseURL). Vide = domaine
+	// public par défaut (helpers.DefaultScanNOrderBaseURL).
+	scannorderBaseURL string
+}
+
+// SetScanNOrderBaseURL fixe la base des liens de suivi envoyés au client.
+func (s *StripeWebhookService) SetScanNOrderBaseURL(baseURL string) {
+	s.scannorderBaseURL = baseURL
 }
 
 type merchantOrderConfirmationSMS interface {
@@ -309,23 +318,33 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 	if order != nil {
 		merchant, err := s.repo.GetMerchant(ctx, merchantID)
 		if err == nil {
-			// Préparation mail/SMS
+			// Préparation mail/SMS. Lien de suivi : id public uniquement
+			// (docs/SCANNORDER_PUBLIC_ORDER_ID.md).
+			trackingURL := helpers.ScanNOrderOrderURL(s.scannorderBaseURL, merchant.Code, order.PublicID)
+			if trackingURL == "" {
+				log.Printf("Warning: no tracking URL for order %s (QR code or public id missing)", order.OrderID)
+			}
 			emailPayload := mailer.ScanNOrderConfirmationData{
 				OrderTotal:   fmt.Sprintf("%.2f", float64(order.Price)/100) + merchant.Currency,
 				MerchantLogo: merchant.LogoURL,
 				MerchantName: merchant.BusinessName,
 				OrderDate:    order.CreationDate.String(),
-				TrackingURL:  "https://wello-resto-scannorder-prod.onrender.com/restaurant/" + merchant.Code + "/order/" + order.OrderID,
+				TrackingURL:  trackingURL,
 				SupportEmail: "contact@welloresto.fr",
 			}
 			go s.email.SendOrderConfirmationToCustomer(session.CustomerDetails.Email, emailPayload)
 
 			if session.CustomerDetails != nil && session.CustomerDetails.Phone != "" {
+				// Numéro de retrait affiché au client, jamais l'id interne.
+				orderLabel := order.OrderNum
+				if orderLabel == "" {
+					orderLabel = order.OrderID
+				}
 				smsData := sms.OrderConfirmationSMSData{
 					MerchantName: merchant.BusinessName,
-					OrderID:      order.OrderID,
+					OrderID:      orderLabel,
 					OrderTotal:   fmt.Sprintf("%.2f", float64(order.Price)/100) + merchant.Currency,
-					TrackingURL:  "https://wello-resto-scannorder-prod.onrender.com/restaurant/" + merchant.Code + "/order/" + order.OrderID,
+					TrackingURL:  trackingURL,
 				}
 				if s.merchantSMS != nil {
 					s.merchantSMS.SendOrderConfirmationSMS(ctx, merchantID, session.CustomerDetails.Phone, smsData)

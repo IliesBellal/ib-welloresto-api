@@ -1,0 +1,21 @@
+-- Index unique sur orders.public_id : les routes publiques ScanNOrder
+-- (GET/DELETE /scannorder/{slug}/orders/{id}) retrouvent désormais la
+-- commande par son id public (docs/SCANNORDER_PUBLIC_ORDER_ID.md). La
+-- migration MySQL 033_orders_public_id créait cet index
+-- (idx_orders_public_id), mais il n'a pas été repris lors du passage à
+-- Postgres : constaté absent sur staging le 2026-10-03 (aucun index ni
+-- trigger sur la colonne). Sans lui, chaque ouverture d'un lien de suivi
+-- parcourt toute la table orders.
+--
+-- Doublons vérifiés avant d'écrire cette migration, sur staging : 2 975
+-- public_id renseignés, 2 975 distincts. Les NULL (commandes antérieures au
+-- 2026-06-18) ne gênent pas un index unique en Postgres.
+--
+-- ATTENTION - CREATE UNIQUE INDEX CONCURRENTLY doit être joué hors bloc
+-- transactionnel, comme les autres CREATE INDEX CONCURRENTLY de ce dépôt
+-- (087, 109, 124, 132).
+--
+-- ORDRE DE DÉPLOIEMENT : appliquer AVANT de déployer le code. Le code
+-- fonctionne sans l'index, mais chaque résolution d'id public serait un
+-- parcours complet de orders.
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_orders_public_id ON orders (public_id);

@@ -1877,13 +1877,13 @@ func (s *Service) ConfirmCounterPayment(ctx context.Context, orderID string, kio
 		pickupCode = *order.OrderNum
 	}
 
-	slug, err := s.repo.getMerchantSlug(ctx, kiosk.MerchantID)
+	trackingURL, err := s.orderTrackingURL(ctx, kiosk.MerchantID, &order)
 	if err != nil {
 		return nil, err
 	}
-	qrPayload := fmt.Sprintf("KIOSK:%s:%s", order.OrderID, pickupCode)
-	if slug != nil && *slug != "" {
-		qrPayload = fmt.Sprintf("https://scannorder.welloresto.fr/restaurants/%s/order/%s", *slug, order.OrderID)
+	qrPayload := trackingURL
+	if qrPayload == "" {
+		qrPayload = fmt.Sprintf("KIOSK:%s:%s", order.OrderID, pickupCode)
 	}
 
 	resp := &CounterPaymentResponse{
@@ -1975,6 +1975,11 @@ func (s *Service) GetKioskOrder(ctx context.Context, orderID string, kiosk Authe
 		fulfillmentType = *order.OrderType
 	}
 
+	trackingURL, err := s.orderTrackingURL(ctx, kiosk.MerchantID, &order)
+	if err != nil {
+		return nil, err
+	}
+
 	return &KioskOrderResponse{
 		OrderID:         order.OrderID,
 		DisplayNumber:   displayNumber,
@@ -1982,7 +1987,19 @@ func (s *Service) GetKioskOrder(ctx context.Context, orderID string, kiosk Authe
 		FulfillmentType: fulfillmentType,
 		TotalCents:      order.TTC,
 		CreatedAt:       time.Unix(order.CreationDate, 0).UTC().Format(time.RFC3339),
+		TrackingURL:     trackingURL,
 	}, nil
+}
+
+// orderTrackingURL construit le lien de suivi ScanNOrder d'une commande borne
+// ({SCANNORDER_BASE_URL}/restaurant/{slug}/order/{id public}). "" si le
+// marchand n'a pas de QR principal ou si la commande n'a pas d'id public.
+func (s *Service) orderTrackingURL(ctx context.Context, merchantID string, order *models.Order) (string, error) {
+	slug, err := s.repo.getMerchantSlug(ctx, merchantID)
+	if err != nil {
+		return "", err
+	}
+	return helpers.ScanNOrderOrderURL(s.cfg.ScanNOrderBaseURL, helpers.SafeString(slug), helpers.SafeString(order.PublicID)), nil
 }
 
 // ---- Paiement carte (Stripe Terminal) ----

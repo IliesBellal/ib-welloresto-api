@@ -721,6 +721,31 @@ func (r *Repository) GetDeliverySessionByOrderID(ctx context.Context, orderID st
 	return &dsID, nil
 }
 
+// GetOrderIDByPublicID renvoie l'order_id interne de la commande d'id public
+// publicID, à condition qu'elle appartienne au marchand du QR code qr : un
+// public_id valide ne donne pas accès à la commande d'un autre établissement.
+// Renvoie ("", nil) si aucune commande ne correspond.
+func (r *Repository) GetOrderIDByPublicID(ctx context.Context, qr, publicID string) (string, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	query := `
+	SELECT o.order_id
+	FROM orders o
+	INNER JOIN qrcodes qr ON qr.merchant_id = o.merchant_id
+	WHERE qr.code = ? AND o.public_id = ?
+	LIMIT 1`
+
+	var orderID string
+	err := db.QueryRowContext(ctx, query, qr, publicID).Scan(&orderID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return orderID, nil
+}
+
 func (r *Repository) GetMerchantIDByQR(ctx context.Context, qr string) (*string, error) {
 	db := dbx.GetDB(ctx, r.database)
 

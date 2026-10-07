@@ -827,7 +827,37 @@ func (s *Service) validateAndCleanPricingPayload(ctx context.Context, req *model
 	return nil
 }
 
-func (s *Service) GetOrderSNO(ctx context.Context, qr, orderID string) (*PublicSNOOrder, error) {
+// resolveOrderRef convertit l'id reçu sur une route publique ScanNOrder en
+// order_id interne. Phase 1 (docs/SCANNORDER_PUBLIC_ORDER_ID.md, D1) : l'id
+// public est la forme normale, l'id interne reste accepté tel quel le temps
+// de la bascule. Un id public inconnu, ou appartenant à un autre marchand que
+// celui du QR code, renvoie models.ErrNotFound.
+func (s *Service) resolveOrderRef(ctx context.Context, qr, orderRef string) (string, error) {
+	if !helpers.IsOrderPublicID(orderRef) {
+		// TODO phase 2 : refuser l'id interne (models.ErrNotFound).
+		return orderRef, nil
+	}
+	orderID, err := s.repo.GetOrderIDByPublicID(ctx, qr, orderRef)
+	if err != nil {
+		return "", err
+	}
+	if orderID == "" {
+		return "", models.ErrNotFound
+	}
+	return orderID, nil
+}
+
+// GetOrderSNO renvoie la commande désignée par orderRef (id public, ou id
+// interne pendant la phase 1) pour la page de suivi ScanNOrder.
+func (s *Service) GetOrderSNO(ctx context.Context, qr, orderRef string) (*PublicSNOOrder, error) {
+	orderID, err := s.resolveOrderRef(ctx, qr, orderRef)
+	if err != nil {
+		return nil, err
+	}
+	return s.getOrderSNOByID(ctx, qr, orderID)
+}
+
+func (s *Service) getOrderSNOByID(ctx context.Context, qr, orderID string) (*PublicSNOOrder, error) {
 	log := logger.FromContext(ctx)
 
 	// 🔹 1. Récupérer merchant via QR
@@ -841,6 +871,9 @@ func (s *Service) GetOrderSNO(ctx context.Context, qr, orderID string) (*PublicS
 	if err != nil {
 		log.Error("ComputeGetOrder", zap.Error(err))
 		return nil, err
+	}
+	if response == nil || len(response.Orders) == 0 {
+		return nil, models.ErrNotFound
 	}
 
 	order := response.Orders[0]
@@ -931,7 +964,7 @@ func toPublicDeliverySession(session *models.DeliverySession, currentOrderID str
 	return pub
 }
 
-func (s *Service) CancelOrderSNO(ctx context.Context, qr, orderID string) (map[string]interface{}, error) {
+func (s *Service) CancelOrderSNO(ctx context.Context, qr, orderRef string) (map[string]interface{}, error) {
 	log := logger.FromContext(ctx)
 
 	// 1️⃣ Merchant depuis QR
@@ -943,15 +976,19 @@ func (s *Service) CancelOrderSNO(ctx context.Context, qr, orderID string) (map[s
 		return map[string]interface{}{"status": "cannot_retrieve_merchant"}, nil
 	}
 
-	// 2️⃣ Récupérer commande
-	orderResp, err := s.GetOrderSNO(ctx, qr, orderID)
+	// 2️⃣ Récupérer commande (id public -> id interne pour toute la suite)
+	orderID, err := s.resolveOrderRef(ctx, qr, orderRef)
+	if err != nil {
+		return nil, err
+	}
+	orderResp, err := s.getOrderSNOByID(ctx, qr, orderID)
 	if err != nil {
 		return nil, err
 	}
 	if orderResp == nil {
 		return map[string]interface{}{
 			"status": "cannot_retrieve_order",
-			"order":  orderID,
+			"order":  orderRef,
 		}, nil
 	}
 
@@ -1192,6 +1229,7 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest
 	if (newOrder.Status == "1" || newOrder.Status == "success") && newOrder.Action == "payment" {
 
 		order.OrderID = &newOrder.OrderID
+		order.PublicID = &newOrder.PublicID
 		req.CheckoutSessionType = "full_order"
 
 		checkout, err := s.StripeManager.CreateCheckoutSession(stripeclient.CheckoutSessionRequestObject{

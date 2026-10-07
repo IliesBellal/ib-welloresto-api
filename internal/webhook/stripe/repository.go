@@ -330,12 +330,15 @@ func (r *mysqlRepo) GetOrder(cdb context.Context, orderID string) (*Order, error
 	log := logger.FromContext(cdb)
 
 	var o Order
-	query := `SELECT order_id, price, creation_date, customer_id FROM orders WHERE order_id = ?`
-	err := db.QueryRowContext(cdb, query, orderID).Scan(&o.OrderID, &o.Price, &o.CreationDate, &o.CustomerID)
+	var publicID, orderNum sql.NullString
+	query := `SELECT order_id, public_id, order_num, price, creation_date, customer_id FROM orders WHERE order_id = ?`
+	err := db.QueryRowContext(cdb, query, orderID).Scan(&o.OrderID, &publicID, &orderNum, &o.Price, &o.CreationDate, &o.CustomerID)
 	if err != nil {
 		log.Error(err.Error())
 		return nil, err
 	}
+	o.PublicID = publicID.String
+	o.OrderNum = orderNum.String
 	return &o, nil
 }
 

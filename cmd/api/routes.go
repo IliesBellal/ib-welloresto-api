@@ -346,6 +346,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		log.Error("Brevo SMS service does not support synchronous sends: merchant SMS disabled")
 	}
 	merchantSMSService := merchantsmsModule.NewService(merchantsmsModule.NewMarketingRepository(selectedDB), merchantSMSSender, log)
+	merchantSMSService.SetScanNOrderBaseURL(cfg.ScanNOrder.SNORedirectBaseURL)
 	bookingCommService := bookingcommModule.New(mailService, smsService, cfg.Reservation.PublicBaseURL, outboundService, log)
 	bookingCommService.SetMerchantSMS(merchantSMSService)
 	bookingsRepo := bookingsModule.NewBookingsRepository(selectedDB, log)
@@ -453,6 +454,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		terminalService,
 	)
 	stripeWebhookService.SetMerchantSMS(merchantSMSService)
+	stripeWebhookService.SetScanNOrderBaseURL(cfg.ScanNOrder.SNORedirectBaseURL)
 	stripeWebhookHandler := webhookstripe.NewHandler(stripeWebhookService)
 
 	// WH
@@ -611,7 +613,8 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		// Gate de l'endpoint dev POST /kiosk/terminal/test/present-payment-method
 		// (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md) — jamais actif avec une
 		// clé Stripe live.
-		StripeTestMode: strings.HasPrefix(cfg.Stripe.APIKey, "sk_test_") || strings.HasPrefix(cfg.Stripe.APIKey, "rk_test_"),
+		StripeTestMode:    strings.HasPrefix(cfg.Stripe.APIKey, "sk_test_") || strings.HasPrefix(cfg.Stripe.APIKey, "rk_test_"),
+		ScanNOrderBaseURL: cfg.ScanNOrder.SNORedirectBaseURL,
 	}
 	kioskService := kioskModule.NewService(kioskCfg, kioskRepo, selectedDB, redisClient, menuService, ordersService, ordersLifeCycleService, upsellService, notificationService, terminalService, availabilitiesService)
 	kioskService.SetOnboardingService(onboardingService)

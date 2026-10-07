@@ -50,6 +50,8 @@ type StripePayment struct {
 
 type Order struct {
 	OrderID      string
+	PublicID     string // "" pour une commande antérieure au 2026-06-18
+	OrderNum     string // numéro de retrait affiché au client
 	Price        float64
 	CreationDate time.Time
 	CustomerID   *int64 // Nullable

@@ -17,6 +17,7 @@ type RequestObject struct {
 
 type OrderRequest struct {
 	OrderID                     *string               `json:"order_id,omitempty"`
+	PublicID                    *string               `json:"-"` // orders.public_id : généré par insertOrderBase, jamais lu depuis la requête
 	Brand                       string                `json:"brand,omitempty"`
 	BrandOrderID                *string               `json:"brand_order_id,omitempty"`
 	BrandOrderNum               *string               `json:"brand_order_num,omitempty"`
@@ -169,6 +170,7 @@ type CreateOrderResult struct {
 	Message         string             `json:"message,omitempty"`
 	Status          string             `json:"status"`
 	OrderID         string             `json:"order_id,omitempty"`
+	PublicID        string             `json:"public_id,omitempty"` // id à mettre dans tout lien client (suivi ScanNOrder)
 	OrderNum        *string            `json:"order_num,omitempty"`
 	Action          string             `json:"action,omitempty"`
 	CheckoutSession *WRCheckoutSession `json:"checkout_session,omitempty"`
