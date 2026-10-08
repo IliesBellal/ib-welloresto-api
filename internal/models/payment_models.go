@@ -12,6 +12,11 @@ type Payment struct {
 	CashRegisterID    string  `json:"cash_register_id,omitempty"`
 	PaymentID         string  `json:"payment_id"`
 	MOP               string  `json:"mop"`
+	// Libellé FR catalogué (labels, label_type='mop') pour ce moyen de
+	// paiement — nil si le mop n'a pas d'entrée dans le catalogue, à charge
+	// du consommateur de retomber sur MOP (cf. OrderCancellation.Label, même
+	// pattern pour les motifs d'annulation).
+	Label             *string `json:"label,omitempty"`
 	Amount            int     `json:"amount"`
 	PaymentDate       int64   `json:"payment_date"`
 	MerchantID        string  `json:"merchant_id"`

@@ -1983,9 +1983,19 @@ func strPtr(s string) *string { return &s }
 // OrdersLifeCycleService.SetOrderAccepted — même mécanisme que
 // AcceptOrder/POS, appelé directement ici puisque le kiosk est authentifié
 // par device, pas par middleware.UserFromContext). Génère ensuite le code de
-// retrait et le QR à afficher à l'écran de la borne, et notifie le merchant
-// en temps réel.
-func (s *Service) ConfirmCounterPayment(ctx context.Context, orderID string, kiosk AuthenticatedKiosk) (*CounterPaymentResponse, error) {
+// retrait et le QR à afficher à l'écran de la borne.
+//
+// notify contrôle l'envoi de la notification temps réel au POS : elle ne
+// doit partir que quand c'est la PREMIÈRE notification exploitable pour cette
+// commande. Pour une commande payée directement au comptoir, CreateOrder a
+// déjà notifié le POS (merchant_approval="ACCEPTED" dès la création, voir
+// orderReq.MerchantApproval plus haut) — renvoyer ici ferait doublonner le
+// ticket (cf. docs/decisions.md, bug ticket x2 borne). Pour une commande
+// carte basculée vers le comptoir (SwitchToCounterPayment), la notification
+// de création avait brand_status="PENDING_CARD_PAYMENT" et a été filtrée
+// côté POS (OrderNetworkManager) : celle envoyée ici est alors la seule que
+// le POS reçoive jamais, donc SwitchToCounterPayment doit passer notify=true.
+func (s *Service) ConfirmCounterPayment(ctx context.Context, orderID string, kiosk AuthenticatedKiosk, notify bool) (*CounterPaymentResponse, error) {
 	orders, err := s.ordersService.ComputeGetOrder(ctx, kiosk.MerchantID, orderID)
 	if err != nil {
 		return nil, err
@@ -2024,7 +2034,7 @@ func (s *Service) ConfirmCounterPayment(ctx context.Context, orderID string, kio
 		QRPayload:     qrPayload,
 	}
 
-	if s.notificationSvc != nil {
+	if notify && s.notificationSvc != nil {
 		_ = s.notificationSvc.SendNotificationAsync(kiosk.MerchantID, order.OrderID, notification.NotificationTypeOrderUpdate)
 	}
 
@@ -2518,7 +2528,11 @@ func (s *Service) SwitchToCounterPayment(ctx context.Context, kiosk Authenticate
 		s.redis.Delete(ctx, helpers.GetRedisOrderKey(kiosk.MerchantID, orderID))
 	}
 
-	return s.ConfirmCounterPayment(ctx, orderID, kiosk)
+	// notify=true : c'est la seule notification que le POS reçoive jamais
+	// pour cette commande (celle de CreateOrder avait brand_status
+	// PENDING_CARD_PAYMENT et a été filtrée côté client, voir le commentaire
+	// sur ConfirmCounterPayment).
+	return s.ConfirmCounterPayment(ctx, orderID, kiosk, true)
 }
 
 // getKioskOrder factorise la récupération d'une commande scopée au merchant

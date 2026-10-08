@@ -379,9 +379,11 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 	{
 		step := "payments"
 		q := `
-		SELECT p.order_id, p.payment_id, p.mop, p.amount, p.payment_date, p.user_id, p.enabled, p.operation_type
+		SELECT p.order_id, p.payment_id, p.mop, p.amount, p.payment_date, p.user_id, p.enabled, p.operation_type,
+		       NULLIF(l.label, '') AS payment_label
 		FROM payments p
 		INNER JOIN orders o on o.order_id = p.order_id
+		LEFT JOIN labels l ON l.label_type = 'mop' AND l.label_value = p.mop AND l.lang = 'FR'
 		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
 		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
 		WHERE o.merchant_id = ? ` + whereFilters.SQL
@@ -393,11 +395,11 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		defer rows.Close()
 		for rows.Next() {
 			var amount sql.NullInt64
-			var mop, orderID, UserID, paymentID, operationType sql.NullString
+			var mop, orderID, UserID, paymentID, operationType, label sql.NullString
 			var paymentDate sql.NullTime
 			var enabled sql.NullBool
 
-			if err := rows.Scan(&orderID, &paymentID, &mop, &amount, &paymentDate, &UserID, &enabled, &operationType); err != nil {
+			if err := rows.Scan(&orderID, &paymentID, &mop, &amount, &paymentDate, &UserID, &enabled, &operationType, &label); err != nil {
 				return nil, err
 			}
 			paymentsByOrderID[orderID.String] = append(paymentsByOrderID[orderID.String],
@@ -405,6 +407,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 					OrderID:       orderID.String,
 					PaymentID:     paymentID.String,
 					MOP:           mop.String,
+					Label:         helpers.NullStringToPtr(label),
 					Amount:        int(amount.Int64),
 					PaymentDate:   helpers.NullTimePtr(paymentDate).UTC().Unix(),
 					UserID:        UserID.String,

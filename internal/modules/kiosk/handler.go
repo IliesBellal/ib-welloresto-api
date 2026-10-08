@@ -522,7 +522,10 @@ func (h *Handler) ConfirmCounterPayment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	resp, err := h.service.ConfirmCounterPayment(ctx, orderID, *authenticatedKiosk)
+	// notify=false : CreateOrder a déjà notifié le POS pour une commande
+	// payée directement au comptoir (merchant_approval="ACCEPTED" dès la
+	// création) — renotifier ici doublonnerait l'impression du ticket.
+	resp, err := h.service.ConfirmCounterPayment(ctx, orderID, *authenticatedKiosk, false)
 	if err != nil {
 		log.Warn("kiosk confirm counter payment failed", zap.Error(err))
 		models.SendErrorJSON(w, "kiosk", "confirm_counter_payment", err)
