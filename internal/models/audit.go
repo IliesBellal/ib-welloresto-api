@@ -15,6 +15,9 @@ const (
 
 	ActionPaymentAdded   = "PAYMENT_ADDED"
 	ActionPaymentDeleted = "PAYMENT_DELETED"
+	// ActionPaymentCancelled : annulation d'un paiement (fiscal.CancelPayments,
+	// conformité caisse lot C, R5), une entrée par paiement.
+	ActionPaymentCancelled = "PAYMENT_CANCELLED"
 
 	ActionCustomerInvoiceLink = "CUSTOMER_INVOICE_LINK"
 

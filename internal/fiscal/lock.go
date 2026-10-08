@@ -40,8 +40,14 @@ func LockChain(ctx context.Context, chain Chain, merchantID string) error {
 	if tx == nil {
 		return ErrNoTransaction
 	}
-	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "fiscal:"+string(chain)+":"+merchantID); err != nil {
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, chainLockKey(chain, merchantID)); err != nil {
 		return fmt.Errorf("fiscal: acquire %s lock: %w", chain, err)
 	}
 	return nil
+}
+
+// chainLockKey est la clé du verrou consultatif d'une chaîne d'un
+// établissement (pg_advisory_xact_lock(hashtextextended(clé, 0))).
+func chainLockKey(chain Chain, merchantID string) string {
+	return "fiscal:" + string(chain) + ":" + merchantID
 }

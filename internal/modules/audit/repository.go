@@ -3,7 +3,6 @@ package audit
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/fiscal"
 	"welloresto-api/internal/logger"
@@ -65,66 +64,23 @@ func (r *auditRepository) InsertLogWithChain(ctx context.Context, log *models.Au
 	})
 }
 
+// insertLogWithChain : empreinte v2 signée, état avant et utilisateur compris
+// (l'ancienne formule ne couvrait que l'action, la ressource et l'état après,
+// sans clé) — voir fiscal.AppendAuditLog.
 func (r *auditRepository) insertLogWithChain(ctx context.Context, log *models.AuditLog) error {
-	db := dbx.GetDB(ctx, r.db)
-
-	// 1. Verrou de la chaîne audit_logs de l'établissement, puis dernière entrée de son journal
-	// (le chaînage est propre à chaque établissement).
-	if err := fiscal.LockChain(ctx, fiscal.ChainAuditLogs, log.MerchantID); err != nil {
-		return err
-	}
-	var prevHash sql.NullString
-	err := db.QueryRowContext(ctx, `
-        SELECT hash FROM audit_logs
-        WHERE merchant_id = ?
-        ORDER BY created_at DESC, id DESC LIMIT 1
-    `, log.MerchantID).Scan(&prevHash)
-
-	if err != nil && err != sql.ErrNoRows {
-		return fmt.Errorf("failed to fetch previous hash: %w", err)
-	}
-
-	// 2. Empreinte v2 signée : état avant compris, et utilisateur (l'ancienne
-	// formule ne couvrait que l'action, la ressource et l'état après, sans clé).
-	pHash := fiscal.PrevOrGenesis(prevHash.String)
-	now := fiscal.Now()
-	payload, err := fiscal.NewAuditLogPayload(log.ID, log.MerchantID, log.UserID, log.Action, log.ResourceType, log.ResourceID,
-		now, log.OldValues, log.NewValues)
-	if err != nil {
-		return err
-	}
-	newHash, signature, err := fiscal.Seal(fiscal.ChainAuditLogs, pHash, payload)
-	if err != nil {
-		return err
-	}
-
-	// 3. Insertion finale
-	query := `
-        INSERT INTO audit_logs
-        (id, user_id, merchant_id, action, resource_type, resource_id, old_values, new_values, previous_hash, hash, signature, hash_version, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `
-
-	_, err = db.ExecContext(ctx, query,
-		log.ID,
-		log.UserID,
-		log.MerchantID,
-		log.Action,
-		log.ResourceType,
-		log.ResourceID,
-		log.OldValues,
-		log.NewValues,
-		pHash,
-		newHash,
-		signature,
-		fiscal.HashVersion,
-		now,
-	)
-
+	err := fiscal.AppendAuditLog(ctx, dbx.GetDB(ctx, r.db), fiscal.AuditEntry{
+		ID:           log.ID,
+		MerchantID:   log.MerchantID,
+		UserID:       log.UserID,
+		Action:       log.Action,
+		ResourceType: log.ResourceType,
+		ResourceID:   log.ResourceID,
+		OldValues:    log.OldValues,
+		NewValues:    log.NewValues,
+	})
 	if err != nil {
 		logger.FromContext(ctx).Error("failed to insert chained audit log: " + err.Error())
 		return err
 	}
-
 	return nil
 }

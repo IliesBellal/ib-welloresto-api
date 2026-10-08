@@ -297,6 +297,20 @@ var (
 
 	ErrOrderClosed = errors.New("order_closed")
 
+	// Annulation de paiement refusée (conformité caisse, lot C, R4) : la
+	// commande est close, ou le paiement (ou l'un des paiements d'une commande
+	// qu'on annule) a été encaissé sur un registre déjà fermé. Seul le
+	// remboursement (avoir) reste possible.
+	ErrPaymentOrderClosed         = errors.New("payment_order_closed")
+	ErrPaymentRegisterClosed      = errors.New("payment_register_closed")
+	ErrOrderPaymentRegisterClosed = errors.New("order_payment_register_closed")
+
+	// Réouverture refusée (conformité caisse, lot C, R1) : la journée de la
+	// commande est clôturée (clôture journalière écrite), ou l'un de ses
+	// paiements a été encaissé sur un registre déjà fermé.
+	ErrReopenOrderSealed           = errors.New("reopen_order_sealed")
+	ErrReopenPaymentRegisterClosed = errors.New("reopen_payment_register_closed")
+
 	ErrOrderOpen = errors.New("order_open")
 
 	ErrMFARequired = errors.New("mfa_required")
@@ -639,6 +653,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 	status := http.StatusInternalServerError
 	errorStatus := "internal_server_error"
 	errorMsg := "internal_server_error"
+	// userMessage : message en français destiné à l'écran de la caisse, posé
+	// au premier niveau de la réponse (champ "message") : les versions
+	// actuelles de la caisse affichent ce champ pour un code qu'elles ne
+	// connaissent pas (lot C conformité caisse). Vide = réponse inchangée.
+	userMessage := ""
 
 	// Mapping des erreurs sentinelles vers les codes HTTP
 	switch {
@@ -1161,6 +1180,36 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusConflict
 		errorStatus = "circular_device_link"
 		errorMsg = "Liaison impossible : cet appareil est le vôtre, ou il est déjà lié au vôtre. Supprimez d'abord la liaison existante sur l'autre appareil."
+
+	case errors.Is(err, ErrPaymentOrderClosed):
+		status = http.StatusConflict
+		errorStatus = "payment_order_closed"
+		errorMsg = "cannot cancel a payment of a closed order"
+		userMessage = "Cette commande est close : ce paiement ne peut plus être annulé. Pour rendre l'argent au client, faites un remboursement."
+
+	case errors.Is(err, ErrPaymentRegisterClosed):
+		status = http.StatusConflict
+		errorStatus = "payment_register_closed"
+		errorMsg = "cannot cancel a payment recorded in a closed cash register"
+		userMessage = "Ce paiement a été encaissé sur un registre déjà fermé : il ne peut plus être annulé. Clôturez la commande, puis faites un remboursement."
+
+	case errors.Is(err, ErrOrderPaymentRegisterClosed):
+		status = http.StatusConflict
+		errorStatus = "order_payment_register_closed"
+		errorMsg = "cannot cancel an order with a payment recorded in a closed cash register"
+		userMessage = "Cette commande ne peut pas être annulée : un de ses paiements a été encaissé sur un registre déjà fermé. Encaissez le solde et clôturez la commande, puis faites un remboursement."
+
+	case errors.Is(err, ErrReopenOrderSealed):
+		status = http.StatusConflict
+		errorStatus = "reopen_order_sealed"
+		errorMsg = "cannot reopen an order whose day is fiscally closed"
+		userMessage = "Cette commande ne peut plus être rouverte : sa journée est clôturée. Pour la corriger, faites un remboursement."
+
+	case errors.Is(err, ErrReopenPaymentRegisterClosed):
+		status = http.StatusConflict
+		errorStatus = "reopen_payment_register_closed"
+		errorMsg = "cannot reopen an order with a payment recorded in a closed cash register"
+		userMessage = "Cette commande ne peut plus être rouverte : un de ses paiements a été encaissé sur un registre déjà fermé. Pour la corriger, faites un remboursement."
 
 	case errors.Is(err, ErrCashRegisterStillOpen):
 		status = http.StatusConflict
@@ -1887,5 +1936,16 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 	}
 	logger.FromContext(context.Background()).Warn(logMsg)
 
-	SendJSON(w, status, module, fnName, map[string]string{"status": errorStatus, "message": errorMsg, "error": errorMsg})
+	data := map[string]string{"status": errorStatus, "message": errorMsg, "error": errorMsg}
+	if userMessage == "" {
+		SendJSON(w, status, module, fnName, data)
+		return
+	}
+	data["message"] = userMessage
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(struct {
+		HandlerDefaultResponse
+		Message string `json:"message"`
+	}{HandlerDefaultResponse{ID: module + "." + fnName, Data: data}, userMessage})
 }
