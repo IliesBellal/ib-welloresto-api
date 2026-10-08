@@ -1,9 +1,9 @@
-### Conformité caisse, lot F — version 2.0.0 et attestation générée par le restaurateur (2026-10-08)
+### Conformité caisse, lot F — version 2.1.6 et attestation générée par le restaurateur (2026-10-08)
 
 **Contexte.** Besoin de départ du chantier : le restaurateur doit pouvoir produire lui-même l'attestation individuelle de l'éditeur (BOI-TVA-DECLA-30-10-30 §270 à §375, modèle BOI-LETTRE-000242), par exemple à la demande de son expert-comptable. Brief et journal : `docs/attestation-conformite-07-lot-F-brief.md`.
 
 **Décisions.**
-- **Version** : « WelloResto » **2.0.0**, racine majeure 2, versions mineures 2.x.y (`internal/version`, `GET /version`, `docs/versions-logiciel.md`). Toute modification des conditions d'inaltérabilité, de sécurisation, de conservation ou d'archivage donne 3.0.0 et de nouvelles attestations.
+- **Version** : « WelloResto » **2.1.6**, racine majeure 2, versions mineures 2.x.y (`internal/version`, `GET /version`, `docs/versions-logiciel.md`). Toute modification des conditions d'inaltérabilité, de sécurisation, de conservation ou d'archivage donne 3.0.0 et de nouvelles attestations.
 - **Document** : texte du modèle repris mot pour mot, attestant « les fonctionnalités de caisse de ce logiciel/système », le strict nécessaire fiscal (décision d'Ilies) :
   - volet 1 pré-rempli et pré-signé par l'éditeur (§370) : BINYA, représentée par BELLAL Ilies, à Metz, version mise sur le marché le 15/07/2026, signature intégrée au binaire ;
   - volet 2 complété par l'établissement et signé électroniquement : nom saisi, case de certification cochée, horodatage, compte connecté ;

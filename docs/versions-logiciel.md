@@ -24,7 +24,7 @@ Le numéro de version est celui de l'**API**.
 `MAJEUR.MINEUR.CORRECTIF`, racine majeure **2** (décision d'Ilies,
 2026-10-08) :
 
-- **2.0.0** : première version attestée, mise en production unique des lots A
+- **2.1.6** : première version attestée, mise en production unique des lots A
   à F de la conformité caisse.
 - **2.x.y** (subdivisions de la racine 2) : versions mineures et correctifs
   qui ne touchent pas aux conditions d'inaltérabilité, de sécurisation, de
@@ -45,4 +45,4 @@ la version est majeure ou non :
 
 | Version | Date de mise sur le marché | Nature | Note |
 |---|---|---|---|
-| 2.0.0 | à la mise en production | majeure | Lots A à F de la conformité caisse : chaînes v2 signées, clôtures fiscales, réouverture encadrée, archives, contrôle d'intégrité, ticket fiscal imprimé, attestation. |
+| 2.1.6 | à la mise en production | majeure | Lots A à F de la conformité caisse : chaînes v2 signées, clôtures fiscales, réouverture encadrée, archives, contrôle d'intégrité, ticket fiscal imprimé, attestation. |

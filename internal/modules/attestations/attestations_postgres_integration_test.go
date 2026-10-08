@@ -21,6 +21,7 @@ import (
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
+	"welloresto-api/internal/version"
 )
 
 type memStorage struct{ files map[string][]byte }
@@ -154,7 +155,7 @@ func TestAttestations_Postgres(t *testing.T) {
 	t.Logf("génération (contrôle d'intégrité, PDF, dépôt, base, journal) : %v", time.Since(started).Round(time.Millisecond))
 	a := gen.Attestation
 	stored := storage.files[gen.DownloadURL[len("https://signed.example/"):]]
-	if a.Version != "2.0.0" || a.MajorRoot != "2" || a.Obsolete || a.SignerName != "MARTIN Paul" ||
+	if a.Version != version.Version || a.MajorRoot != "2" || a.Obsolete || a.SignerName != "MARTIN Paul" ||
 		fmt.Sprintf("%x", sha256.Sum256(stored)) != a.SHA256 || !bytes.HasPrefix(stored, []byte("%PDF-")) {
 		t.Fatalf("attestation: %+v (stored %d bytes)", a, len(stored))
 	}

@@ -140,7 +140,7 @@ Ilies a donné son go pour enchaîner D puis E sans arrêt. Les questions E1, E3
 |---|---|
 | `closed` | Commande close. Ouverte, elle n'a pas de ticket : la caisse imprime une note. |
 | `current_receipt_number` | Ticket de vente **en vigueur** : le dernier, sauf si ses avoirs l'annulent en totalité (commande annulée). Un remboursement partiel le laisse en vigueur. Nul sans vente en vigueur. |
-| `software` | « WelloResto 2.0.0 » (`internal/version`), à imprimer en pied de ticket. |
+| `software` | « WelloResto 2.1.6 » (`internal/version`), à imprimer en pied de ticket. |
 | `receipts[]` | Tickets et avoirs, du plus ancien au plus récent. Pour chacun : numéro ; type (`SALE` / `REFUND`) ; date ; TTC, HT, TVA ; remise de caisse ; format complet ou non ; lignes (nature, libellé, quantité, prix unitaire, taux, total, rang de l'article parent) ; TVA par taux ; paiements figés ; empreinte. |
 
 - **Ticket antérieur au lot D** (format historique) : libellé, quantité et prix unitaire seulement. Son taux est ambigu dans les données les plus anciennes (montant de TVA stocké dans le taux), il n'est donc pas exposé.

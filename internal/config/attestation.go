@@ -14,7 +14,7 @@ import (
 // données réelles).
 //
 // Identité de l'éditeur (décision d'Ilies, 2026-10-08) : BINYA, représentée
-// par Ilies BELLAL, à Metz ; version 2.0.0 mise sur le marché le 15/07/2026.
+// par Ilies BELLAL, à Metz ; version 2.1.6 mise sur le marché le 15/07/2026.
 // Chaque valeur peut être remplacée par sa variable d'environnement.
 type AttestationConfig struct {
 	Enabled bool

@@ -17,8 +17,8 @@
 | # | Question | Retenu |
 |---|---|---|
 | F1 | Signature du volet 2 | **Signature électronique simple** (décision d'Ilies, confirmée le 2026-10-08 : une case cochée suffit). Le signataire saisit son nom (le modèle commence par « Je soussigné, NOM Prénom ») et coche la certification. L'horodatage, le compte connecté et l'entrée au journal d'audit chaîné sont enregistrés ; la mention est imprimée dans le volet 2. |
-| F2 | Identité de l'éditeur et signature du volet 1 | Décision d'Ilies (2026-10-08) : **BINYA**, représentée par **BELLAL Ilies**, « Fait à **Metz** » ; version 2.0.0 mise sur le marché le **15/07/2026**. Valeurs par défaut du code, chacune remplaçable par sa variable d'environnement. Signature pré-apposée (§370) : image générée à la demande d'Ilies (« I. Bellal », écriture manuscrite), intégrée au binaire et remplaçable par une image du bucket privé. |
-| F3 | Nom et version | « WelloResto », **2.0.0**, racine majeure **2**, versions mineures **2.x.y** (décision d'Ilies). |
+| F2 | Identité de l'éditeur et signature du volet 1 | Décision d'Ilies (2026-10-08) : **BINYA**, représentée par **BELLAL Ilies**, « Fait à **Metz** » ; version 2.1.6 mise sur le marché le **15/07/2026**. Valeurs par défaut du code, chacune remplaçable par sa variable d'environnement. Signature pré-apposée (§370) : image générée à la demande d'Ilies (« I. Bellal », écriture manuscrite), intégrée au binaire et remplaçable par une image du bucket privé. |
+| F3 | Nom et version | « WelloResto », **2.1.6**, racine majeure **2**, versions mineures **2.x.y** (décision d'Ilies). |
 | F4 | Fonctionnalités couvertes / non couvertes | Décision d'Ilies : **le strict nécessaire fiscal**. Le modèle permet d'attester « les fonctionnalités de caisse de ce logiciel/système », et non tout le logiciel : c'est la variante retenue. Couvert : les fonctionnalités de caisse sur tous les canaux qui enregistrent un règlement client. Non couvert : tout le reste. |
 | F5 | Une attestation par établissement ou par entité | **Par établissement** (SIRET), nominative. |
 | F6 | Numéro de licence | `WR-<identifiant de l'établissement>` (validé par Ilies). |
@@ -28,7 +28,7 @@
 
 | Phase | Contenu | État |
 |---|---|---|
-| 1 | Version : `internal/version` 2.0.0, `GET /version`, [versions-logiciel.md](versions-logiciel.md) | **Faite**, commitée (`d0d4438`) |
+| 1 | Version : `internal/version` 2.1.6, `GET /version`, [versions-logiciel.md](versions-logiciel.md) | **Faite**, commitée (`d0d4438`) |
 | 2 | Attestation côté API : migration 176, PDF fidèle au modèle, garde-fous, stockage, journal d'audit, routes | Faite et commitée ; migration 176 appliquée sur staging, test d'intégration vert |
 | 3 | Back-office : page « Attestation de conformité » | Faite (type-check, lint) |
 | 4 | Caisse Flutter : « Attestation de conformité » dans les réglages, à la place de l'ancien « Document NF525 » | Faite (analyse, tests) |
@@ -54,7 +54,7 @@
 
 ### Phase 1 — Version (2026-10-08)
 
-- `internal/version` : `Version = "2.0.0"`, injectable au build ; `MajorRoot()` vaut « 2 » et `MinorPattern()` « 2.x.y ».
+- `internal/version` : `Version = "2.1.6"`, injectable au build ; `MajorRoot()` vaut « 2 » et `MinorPattern()` « 2.x.y ».
 - `GET /version`, public : nom, version, racine, subdivisions.
 - [docs/versions-logiciel.md](versions-logiciel.md) :
   - ce qui est attesté (le système, version de l'API) ;
@@ -145,8 +145,8 @@ L'ancien « Document NF525 » est retiré (constat de la phase 0). `flutter anal
 
 ## Reste à faire pour clore le lot
 
-1. **Point d'attention, date de mise sur le marché.** Le volet 1 dit « mis sur le marché à compter du 15/07/2026, dans sa version n° 2.0.0 ». Or la 2.0.0 (lots A à F) n'est pas encore en production. Si un contrôleur rapproche cette date de celle du déploiement, l'écart se voit. Deux options :
-   - retenir comme date celle de la mise en production de la 2.0.0, par `ATTESTATION_RELEASE_DATE`, sans changer le code ;
+1. **Point d'attention, date de mise sur le marché.** Le volet 1 dit « mis sur le marché à compter du 15/07/2026, dans sa version n° 2.1.6 ». Or la 2.1.6 (lots A à F) n'est pas encore en production. Si un contrôleur rapproche cette date de celle du déploiement, l'écart se voit. Deux options :
+   - retenir comme date celle de la mise en production de la 2.1.6, par `ATTESTATION_RELEASE_DATE`, sans changer le code ;
    - garder le 15/07/2026, si cette date est celle de la mise sur le marché du logiciel dans sa version courante.
 2. Le conseil d'Ilies peut confirmer la signature électronique simple (F1). Ce n'est pas bloquant.
 3. **Ouvrir la génération** (`ATTESTATION_ENABLED=true`) après la mise en production et un `cmd/verify_fiscal --all` sans erreur.
@@ -162,3 +162,8 @@ L'ancien « Document NF525 » est retiré (constat de la phase 0). `flutter anal
 - **Durée d'une génération** : **930 ms** depuis le poste. Elle comprend le contrôle d'intégrité des 31 derniers jours, le PDF, le dépôt, l'écriture en base et au journal. Elle reste très en deçà du délai d'attente de 90 s de la caisse.
 - **Migration 175** : les deux index sont utilisés (plans `EXPLAIN` sur staging, structure seulement). Les paiements d'un jour et les commandes closes d'un jour se lisent par parcours d'index, au lieu d'un parcours complet de la table.
 - Suites d'intégration relancées, toutes migrations en place, toutes vertes : `fiscal`, `fiscalarchive`, `fiscalverify`, `accounting`, `receipt`, `attestations`, `tasks`, `cash_registers`, `order_life_cycle`.
+
+### Après le lot (2026-10-08)
+
+- **Numéro de version : 2.1.6** (choix d'Ilies) au lieu de 2.0.0. La racine majeure reste 2 et les subdivisions 2.x.y : l'attestation et la règle sont inchangées. `ATTESTATION_RELEASE_DATE` reste la date de mise sur le marché de la version attestée.
+- **Webhooks Uber Eats** : la vérification de la signature est branchée en mode observation (voir `docs/decisions.md`).
