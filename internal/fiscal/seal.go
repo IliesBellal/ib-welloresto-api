@@ -32,6 +32,9 @@ const (
 	// ChainFiscalClosures : clôtures journalières, mensuelles et annuelles
 	// (lot B). Prise en dernier, après toutes les autres chaînes.
 	ChainFiscalClosures Chain = "fiscal_closures"
+	// ChainFiscalArchives : archives fiscales (lot D), chacune scellée sur la
+	// précédente. Écrite seule dans sa transaction, sans autre chaîne.
+	ChainFiscalArchives Chain = "fiscal_archives"
 )
 
 // Fingerprint est l'empreinte (non signée) d'une donnée scellée à l'intérieur

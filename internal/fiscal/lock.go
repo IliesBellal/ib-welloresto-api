@@ -7,6 +7,7 @@ package fiscal
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -33,8 +34,9 @@ var ErrNoTransaction = errors.New("fiscal: chain write outside a transaction")
 // mutation de commande tient la ligne de la commande avant d'écrire son audit,
 // un encaissement tient la chaîne avant de mettre la commande à jour. Les
 // chaînes sont toujours prises dans l'ordre payments, orders, receipts,
-// cash_registers, audit_logs, fiscal_closures : aucun cycle entre elles (la
-// clôture fiscale, seule dans sa transaction, ne prend aucune autre chaîne).
+// cash_registers, audit_logs, fiscal_closures, fiscal_archives : aucun cycle
+// entre elles (la clôture fiscale et l'archive, chacune seule dans sa
+// transaction, ne prennent aucune autre chaîne).
 func LockChain(ctx context.Context, chain Chain, merchantID string) error {
 	tx := dbutils.ExtractTx(ctx)
 	if tx == nil {
@@ -50,4 +52,26 @@ func LockChain(ctx context.Context, chain Chain, merchantID string) error {
 // établissement (pg_advisory_xact_lock(hashtextextended(clé, 0))).
 func chainLockKey(chain Chain, merchantID string) string {
 	return "fiscal:" + string(chain) + ":" + merchantID
+}
+
+// TryLock prend, sans attendre, un verrou consultatif nommé, tenu par une
+// transaction dédiée jusqu'à l'appel de release (ou jusqu'à la perte de la
+// connexion). ok vaut false si quelqu'un d'autre le tient. Sert aux travaux
+// longs qu'une seule instance ou une seule demande doit mener à la fois
+// (archives fiscales, lot D) ; jamais pour une écriture de chaîne, qui prend
+// LockChain dans sa propre transaction.
+func TryLock(ctx context.Context, db *sql.DB, key string) (release func(), ok bool, err error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, false, fmt.Errorf("fiscal: try lock %s: %w", key, err)
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))`, key).Scan(&ok); err != nil {
+		_ = tx.Rollback()
+		return nil, false, fmt.Errorf("fiscal: try lock %s: %w", key, err)
+	}
+	if !ok {
+		_ = tx.Rollback()
+		return nil, false, nil
+	}
+	return func() { _ = tx.Rollback() }, true, nil
 }
