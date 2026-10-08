@@ -233,9 +233,9 @@ func TestOrderLifeCycleRepository_Postgres(t *testing.T) {
 		t.Fatalf("GetPayment = (%+v, %v)", p, err)
 	}
 
-	// DisablePayment -> isPaid repasse à false (UPDATE ... FROM)
-	if err := repo.DisablePayment(ctx, strconv.FormatInt(stripePayID, 10)); err != nil {
-		t.Fatalf("DisablePayment: %v", err)
+	// CancelPayment (lot C : fiscal.CancelPayments) -> isPaid repasse à false
+	if cancelled, err := repo.CancelPayment(ctx, merchantID, orderID, strconv.FormatInt(stripePayID, 10), "STAFF", createdBy); err != nil || !cancelled {
+		t.Fatalf("CancelPayment = (%v, %v)", cancelled, err)
 	}
 	_ = db.QueryRowContext(ctx, `SELECT isPaid FROM orders WHERE order_id = $1`, orderID).Scan(&isPaid)
 	if isPaid {
@@ -323,8 +323,8 @@ func TestOrderLifeCycleRepository_Postgres(t *testing.T) {
 	}
 
 	// --- transitions ---
-	if err := repo.SetOrderAcceptedLocal(ctx, orderID); err != nil {
-		t.Fatalf("SetOrderAcceptedLocal: %v", err)
+	if applied, err := repo.SetOrderAcceptedLocal(ctx, orderID); err != nil || !applied {
+		t.Fatalf("SetOrderAcceptedLocal = (%v, %v)", applied, err)
 	}
 	if open, err := repo.OrderStillOpen(ctx, orderID); err != nil || !open {
 		t.Fatalf("OrderStillOpen = (%v, %v)", open, err)
@@ -377,14 +377,16 @@ func TestOrderLifeCycleRepository_Postgres(t *testing.T) {
 	}
 
 	// --- annulation / divers ---
-	if err := repo.DenyOrderLocal(ctx, orderID, "1", "test deny", createdBy); err != nil {
-		t.Fatalf("DenyOrderLocal: %v", err)
+	if err := repo.CancelOrderPayments(ctx, merchantID, orderID, "STAFF", createdBy, "test deny", func(txCtx context.Context, _ bool) error {
+		return repo.DenyOrderLocal(txCtx, orderID, "1", "test deny", createdBy)
+	}); err != nil {
+		t.Fatalf("CancelOrderPayments + DenyOrderLocal (commande ouverte): %v", err)
 	}
 	if err := repo.DeleteOrderLocal(ctx, orderID, "1", "test delete", createdBy); err != nil {
 		t.Fatalf("DeleteOrderLocal: %v", err)
 	}
-	if err := repo.DisablePayments(ctx, orderID); err != nil {
-		t.Fatalf("DisablePayments: %v", err)
+	if err := repo.CancelOrderPayments(ctx, merchantID, orderID, "STAFF", createdBy, "test delete", nil); !errors.Is(err, models.ErrOrderClosed) {
+		t.Fatalf("CancelOrderPayments (commande close) = %v, want ErrOrderClosed", err)
 	}
 	if err := repo.ClearBookings(ctx, orderID); err != nil {
 		t.Fatalf("ClearBookings: %v", err)

@@ -166,33 +166,43 @@ func (s *OrdersLifeCycleService) DeleteOrder(ctx context.Context, in models.Deny
 	// Scan'n'Order), une erreur au milieu laissait une commande annulée avec
 	// ses paiements encore actifs (lot A conformité caisse, solution C).
 	if err := dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
-		if err := s.ordersLifeCycleRepo.DeleteOrderLocal(
-			txCtx,
-			in.OrderID,
-			in.DeletionReasonID,
-			in.DeletionComment,
-			in.UserID,
-		); err != nil {
-			return err
-		}
+		// Paiements d'abord (lot C conformité caisse) : vérifie, sous verrou,
+		// que la commande est encore ouverte et qu'aucun paiement n'est dans
+		// un registre fermé, et les annule ; la clôture suit, puis la trace
+		// d'audit de chaque paiement.
+		return s.ordersLifeCycleRepo.CancelOrderPayments(txCtx, in.MerchantID, in.OrderID,
+			paymentCancelSource(in.UserID), in.UserID, orderCancelReason("Annulation de la commande", in.DeletionReasonID, in.DeletionComment),
+			func(txCtx context.Context, hasSaleReceipt bool) error {
+				// Commande rouverte après une vente : avoir de cette vente (R2).
+				if hasSaleReceipt {
+					if err := s.receiptService.CancelSaleReceipt(txCtx, in.MerchantID, in.OrderID); err != nil {
+						return fmt.Errorf("cancel sale receipt: %w", err)
+					}
+				}
 
-		// Reactivate rewards
-		if err := s.customersService.ReactivateRewards(txCtx, in.OrderID); err != nil {
-			return fmt.Errorf("reactivate rewards: %w", err)
-		}
+				if err := s.ordersLifeCycleRepo.DeleteOrderLocal(
+					txCtx,
+					in.OrderID,
+					in.DeletionReasonID,
+					in.DeletionComment,
+					in.UserID,
+				); err != nil {
+					return err
+				}
 
-		// Delete QR
-		if err := s.ordersLifeCycleRepo.DeleteQRCode(txCtx, in.OrderID); err != nil {
-			return err
-		}
+				// Reactivate rewards
+				if err := s.customersService.ReactivateRewards(txCtx, in.OrderID); err != nil {
+					return fmt.Errorf("reactivate rewards: %w", err)
+				}
 
-		// Disable payments
-		if err := s.ordersLifeCycleRepo.DisablePayments(txCtx, in.OrderID); err != nil {
-			return err
-		}
+				// Delete QR
+				if err := s.ordersLifeCycleRepo.DeleteQRCode(txCtx, in.OrderID); err != nil {
+					return err
+				}
 
-		// Clear bookings
-		return s.ordersLifeCycleRepo.ClearBookings(txCtx, in.OrderID)
+				// Clear bookings
+				return s.ordersLifeCycleRepo.ClearBookings(txCtx, in.OrderID)
+			})
 	}); err != nil {
 		return err
 	}
@@ -532,18 +542,16 @@ func (s *OrdersLifeCycleService) GetPayments(ctx context.Context, orderID string
 	return s.ordersLifeCycleRepo.GetPaymentsForOrder(ctx, orderID)
 }
 
+// DisablePayment annule un paiement depuis la caisse (DELETE
+// /orders/{id}/payments/{payment_id}) : aide à l'encaissement, possible
+// seulement sur une commande ouverte et un registre ouvert (lot C conformité
+// caisse, R4), avec sa trace au journal d'audit (R5). Sinon : refus explicite
+// (models.ErrPaymentOrderClosed, models.ErrPaymentRegisterClosed) ; seul le
+// remboursement reste possible.
 func (s *OrdersLifeCycleService) DisablePayment(ctx context.Context, orderID, paymentID string) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
-	}
-
-	orderStillOpen, err := s.ordersLifeCycleRepo.OrderStillOpen(ctx, orderID)
-	if err != nil {
-		return err
-	}
-	if !orderStillOpen {
-		return nil
 	}
 
 	log := logger.FromContext(ctx)
@@ -564,19 +572,21 @@ func (s *OrdersLifeCycleService) DisablePayment(ctx context.Context, orderID, pa
 		return models.ErrCannotDisableExternalPayments
 	}
 
-	// 3) S'il s'agit d'un paiement Stripe, procéder à son annulation via l'API Stripe
-	if payment.MOP == models.PaymentStripe {
-
-		req := stripeclient.RefundRequest{
-			IntentID:  *payment.IntentID,
-			AccountID: *payment.AccountID,
-		}
-
-		go s.stripeManager.RefundOrCancelAsync(req)
+	// 3) Annuler le paiement (contrôles, enabled = false, journal d'audit)
+	cancelled, err := s.ordersLifeCycleRepo.CancelPayment(ctx, user.MerchantID, orderID, paymentID, paymentCancelSource(user.UserID), user.UserID)
+	if err != nil {
+		return err
 	}
 
-	// 4) Désactiver le paiement en base de données
-	err = s.ordersLifeCycleRepo.DisablePayment(ctx, paymentID)
+	// 4) Paiement Stripe effectivement annulé : remboursement ou annulation
+	// côté Stripe, après le commit (un refus ne déclenche plus rien).
+	if cancelled && payment.MOP == models.PaymentStripe && payment.IntentID != nil && payment.AccountID != nil {
+		go s.stripeManager.RefundOrCancelAsync(stripeclient.RefundRequest{
+			IntentID:  *payment.IntentID,
+			AccountID: *payment.AccountID,
+		})
+	}
+
 	if s.redis != nil {
 		key := helpers.GetRedisOrderKey(user.MerchantID, orderID)
 		s.redis.Delete(ctx, key)
@@ -585,7 +595,7 @@ func (s *OrdersLifeCycleService) DisablePayment(ctx context.Context, orderID, pa
 
 	s.notificationsService.SendNotificationAsync(user.MerchantID, orderID, notification.NotificationTypeOrderUpdate)
 
-	return err
+	return nil
 }
 
 func (s *OrdersLifeCycleService) SetDistributedProducts(ctx context.Context, req *models.SetDistributedProductsRequest) (map[string]interface{}, error) {
@@ -711,10 +721,18 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 		return accept_order, err
 	}
 
-	// 2) Update local order immediately (set OPEN, PENDING, ACCEPTED as in PHP)
-	if err := s.ordersLifeCycleRepo.SetOrderAcceptedLocal(ctx, orderID); err != nil {
+	// 2) Update local order immediately (set OPEN, PENDING, ACCEPTED as in PHP).
+	// Commande close : acceptation ignorée, sans appel aux plateformes (lot C
+	// conformité caisse, une acceptation ne rouvre jamais une commande).
+	applied, err := s.ordersLifeCycleRepo.SetOrderAcceptedLocal(ctx, orderID)
+	if err != nil {
 		accept_order.Status = "error"
 		return accept_order, err
+	}
+	if !applied {
+		log.Warn("acceptation ignorée : commande close", zap.String("order_id", orderID), zap.String("user_id", UserID))
+		accept_order.Status = "success"
+		return accept_order, nil
 	}
 	if s.redis != nil {
 		key := helpers.GetRedisOrderKey(MerchantID, orderID)
@@ -850,20 +868,25 @@ func (s *OrdersLifeCycleService) SetOrderDenied(ctx context.Context, OrderID str
 	// transaction (celle de l'appelant s'il en a une) : le refus n'était
 	// jamais transactionnel (lot A conformité caisse, solution C).
 	err = dbutils.RunInTx(ctx, s.db, func(txCtx context.Context) error {
-		if err := s.ordersLifeCycleRepo.DenyOrderLocal(txCtx,
-			OrderID,
-			in.DeletionReasonID,
-			in.DeletionComment,
-			in.UserID,
-		); err != nil {
-			return err
-		}
-
-		// Cancel stripe payments
-		if err := s.ordersLifeCycleRepo.DisablePayments(txCtx, OrderID); err != nil {
-			return fmt.Errorf("stripe cancel: %w", err)
-		}
-		return nil
+		// Paiements d'abord, comme DeleteOrder : refuse une commande déjà
+		// close (models.ErrOrderClosed, que le webhook Stripe ignore) — ce
+		// chemin n'avait aucun contrôle hors de la route caisse.
+		return s.ordersLifeCycleRepo.CancelOrderPayments(txCtx, in.MerchantID, OrderID,
+			paymentCancelSource(in.UserID), in.UserID, orderCancelReason("Refus de la commande", in.DeletionReasonID, in.DeletionComment),
+			func(txCtx context.Context, hasSaleReceipt bool) error {
+				// Commande rouverte après une vente : avoir de cette vente (R2).
+				if hasSaleReceipt {
+					if err := s.receiptService.CancelSaleReceipt(txCtx, in.MerchantID, OrderID); err != nil {
+						return fmt.Errorf("cancel sale receipt: %w", err)
+					}
+				}
+				return s.ordersLifeCycleRepo.DenyOrderLocal(txCtx,
+					OrderID,
+					in.DeletionReasonID,
+					in.DeletionComment,
+					in.UserID,
+				)
+			})
 	})
 	if err != nil {
 		return err
@@ -1036,8 +1059,9 @@ func (s *OrdersLifeCycleService) ProcessRefund(ctx context.Context, req models.R
 			return err
 		}
 
-		// 2. Récupérer le reçu fiscal d'origine
-		originalReceipt, err := s.receiptService.GetReceiptByOrderID(txCtx, req.OrderID)
+		// 2. Récupérer le reçu fiscal d'origine : le dernier ticket de vente,
+		// pas un avoir (un second remboursement partiel échouait).
+		originalReceipt, err := s.receiptService.GetSaleReceiptByOrderID(txCtx, req.OrderID)
 		if err != nil {
 			log.Error(err.Error())
 			return models.ErrReceiptNotFound

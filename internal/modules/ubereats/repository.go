@@ -460,10 +460,12 @@ func (r *UberRepository) SyncOrderState(ctx context.Context, uberOrderID, status
 	}
 
 	if state != StateClosed {
+		// Plus aucune réouverture par une plateforme (lot C conformité caisse,
+		// R1 bis) : une commande close ne reçoit que le statut.
 		db := dbx.GetDB(ctx, r.database)
 		query := fmt.Sprintf(`
 		UPDATE orders
-		SET brand_status = ?, state = ?, merchant_approval = ?, deletion_reason_id = ?,
+		SET brand_status = ?, state = CASE WHEN state IN ('CLOSED', 'DONE') THEN state ELSE ? END, merchant_approval = ?, deletion_reason_id = ?,
 		    cancelled_by_type = CASE WHEN cancelled_by_type IS NULL AND ? IN ('DENIED', 'CANCELED') THEN 'PLATFORM' ELSE cancelled_by_type END,
 		    delivered_on = CASE WHEN ? = 'COMPLETED' THEN %[1]s ELSE delivered_on END,
 		    last_update = %[1]s

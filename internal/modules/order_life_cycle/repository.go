@@ -56,29 +56,20 @@ func (r *OrdersLifeCycleRepository) LinkCustomerToOrder(ctx context.Context, ord
 	return nil
 }
 
+// ReopenClosedOrder rouvre une commande close (lot C conformité caisse, R1) :
+// refusée si elle est scellée par sa clôture journalière ou si l'un de ses
+// paiements est dans un registre fermé (fiscal.ReopenOrder). Une commande
+// déjà ouverte est un no-op.
 func (r *OrdersLifeCycleRepository) ReopenClosedOrder(ctx context.Context, merchantID, orderID, userID string) error {
-	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
-	// -------------------------
-	//  FUTURE VALIDATIONS HERE
-	// -------------------------
-	// Exemple :
-	// - vérifier que la commande existe
-	// - vérifier qu’elle est bien "CLOSED"
-	// - vérifier que userID a le droit
-	// - vérifier registre de caisse
-	// --------------------------------------
-
-	// ---- 2. Update
-	_, err := db.ExecContext(ctx, `
-		UPDATE orders
-		SET state = 'OPEN'
-		WHERE order_id = ? AND merchant_id = ?
-	`, orderID, merchantID)
+	reopened, err := fiscal.ReopenOrder(ctx, r.database, merchantID, orderID)
 	if err != nil {
 		log.Error(err.Error())
-		return fmt.Errorf("reopen update failed: %w", err)
+		return err
+	}
+	if !reopened {
+		return nil
 	}
 
 	// Une commande réouverte pour correction (prix, produits...) sort du
@@ -404,45 +395,28 @@ func (r *OrdersLifeCycleRepository) GetPayment(ctx context.Context, orderID stri
 	return &p, nil
 }
 
-func (r *OrdersLifeCycleRepository) DisablePayment(ctx context.Context, paymentID string) error {
-	db := dbx.GetDB(ctx, r.database)
-	log := logger.FromContext(ctx)
+// CancelPayment annule un paiement d'une commande ouverte (conformité caisse,
+// lot C, R4/R5) via fiscal.CancelPayment : contrôles, enabled = false,
+// commande repassée non payée (comme avant le lot C) et entrée au journal
+// d'audit, dans la transaction de l'appelant ou la sienne. cancelled vaut
+// false si le paiement était déjà annulé (no-op).
+func (r *OrdersLifeCycleRepository) CancelPayment(ctx context.Context, merchantID, orderID, paymentID, source, userID string) (cancelled bool, err error) {
+	done, err := fiscal.CancelPayment(ctx, r.database, fiscal.PaymentCancellation{
+		MerchantID: merchantID, OrderID: orderID, PaymentID: paymentID, Source: source, UserID: userID,
+		MarkOrderUnpaid: true,
+	})
+	return done != nil, err
+}
 
-	// TODO
-	// Vérifier qu'il ne s'agit pas d'un paiement Uber Eats ou Deliveroo qui ne sont pas anulables
-	// Le client s'en occupe déjà, mais une double vérification côté serveur est nécessaire
-
-	// Disable payment
-	_, err := db.ExecContext(ctx, `
-		UPDATE payments SET enabled = FALSE WHERE payment_id = ?
-	`, paymentID)
-	if err != nil {
-		log.Error(err.Error())
-		return err
-	}
-
-	// Refresh order as unpaid (UPDATE multi-table MySQL -> UPDATE ... FROM)
-	unpaidQuery := `
-		UPDATE orders o 
-		JOIN payments p ON o.order_id = p.order_id
-		SET o.isPaid = false, o.last_update = UTC_TIMESTAMP()
-		WHERE p.payment_id = ?
-	`
-	if dbx.ActiveDialect() == dbx.Postgres {
-		unpaidQuery = `
-		UPDATE orders
-		SET isPaid = false, last_update = now()
-		FROM payments p
-		WHERE orders.order_id = p.order_id AND p.payment_id = ?
-	`
-	}
-	_, err = db.ExecContext(ctx, unpaidQuery, paymentID)
-	if err != nil {
-		log.Error(err.Error())
-		return err
-	}
-
-	return nil
+// CancelOrderPayments annule tous les paiements actifs d'une commande qu'on
+// annule ou refuse (fiscal.CancelOrderPayments), puis appelle closeOrder pour
+// la clore, puis écrit le journal. Vérifie aussi, paiements ou non, que la
+// commande est encore ouverte (models.ErrOrderClosed sinon).
+func (r *OrdersLifeCycleRepository) CancelOrderPayments(ctx context.Context, merchantID, orderID, source, userID, reason string, closeOrder func(ctx context.Context, hasSaleReceipt bool) error) error {
+	_, err := fiscal.CancelOrderPayments(ctx, r.database, fiscal.PaymentCancellation{
+		MerchantID: merchantID, OrderID: orderID, Source: source, UserID: userID, Reason: reason,
+	}, closeOrder)
+	return err
 }
 
 func (r *OrdersLifeCycleRepository) SetDistributedProducts(ctx context.Context, userID string, merchantID string, req *models.SetDistributedProductsRequest) error {
@@ -656,8 +630,11 @@ func (r *OrdersLifeCycleRepository) GetOrderBrandAndMerchant(ctx context.Context
 	return &m, nil
 }
 
-// SetOrderAcceptedLocal : mirrors PHP update: state = 'OPEN', brand_status = 'PENDING', merchant_approval = 'ACCEPTED', last_update = UTC_TIMESTAMP
-func (r *OrdersLifeCycleRepository) SetOrderAcceptedLocal(ctx context.Context, orderID string) error {
+// SetOrderAcceptedLocal : mirrors PHP update: state = 'OPEN', brand_status = 'PENDING', merchant_approval = 'ACCEPTED', last_update = UTC_TIMESTAMP.
+// Jamais sur une commande close (lot C conformité caisse) : une acceptation
+// tardive ou rejouée (webhooks Deliveroo, Uber, Stripe) la rouvrait sans
+// trace. applied vaut false si la commande est close (ou inconnue).
+func (r *OrdersLifeCycleRepository) SetOrderAcceptedLocal(ctx context.Context, orderID string) (applied bool, err error) {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
@@ -667,14 +644,18 @@ func (r *OrdersLifeCycleRepository) SetOrderAcceptedLocal(ctx context.Context, o
 		    state = 'OPEN',
 		    brand_status = 'PENDING',
 		    merchant_approval = 'ACCEPTED'
-		WHERE order_id = ?;
+		WHERE order_id = ? AND state NOT IN ('CLOSED', 'DONE');
 	`
-	if _, err := db.ExecContext(ctx, q, orderID); err != nil {
+	res, err := db.ExecContext(ctx, q, orderID)
+	if err != nil {
 		log.Error(err.Error())
-		return err
+		return false, err
 	}
-
-	return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // olcResponsible reproduit la coercition MySQL non-strict d'un user_id vers la
@@ -1080,19 +1061,6 @@ WHERE order_id = ?
 	*/
 
 	return meta, nil
-}
-
-// Disable payments
-func (r *OrdersLifeCycleRepository) DisablePayments(ctx context.Context, orderID string) error {
-	db := dbx.GetDB(ctx, r.database)
-
-	_, err := db.ExecContext(ctx, `
-        UPDATE payments
-        SET enabled = FALSE
-        WHERE order_id = ?`,
-		orderID,
-	)
-	return err
 }
 
 // Delete QR codes

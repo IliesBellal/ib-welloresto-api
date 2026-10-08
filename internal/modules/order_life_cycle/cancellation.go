@@ -1,6 +1,9 @@
 package order_life_cycle
 
 import (
+	"strings"
+
+	"welloresto-api/internal/fiscal"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
 )
@@ -37,3 +40,36 @@ func classifyCancelledByType(userID string) *string {
 	}
 }
 
+
+// paymentCancelSource donne la source d'une annulation de paiement inscrite
+// au journal d'audit (fiscal.CancelPayments, lot C conformité caisse), à
+// partir des mêmes identifiants que classifyCancelledByType.
+func paymentCancelSource(userID string) string {
+	switch userID {
+	case "SYSTEM":
+		return fiscal.CancelSourceSystem
+	case models.StripeWebhookUserID:
+		return fiscal.CancelSourceStripe
+	case models.UberEatsWebhookUserID:
+		return fiscal.CancelSourceUberEats
+	case models.DeliverooWebhookUserID:
+		return fiscal.CancelSourceDeliveroo
+	case "SNO_CUSTOMER", "KIOSK":
+		return fiscal.CancelSourceCustomer
+	default:
+		return fiscal.CancelSourceStaff
+	}
+}
+
+// orderCancelReason est le motif inscrit au journal pour les paiements d'une
+// commande annulée ou refusée.
+func orderCancelReason(label, reasonID, comment string) string {
+	reason := label
+	if id := strings.TrimSpace(reasonID); id != "" {
+		reason += " (motif " + id + ")"
+	}
+	if c := strings.TrimSpace(comment); c != "" {
+		reason += " : " + c
+	}
+	return reason
+}

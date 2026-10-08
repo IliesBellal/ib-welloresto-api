@@ -541,12 +541,18 @@ func (r *CashRegisterRepository) isCashRegisterClosedForMerchant(ctx context.Con
 
 	db := dbx.GetDB(ctx, r.database)
 
+	// FOR UPDATE : appelée en tête de la fermeture, verrouille le registre
+	// jusqu'au commit. Une annulation de paiement concurrente
+	// (fiscal.CancelPayments, qui le verrouille en partage) attend la fin de
+	// la fermeture puis est refusée, ou la fermeture attend l'annulation et
+	// calcule son Z sans le paiement annulé (lot C conformité caisse).
 	var closed bool
 	err = db.QueryRowContext(ctx, `
 		SELECT closed
 		FROM cash_registers
 		WHERE cash_register_id = ?
 		LIMIT 1
+		FOR UPDATE
 	`, cashRegisterID).Scan(&closed)
 
 	if err == sql.ErrNoRows {

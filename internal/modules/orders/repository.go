@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/fiscal"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
@@ -350,6 +351,20 @@ func (r *OrdersRepository) GetHistory(ctx context.Context, merchantID string, re
 	)
 	if err != nil {
 		return nil, 0, 0, page, limit, err
+	}
+
+	// 6️⃣ RÉOUVERTURE POSSIBLE (lot C conformité caisse) : la caisse masque le
+	// bouton quand fiscal.ReopenOrder refuserait (journée clôturée, paiement
+	// dans un registre fermé). Une requête pour la page.
+	reopenable, err := fiscal.ReopenableOrders(ctx, dbx.GetDB(ctx, r.database), orderIDs)
+	if err != nil {
+		return nil, 0, 0, page, limit, err
+	}
+	for i := range orders {
+		if ok, found := reopenable[orders[i].OrderID]; found {
+			canReopen := ok
+			orders[i].CanReopen = &canReopen
+		}
 	}
 
 	return orders, totalItems, totalRevenue, page, limit, nil

@@ -167,6 +167,46 @@ func TestFiscalChainPerf_Postgres(t *testing.T) {
 	logDurations(t, "clôture simultanée (10)", closeConc)
 	t.Logf("clôture simultanée : durée totale %v, erreurs %d", closeWall, closeErrs)
 
+	// 6. Annulations de paiement séquentielles, puis 10 simultanées (lot C,
+	// commande ouverte, paiement sans registre).
+	cancelPayment := func(orderID string) error {
+		var paymentID string
+		if err := db.QueryRowContext(ctx, `SELECT payment_id::text FROM payments WHERE order_id = $1 AND enabled ORDER BY payment_id LIMIT 1`, orderID).Scan(&paymentID); err != nil {
+			return err
+		}
+		_, err := repo.CancelPayment(ctx, merchantID, orderID, paymentID, "STAFF", "itest")
+		return err
+	}
+	cancelSeq := make([]time.Duration, 0, 20)
+	for _, id := range prepare(20) {
+		start := time.Now()
+		if err := cancelPayment(id); err != nil {
+			t.Fatalf("sequential payment cancel: %v", err)
+		}
+		cancelSeq = append(cancelSeq, time.Since(start))
+	}
+	logDurations(t, "annulation de paiement séquentielle (20)", cancelSeq)
+	ids = prepare(10)
+	cancelConc, cancelWall, cancelErrs := runConcurrent(10, func(i int) error { return cancelPayment(ids[i]) })
+	logDurations(t, "annulation de paiement simultanée (10)", cancelConc)
+	t.Logf("annulation de paiement simultanée : durée totale %v, erreurs %d", cancelWall, cancelErrs)
+
+	// 7. Annulations de commande payée (clôture en annulation + paiements).
+	cancelOrder := func(orderID string) error {
+		return repo.CancelOrderPayments(ctx, merchantID, orderID, "STAFF", "itest", "itest", func(txCtx context.Context, _ bool) error {
+			return repo.DeleteOrderLocal(txCtx, orderID, "1", "itest", "itest")
+		})
+	}
+	deleteSeq := make([]time.Duration, 0, 20)
+	for _, id := range prepare(20) {
+		start := time.Now()
+		if err := cancelOrder(id); err != nil {
+			t.Fatalf("sequential order cancel: %v", err)
+		}
+		deleteSeq = append(deleteSeq, time.Since(start))
+	}
+	logDurations(t, "annulation de commande séquentielle (20)", deleteSeq)
+
 	// 5. Fourches et numéros de ticket en double pour cet établissement.
 	forks := func(query string) int {
 		var n int

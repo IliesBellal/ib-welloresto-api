@@ -148,4 +148,13 @@ func TestUberReconciliation_FiscalChain_Postgres(t *testing.T) {
 	if after.brandStatus != "CANCELED" || after.deliveredOn != saleRow.deliveredOn || len(issued) != 1 {
 		t.Fatalf("closed order: expected status-only update (CANCELED), closing date unchanged, no receipt; got %+v", after)
 	}
+
+	// Uber repasse la commande close à ACCEPTED : statut seulement, elle
+	// n'est jamais rouverte (lot C conformité caisse, R1 bis).
+	if err := repo.SyncOrderState(ctx, "itest-c10-sale", StatusAccepted, StateOpen, "ACCEPTED", sql.NullInt64{}, issuer); err != nil {
+		t.Fatalf("SyncOrderState (accepted on closed): %v", err)
+	}
+	if reopened := read(t, sale); reopened.state != "CLOSED" || reopened.brandStatus != StatusAccepted || reopened.deliveredOn != saleRow.deliveredOn {
+		t.Fatalf("closed order reopened by the platform: %+v", reopened)
+	}
 }
