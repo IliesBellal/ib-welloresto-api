@@ -53,6 +53,10 @@ func (f *fakeReceiptService) GenerateRefundReceipt(ctx context.Context, merchant
 	return nil
 }
 
+func (f *fakeReceiptService) CancelSaleReceipt(ctx context.Context, merchantID, orderID string) error {
+	return nil
+}
+
 func (f *fakeReceiptService) GetReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error) {
 	return f.receipt, f.err
 }

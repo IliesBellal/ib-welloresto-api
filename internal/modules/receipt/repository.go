@@ -15,6 +15,19 @@ type ReceiptRepository interface {
 	GetReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error)
 	GetSaleReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error)
 	GetOrderTaxLines(ctx context.Context, orderID string) ([]fiscal.TaxLine, int64, error)
+	GetReceiptChainHead(ctx context.Context, merchantID, orderID string) (*ChainHead, error)
+}
+
+// ChainHead est la tête de la chaîne des tickets d'un établissement, lue sous
+// son verrou, et l'état de vente d'une commande.
+type ChainHead struct {
+	LastNumber string
+	LastHash   string
+	// Sale : dernier ticket de vente de la commande (TTC >= 0), nil s'il n'y
+	// en a pas. Remaining : son TTC moins les avoirs émis depuis (> 0 : vente
+	// toujours en vigueur).
+	Sale      *models.Receipt
+	Remaining int64
 }
 
 type receiptRepository struct {
@@ -57,6 +70,52 @@ func (r *receiptRepository) GetLastReceiptData(ctx context.Context, merchantID s
 	}
 
 	return lastNumber.String, lastHash.String, nil
+}
+
+// GetReceiptChainHead prend le verrou de la chaîne receipts de
+// l'établissement puis lit, en une requête, le dernier ticket de
+// l'établissement et le dernier ticket de vente de la commande avec ce qu'il
+// en reste après avoirs (reclôture d'une commande rouverte, lot C conformité
+// caisse, R2). Même contrat de transaction que GetLastReceiptData.
+func (r *receiptRepository) GetReceiptChainHead(ctx context.Context, merchantID, orderID string) (*ChainHead, error) {
+	db := dbx.GetDB(ctx, r.database)
+	if err := fiscal.LockChain(ctx, fiscal.ChainReceipts, merchantID); err != nil {
+		return nil, err
+	}
+	var lastNumber, lastHash, saleID, saleNumber sql.NullString
+	var saleTTC, saleHT, remaining sql.NullInt64
+	var saleTax, saleItems []byte
+	var saleAt sql.NullTime
+	err := db.QueryRowContext(ctx, `
+		SELECT h.receipt_number, h.hash,
+		       s.receipt_id, s.receipt_number, s.total_ttc, s.total_ht, s.tax_details, s.items_snapshot, s.created_at,
+		       s.total_ttc + COALESCE((
+		           SELECT SUM(a.total_ttc) FROM receipts a
+		           WHERE a.order_id = s.order_id AND a.total_ttc < 0 AND a.created_at > s.created_at), 0)
+		FROM (SELECT 1) one
+		LEFT JOIN LATERAL (
+			SELECT receipt_number, hash FROM receipts
+			WHERE merchant_id = ?
+			ORDER BY created_at DESC, receipt_number DESC LIMIT 1) h ON TRUE
+		LEFT JOIN LATERAL (
+			SELECT receipt_id, order_id, receipt_number, total_ttc, total_ht, tax_details, items_snapshot, created_at
+			FROM receipts
+			WHERE order_id = ? AND total_ttc >= 0
+			ORDER BY created_at DESC LIMIT 1) s ON TRUE`, merchantID, orderID).
+		Scan(&lastNumber, &lastHash, &saleID, &saleNumber, &saleTTC, &saleHT, &saleTax, &saleItems, &saleAt, &remaining)
+	if err != nil {
+		return nil, err
+	}
+	head := &ChainHead{LastNumber: lastNumber.String, LastHash: lastHash.String}
+	if saleID.Valid {
+		head.Sale = &models.Receipt{
+			ReceiptID: saleID.String, MerchantID: merchantID, OrderID: orderID, ReceiptNumber: saleNumber.String,
+			TotalTTC: int(saleTTC.Int64), TotalHT: int(saleHT.Int64), TaxDetails: saleTax, ItemsSnapshot: saleItems,
+			CreatedAt: saleAt.Time,
+		}
+		head.Remaining = remaining.Int64
+	}
+	return head, nil
 }
 
 func (r *receiptRepository) InsertReceipt(ctx context.Context, receipt *models.Receipt) error {
