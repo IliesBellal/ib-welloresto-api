@@ -1,3 +1,31 @@
+### Conformité caisse, lot C — réouverture encadrée, reclôture et annulations de paiement tracées (2026-10-08)
+
+**Contexte.** Constats C1 (une commande close se rouvrait sans contrôle, et chaque reclôture émettait un nouveau ticket de vente sans avoir) et C2 (une annulation de paiement ne laissait aucune trace, et les webhooks désactivaient aussi les paiements de commandes closes) de l'audit (`docs/attestation-conformite-00-audit.md`). Règles R1 à R7 et décisions d'Ilies après la phase 0 : brief, journal et mesures dans `docs/attestation-conformite-03-lot-C-brief.md`.
+
+**Décisions.**
+- **Annulation de paiement : une seule fonction** (`fiscal.CancelPayment`, `fiscal.CancelOrderPayments`) pour la caisse, l'annulation et le refus de commande, Stripe `charge.refunded` et l'annulation Uber Eats.
+  - Elle n'agit que sur une commande ouverte, de l'établissement de l'appelant, dont les paiements ne sont pas dans un registre fermé.
+  - Elle écrit `enabled = false`, rien d'autre, et une entrée `PAYMENT_CANCELLED` par paiement au journal d'audit chaîné (état d'origine, source, auteur, motif).
+  - Hors de ces conditions : refus explicite pour la caisse ; aucun effet, journalisé, pour un webhook. Seul le remboursement (avoir) reste possible.
+- **Réouverture** (`fiscal.ReopenOrder`) refusée si la journée de la commande est clôturée ou si l'un de ses paiements actifs est dans un registre fermé. Elle se sérialise avec la clôture journalière (verrou de la chaîne `fiscal_closures`).
+  - Aucune acceptation (caisse, borne, webhooks) ni synchronisation Uber ne rouvre plus une commande close.
+  - `can_reopen` est exposé par `POST /orders/history`.
+- **Reclôture :** vente identique (paiements exclus), aucun ticket ; vente modifiée, avoir de la vente en vigueur puis nouveau ticket. L'annulation ou le refus d'une commande rouverte émet l'avoir de sa vente.
+- **Refus nouveaux :** HTTP 409, code dans `data.status`, message en français au premier niveau de la réponse, lisible par les caisses actuelles. La caisse Flutter a ses dialogues dédiés et suit `can_reopen`.
+- **Code mort Deliveroo** (`UpdateOrderRejected`, `DisablePayments`) supprimé.
+- **Migration 172** (index `receipts (order_id, created_at DESC)`), à appliquer avant le code.
+
+**Mesures** (depuis le poste, aller-retour 20 ms) :
+- encaissement et clôture de commande inchangés ;
+- annulation d'un paiement : +1 aller-retour (102 → environ 125 ms) ;
+- annulation d'une commande payée : +4 (105 → environ 190 ms) ;
+- réouverture : +1 (82 → environ 102 ms) ;
+- reclôture à l'identique plus rapide (247 → environ 223 ms), sans ticket en double.
+
+L'ordre des verrous évite tout interblocage : le verrou d'audit est pris en dernier, sauf pour l'annulation d'un seul paiement, où il est sans risque.
+
+**Hors périmètre, à reprendre :** rattachement des paiements borne et plateformes au premier registre fermé (S7, inchangé) ; signature des webhooks Uber Eats jamais vérifiée (`internal/webhook/ubereats/client/signature.go`, `return true` avant la comparaison).
+
 ### Conformité caisse, lot B — clôtures fiscales et scellement des commandes (2026-10-07)
 
 **Contexte.** L'audit (`docs/attestation-conformite-00-audit.md`) relevait l'absence de clôtures journalières, mensuelles et annuelles scellées (C6, BOI §170) et des avoirs à TVA nulle (C9). Les décisions S1 à S7 de la feuille de route (`docs/attestation-conformite-feuille-de-route.md`) ont aussi déplacé le scellement des commandes. Brief, journal et mesures : `docs/attestation-conformite-02-lot-B-brief.md`.

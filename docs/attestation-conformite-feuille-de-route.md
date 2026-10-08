@@ -1,7 +1,7 @@
 # Conformité caisse et attestation : feuille de route
 
-**Mise à jour :** 2026-10-07
-**Point de départ :** [audit](attestation-conformite-00-audit.md) (constats C1 à C11) et [lot A](attestation-conformite-01-lot-A-brief.md) (C3, C5, C10), commité sur `staging` le 2026-10-07 (`c31fdfd` → `9c7225d`), **pas encore en production**. [Lot B](attestation-conformite-02-lot-B-brief.md) commité sur `staging` le 2026-10-07 (`4231e4a` → `053dcbf`, puis sa documentation), **pas encore en production**.
+**Mise à jour :** 2026-10-08
+**Point de départ :** [audit](attestation-conformite-00-audit.md) (constats C1 à C11) et [lot A](attestation-conformite-01-lot-A-brief.md) (C3, C5, C10), commité sur `staging` le 2026-10-07 (`c31fdfd` → `9c7225d`), **pas encore en production**. [Lot B](attestation-conformite-02-lot-B-brief.md) commité sur `staging` le 2026-10-07 (`4231e4a` → `053dcbf`, puis sa documentation), **pas encore en production**. [Lot C](attestation-conformite-03-lot-C-brief.md) terminé le 2026-10-08 (API et caisse Flutter), **non commité**.
 
 ## Décisions du 2026-10-07 qui réorganisent la suite
 
@@ -38,9 +38,14 @@ Le tableau ci-dessous décrit l'ordre logique ; il est remplacé par cette mise 
 | Après | Ce qui part en production | Prérequis |
 |---|---|---|
 | **B** | Lots A et B ensemble, avec les migrations 168 à 171 | Requête de contrôle des doublons de tickets (en tête de la 169). Ordre : 168, 169, 170, puis `cmd/backfill_fiscal_closures --from=… --apply` (clé de production), puis le code, puis 171. |
-| C, D, E | Chaque lot à sa fin | Migrations du lot, s'il y en a |
+| C | Lot C | Migration 172 (index des tickets par commande, `CONCURRENTLY`) **avant** le code : sans elle, chaque clôture parcourt toute la table des tickets sous le verrou de la chaîne. Ordre global de la mise en production unique : 168, 169, 170, 172, rattrapage des clôtures, code, 171. |
+| D, E | Chaque lot à sa fin | Migrations du lot, s'il y en a |
 | E | — | **Première attestation possible** (signature manuelle sur le modèle officiel) : tous les constats bloquants C1 à C8 sont traités |
 | F | Génération autonome des attestations | Version du logiciel fixée |
+
+**Vérifications avant la mise en production** (demande d'Ilies, 2026-10-07), une fois tous les lots terminés :
+- **nombre de transactions ouvertes par chaque endpoint** : une seule transaction par requête là où c'est possible, aucune transaction imbriquée ou inutile ;
+- **temps d'exécution des endpoints POS** : mesure de chaque endpoint de la caisse avant / après l'ensemble des lots, et optimisation de ceux qui ont ralenti.
 
 Déployer le lot A seul en production n'aurait rien de faux, mais introduirait la chaîne par commande que le lot B retire. C'est pourquoi le lot A attend le lot B.
 
