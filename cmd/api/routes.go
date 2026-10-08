@@ -473,7 +473,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 
 	uberWebhookService := webhookuberservice.NewService(
 		selectedDB,
-		"",
+		// Clé de la signature X-Uber-Signature (HMAC-SHA256 du corps) :
+		// client secret de l'application Uber Eats. Vérification en mode
+		// observation, voir webhookuberservice.Service.VerifySignature.
+		cfg.UberEats.ClientSecret,
 		uberService,
 		&googleClient,
 		ordersService,

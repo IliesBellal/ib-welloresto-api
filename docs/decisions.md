@@ -1,3 +1,17 @@
+### Webhooks Uber Eats : vérification de la signature en mode observation (2026-10-08)
+
+**Contexte.** La signature `X-Uber-Signature` n'était jamais vérifiée : `VerifySignature` renvoyait toujours vrai, et le service des webhooks recevait une clé vide (`""` dans `cmd/api/routes.go`). Rejeter les webhooks dont la signature ne concorde pas aurait donc refusé toutes les commandes Uber Eats.
+
+**Décision d'Ilies** : vérifier la signature sans rien rejeter, pour un « soft run » en production.
+- Clé : le client secret de l'application (`UBER_EATS_CLIENT_SECRET`, `cfg.UberEats.ClientSecret`).
+- Calcul : HMAC-SHA256 du corps brut, en hexadécimal, casse ignorée, comparaison en temps constant (`internal/webhook/ubereats/client/signature.go`).
+- Chaque webhook est journalisé :
+  - en **erreur** si la clé n'est pas configurée, si l'en-tête manque ou si la signature ne concorde pas ;
+  - en **information** (« webhook signature verified ») si elle est vérifiée.
+
+  Le webhook est **toujours traité**.
+- Ensuite : après une période sans aucune erreur en production, rejeter les webhooks invalides (401), derrière une variable d'environnement désactivable sans redéploiement.
+
 ### Conformité caisse, lot F — version 2.1.6 et attestation générée par le restaurateur (2026-10-08)
 
 **Contexte.** Besoin de départ du chantier : le restaurateur doit pouvoir produire lui-même l'attestation individuelle de l'éditeur (BOI-TVA-DECLA-30-10-30 §270 à §375, modèle BOI-LETTRE-000242), par exemple à la demande de son expert-comptable. Brief et journal : `docs/attestation-conformite-07-lot-F-brief.md`.

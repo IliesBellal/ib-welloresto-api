@@ -224,7 +224,7 @@ Le détail à jour est dans le [brief du lot D](attestation-conformite-05-lot-D-
 - **Vérifications demandées par Ilies** :
   - nombre de transactions ouvertes par chaque endpoint ;
   - temps d'exécution des endpoints POS, avant / après l'ensemble des lots, avec optimisation de ce qui a ralenti.
-- **Sécurité** : vérifier la signature des webhooks Uber Eats (aujourd'hui `return true`, `internal/webhook/ubereats/client/signature.go`).
+- **Sécurité** : signature des webhooks Uber Eats vérifiée en mode observation depuis le 2026-10-08 (journalisée, jamais rejetée ; voir `docs/decisions.md`). Après une période sans erreur en production, activer le rejet.
 - **Ordre de déploiement** :
   - migrations 163 à 167 (autres chantiers) ;
   - 168 → 169 → 170 → 172 → 173 (prix des options) → 174 (archives) → 175 (index des lectures par période) → 176 (attestations) ;

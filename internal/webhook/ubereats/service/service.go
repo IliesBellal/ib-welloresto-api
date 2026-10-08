@@ -16,6 +16,8 @@ import (
 	"welloresto-api/internal/modules/orders"
 	"welloresto-api/internal/modules/ubereats"
 	ueClient "welloresto-api/internal/webhook/ubereats/client"
+
+	"go.uber.org/zap"
 	modelsUber "welloresto-api/internal/webhook/ubereats/models"
 	"welloresto-api/internal/webhook/ubereats/repository"
 )
@@ -125,12 +127,23 @@ func (s *Service) ProcessEvent(ctx context.Context, event modelsUber.UberWebhook
 	}
 }
 
+// VerifySignature contrôle la signature d'un webhook Uber Eats en mode
+// observation (« soft run ») : le résultat est journalisé — erreur si la
+// signature manque ou ne concorde pas, information si elle est vérifiée — et
+// le webhook est TOUJOURS traité. Le rejet (401) ne sera activé qu'après une
+// période sans aucune erreur en production.
 func (s *Service) VerifySignature(ctx context.Context, headers http.Header, body []byte) {
-	sig := headers.Get("X-Uber-Signature")
-	ok := ueClient.VerifySignature(body, sig, s.signatureSecret)
 	log := logger.FromContext(ctx)
-
-	if !ok {
-		log.Error("[UBER EATS] Invalid signature")
+	sig := headers.Get("X-Uber-Signature")
+	fields := []zap.Field{zap.Int("body_bytes", len(body)), zap.Bool("signature_present", sig != "")}
+	switch {
+	case s.signatureSecret == "":
+		log.Error("[UBER EATS] webhook signature not checked: UBER_EATS_CLIENT_SECRET is empty (soft run, webhook processed)", fields...)
+	case sig == "":
+		log.Error("[UBER EATS] webhook signature missing: no X-Uber-Signature header (soft run, webhook processed)", fields...)
+	case !ueClient.VerifySignature(body, sig, s.signatureSecret):
+		log.Error("[UBER EATS] webhook signature mismatch (soft run, webhook processed)", fields...)
+	default:
+		log.Info("[UBER EATS] webhook signature verified", fields...)
 	}
 }
