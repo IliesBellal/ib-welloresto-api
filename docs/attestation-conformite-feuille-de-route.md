@@ -23,7 +23,7 @@
 | **C** — [brief](attestation-conformite-03-lot-C-brief.md) | Réouverture encadrée et reclôture (avoir et nouveau ticket si la vente change) ; annulations de paiement tracées ; webhooks limités aux commandes ouvertes ; messages de la caisse Flutter | C1, C2, S2, S6 | B (contrôle « commande scellée ») | Moyenne à grande |
 | **D** — [brief](attestation-conformite-05-lot-D-brief.md) | Archive fiscale mensuelle : CSV ouvert, notice en français, empreinte et signature, stockage privé, journal de génération, téléchargement depuis le back-office | C7, S4 | B | Moyenne |
 | **E** — [brief](attestation-conformite-06-lot-E-brief.md) | Commande de vérification (toutes les chaînes, les clôtures, et le contrôle croisé commande / ticket) ; numéro fiscal exposé par l'API et imprimé sur le ticket de la caisse | C4, C8 | B, C, D (C8 peut avancer en parallèle dès maintenant) | Moyenne |
-| **F** | Nom et numéro de version du logiciel, règle version majeure / mineure ; génération autonome de l'attestation (modèle BOI-LETTRE-000242) depuis la caisse et le back-office | — | E | Moyenne |
+| **F** — [brief](attestation-conformite-07-lot-F-brief.md) | Nom et numéro de version du logiciel, règle version majeure / mineure ; génération autonome de l'attestation (modèle BOI-LETTRE-000242) depuis la caisse et le back-office | — | E | Moyenne |
 
 **Plan anticipé des lots D, E et F :** [attestation-conformite-04-plan-D-E-F.md](attestation-conformite-04-plan-D-E-F.md) (2026-10-08, à valider).
 
@@ -44,7 +44,7 @@ Le tableau ci-dessous décrit l'ordre logique ; il est remplacé par cette mise 
 | D | Lot D | Migrations 173 (prix des options) et 174 (archives) avant le code ; 175 (index, `CONCURRENTLY`) avant le rattrapage des clôtures. Le client R2 privé doit être configuré (`R2_PRIVATE_BUCKET`, déjà exigé au démarrage) : sans lui, la tâche des archives le signale en erreur à chaque passage. |
 | E | Lot E | Aucune migration. Caisse Flutter : version qui imprime le ticket fiscal (`GET /orders/{id}/receipt`). Juste après la mise en production : `cmd/verify_fiscal --all` sur la production ; les erreurs sont à analyser avant toute attestation. |
 | E | — | **Première attestation possible** (signature manuelle sur le modèle officiel) : tous les constats bloquants C1 à C8 sont traités |
-| F | Génération autonome des attestations | Version du logiciel fixée |
+| F | Génération autonome des attestations | Migration 176 avant le code. Caisse Flutter : version avec le dialogue « Attestation de conformité ». Génération **fermée** (`ATTESTATION_ENABLED` absent) jusqu'à un `cmd/verify_fiscal --all` sans erreur sur la production, puis ouverte. |
 
 **Vérifications avant la mise en production** (demande d'Ilies, 2026-10-07), une fois tous les lots terminés :
 - **nombre de transactions ouvertes par chaque endpoint** : une seule transaction par requête là où c'est possible, aucune transaction imbriquée ou inutile ;

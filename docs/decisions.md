@@ -1,3 +1,26 @@
+### Conformité caisse, lot F — version 2.0.0 et attestation générée par le restaurateur (2026-10-08)
+
+**Contexte.** Besoin de départ du chantier : le restaurateur doit pouvoir produire lui-même l'attestation individuelle de l'éditeur (BOI-TVA-DECLA-30-10-30 §270 à §375, modèle BOI-LETTRE-000242), par exemple à la demande de son expert-comptable. Brief et journal : `docs/attestation-conformite-07-lot-F-brief.md`.
+
+**Décisions.**
+- **Version** : « WelloResto » **2.0.0**, racine majeure 2, versions mineures 2.x.y (`internal/version`, `GET /version`, `docs/versions-logiciel.md`). Toute modification des conditions d'inaltérabilité, de sécurisation, de conservation ou d'archivage donne 3.0.0 et de nouvelles attestations.
+- **Document** : texte du modèle repris mot pour mot, attestant « les fonctionnalités de caisse de ce logiciel/système », le strict nécessaire fiscal (décision d'Ilies) :
+  - volet 1 pré-rempli et pré-signé par l'éditeur (§370) : BINYA, représentée par BELLAL Ilies, à Metz, version mise sur le marché le 15/07/2026, signature intégrée au binaire ;
+  - volet 2 complété par l'établissement et signé électroniquement : nom saisi, case de certification cochée, horodatage, compte connecté ;
+  - mention facultative de la racine majeure retenue (§380) ;
+  - licence `WR-<établissement>`.
+- **Garde-fous** :
+  - génération fermée tant que `ATTESTATION_ENABLED` n'est pas vrai ;
+  - SIRET obligatoire ;
+  - volet 2 complet et cohérent ;
+  - une génération à la fois par établissement ;
+  - contrôle d'intégrité des 31 derniers jours sans erreur ;
+  - génération réservée à `settings.manage`.
+- **Traçabilité** : PDF dans le bucket privé, ligne `attestations` (migration 176) avec toutes les valeurs reportées, entrée `ATTESTATION_GENERATED` au journal d'audit chaîné (empreinte du PDF) ; téléchargements et envois au comptable tracés aussi.
+- **Accès** : page back-office « Attestation de conformité » ; caisse Flutter, réglages, à la place de l'ancien « Document NF525 », qui annonçait à tort une certification. Une attestation d'une racine majeure antérieure est signalée comme périmée.
+
+**Reste** : appliquer la migration 176, puis le test d'intégration ; ouvrir la génération après la mise en production et un contrôle d'intégrité sans erreur sur les données réelles.
+
 ### Conformité caisse, lot E — contrôle d'intégrité et ticket fiscal imprimé (2026-10-08)
 
 **Contexte.** Constats C4 (aucun outil ne vérifiait les chaînes) et C8 (le numéro fiscal n'apparaissait pas sur le ticket remis au client) de l'audit (`docs/attestation-conformite-00-audit.md`). Brief, journal et mesures : `docs/attestation-conformite-06-lot-E-brief.md`.
