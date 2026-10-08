@@ -25,10 +25,18 @@ const (
 	// fiscale délivré (conformité caisse lot D), une entrée par lien.
 	ActionFiscalArchiveDownload = "FISCAL_ARCHIVE_DOWNLOAD"
 
+	// Attestations individuelles de l'éditeur (conformité caisse lot F) :
+	// génération (signature du volet 2), lien de téléchargement, envoi par
+	// e-mail.
+	ActionAttestationGenerated = "ATTESTATION_GENERATED"
+	ActionAttestationDownload  = "ATTESTATION_DOWNLOAD"
+	ActionAttestationSent      = "ATTESTATION_SENT"
+
 	ResourceOrder         = "orders"
 	ResourcePayment       = "payments"
 	ResourceCustomer      = "customers"
 	ResourceFiscalArchive = "fiscal_archives"
+	ResourceAttestation   = "attestations"
 )
 
 type AuditLog struct {

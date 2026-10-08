@@ -42,6 +42,7 @@ import (
 	// ---- MODULES ----
 	allergensModule "welloresto-api/internal/modules/allergens"
 	analyticsModule "welloresto-api/internal/modules/analytics"
+	attestationsModule "welloresto-api/internal/modules/attestations"
 	authModule "welloresto-api/internal/modules/auth"
 	availabilitiesModule "welloresto-api/internal/modules/availabilities"
 	billingModule "welloresto-api/internal/modules/billing"
@@ -718,6 +719,14 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	taskManager := tasksPkg.NewTasksManager(selectedDB, &mailService, ordersLifeCycleService, stripeManager, bookingsService, aiCache, upsellRepo, dunningService, subscriptionsService, fiscalArchiveStore, log)
 	adminUpsellH := adminModule.NewAdminUpsellHandler(taskManager, log)
 
+	// Attestations individuelles de l'éditeur (conformité caisse lot F).
+	// Interfaces nulles (et non pointeurs nuls typés) si R2 privé manque.
+	var attestationStorage attestationsModule.Storage
+	if r2PrivateClient != nil {
+		attestationStorage = r2PrivateClient
+	}
+	attestationsH := attestationsModule.NewHandler(attestationsModule.NewService(selectedDB, cfg.Attestation, attestationStorage, mailService))
+
 	// ============================================================
 	//                      CRON JOBS
 	// ============================================================
@@ -1094,6 +1103,13 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		r.Get("/fiscal-archives/{archive_id}/download", posAccountingHandler.FiscalArchiveDownload)
 		// Contrôle d'intégrité des données fiscales (lot E), lecture seule.
 		r.Post("/fiscal-integrity", posAccountingHandler.VerifyFiscalIntegrity)
+		// Attestations individuelles de l'éditeur (lot F) : la génération
+		// (signature du volet 2 au nom de l'établissement) exige en plus le
+		// droit de gérer l'établissement.
+		r.Get("/attestations", attestationsH.Overview)
+		r.With(middleware.RequirePermission(permission.SettingsManage)).Post("/attestations", attestationsH.Generate)
+		r.Get("/attestations/{attestation_id}/download", attestationsH.Download)
+		r.Post("/attestations/{attestation_id}/email", attestationsH.Email)
 	})
 
 	// --- STOCKS ---

@@ -318,6 +318,15 @@ var (
 	ErrFiscalArchiveStorage  = errors.New("fiscal_archive_storage_unavailable")
 	ErrFiscalIntegrityBusy   = errors.New("fiscal_integrity_busy")
 
+	// Attestations individuelles de l'éditeur (conformité caisse lot F).
+	ErrAttestationDisabled      = errors.New("attestation_disabled")
+	ErrAttestationNotConfigured = errors.New("attestation_not_configured")
+	ErrAttestationSiretMissing  = errors.New("attestation_siret_missing")
+	ErrAttestationInvalid       = errors.New("attestation_invalid")
+	ErrAttestationIntegrity     = errors.New("attestation_integrity_errors")
+	ErrAttestationBusy          = errors.New("attestation_busy")
+	ErrAttestationEmailInvalid  = errors.New("attestation_email_invalid")
+
 	ErrOrderOpen = errors.New("order_open")
 
 	ErrMFARequired = errors.New("mfa_required")
@@ -1242,6 +1251,48 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		errorMsg = "an integrity check is already running for this merchant"
 		userMessage = "Un contrôle d'intégrité est déjà en cours pour cet établissement. Réessayez dans quelques instants."
 
+	case errors.Is(err, ErrAttestationDisabled):
+		status = http.StatusConflict
+		errorStatus = "attestation_disabled"
+		errorMsg = "attestation generation is not open yet"
+		userMessage = UserMessage(err)
+
+	case errors.Is(err, ErrAttestationNotConfigured):
+		status = http.StatusServiceUnavailable
+		errorStatus = "attestation_not_configured"
+		errorMsg = "attestation editor configuration or storage is missing"
+		userMessage = UserMessage(err)
+
+	case errors.Is(err, ErrAttestationSiretMissing):
+		status = http.StatusConflict
+		errorStatus = "attestation_siret_missing"
+		errorMsg = "the merchant has no SIRET"
+		userMessage = UserMessage(err)
+
+	case errors.Is(err, ErrAttestationInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "attestation_invalid"
+		errorMsg = "the attestation request is incomplete or invalid"
+		userMessage = UserMessage(err)
+
+	case errors.Is(err, ErrAttestationIntegrity):
+		status = http.StatusConflict
+		errorStatus = "attestation_integrity_errors"
+		errorMsg = "the integrity check of the merchant fiscal data reports errors"
+		userMessage = UserMessage(err)
+
+	case errors.Is(err, ErrAttestationBusy):
+		status = http.StatusConflict
+		errorStatus = "attestation_busy"
+		errorMsg = "an attestation is already being generated for this merchant"
+		userMessage = UserMessage(err)
+
+	case errors.Is(err, ErrAttestationEmailInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "attestation_email_invalid"
+		errorMsg = "invalid email address"
+		userMessage = UserMessage(err)
+
 	case errors.Is(err, ErrFiscalArchiveStorage):
 		status = http.StatusServiceUnavailable
 		errorStatus = "fiscal_archive_storage_unavailable"
@@ -1985,4 +2036,27 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		HandlerDefaultResponse
 		Message string `json:"message"`
 	}{HandlerDefaultResponse{ID: module + "." + fnName, Data: data}, userMessage})
+}
+
+// attestationMessages : messages en français des refus de l'attestation
+// (conformité caisse lot F), posés au premier niveau de la réponse et repris
+// par GET /accounting/attestations (raison d'indisponibilité).
+var attestationMessages = map[error]string{
+	ErrAttestationDisabled:      "La génération d'attestation n'est pas encore ouverte : elle le sera après la mise en production de la version attestée du logiciel.",
+	ErrAttestationNotConfigured: "L'attestation n'est pas disponible pour le moment (configuration de l'éditeur incomplète). Contactez le support WelloResto.",
+	ErrAttestationSiretMissing:  "Renseignez le SIRET de l'établissement dans ses paramètres avant de générer l'attestation.",
+	ErrAttestationInvalid:       "Informations incomplètes : indiquez le nom du représentant légal, la raison sociale, la ville et des dates valides (début d'utilisation après l'acquisition, aucune date future), puis cochez la certification.",
+	ErrAttestationIntegrity:     "Le contrôle d'intégrité de vos données fiscales relève des erreurs : l'attestation ne peut pas être générée. Contactez le support WelloResto.",
+	ErrAttestationBusy:          "Une attestation est déjà en cours de génération pour cet établissement. Réessayez dans quelques instants.",
+	ErrAttestationEmailInvalid:  "Adresse e-mail invalide.",
+}
+
+// UserMessage renvoie le message en français d'un refus connu, vide sinon.
+func UserMessage(err error) string {
+	for e, msg := range attestationMessages {
+		if errors.Is(err, e) {
+			return msg
+		}
+	}
+	return ""
 }
