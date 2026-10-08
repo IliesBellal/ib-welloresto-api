@@ -1,3 +1,31 @@
+### Conformité caisse, lot E — contrôle d'intégrité et ticket fiscal imprimé (2026-10-08)
+
+**Contexte.** Constats C4 (aucun outil ne vérifiait les chaînes) et C8 (le numéro fiscal n'apparaissait pas sur le ticket remis au client) de l'audit (`docs/attestation-conformite-00-audit.md`). Brief, journal et mesures : `docs/attestation-conformite-06-lot-E-brief.md`.
+
+**Décisions.**
+- **Contrôle d'intégrité** (`internal/fiscalverify`), en lecture seule, sur un seul instantané. Il porte sur :
+  - chaque chaîne (paiements, tickets, registres, journal, clôtures, archives ; ancienne chaîne des commandes, chaînage seul) : empreinte recalculée et signature des lignes v2, puis empreinte unique, pas de fourche, pas de trou, pas de redémarrage ;
+  - la numérotation des tickets par année ;
+  - les clôtures journalières, recalculées depuis les données (`fiscal.ComputeDayClosure`), avec leurs cumuls et la valeur d'ouverture ; les mois et années, égaux à la somme de leurs jours ;
+  - les commandes closes, recoupées avec leurs tickets ;
+  - les fichiers d'archive (empreinte et contrôle croisé).
+- **Erreurs et avertissements** : une anomalie de la version attestée (ligne v2, commande close depuis le premier ticket v2) est une erreur. Une anomalie antérieure, ou un écart connu et tracé, est un avertissement : paiement annulé après la clôture de son jour, TTC du ticket différent de ses lignes. Conforme = aucune erreur.
+- **Deux points d'entrée** :
+  - `cmd/verify_fiscal` (éditeur, toute période, `--all`, rapport texte et JSON, code de sortie) ;
+  - `POST /accounting/fiscal-integrity` (restaurateur, back-office, 31 jours au plus, un contrôle à la fois par établissement).
+- **`fiscal.ComputeOpening` et `fiscal.ComputeAggregateClosure`** sont exposées, sans changement de comportement, pour recalculer une clôture comme à son écriture.
+- **Ticket fiscal** : `GET /orders/{id}/receipt` expose les tickets et avoirs figés d'une commande et le ticket de vente en vigueur. La caisse Flutter l'imprime pour une commande close : numéro, lignes figées, TVA par taux, paiements, logiciel, début de l'empreinte. Tout autre document porte « Note - ne vaut pas ticket de caisse ». La borne garde son ticket simple sans numéro fiscal.
+
+**Mesures** (depuis le poste, base distante) :
+- contrôle d'un mois très chargé : 5,7 s ;
+- 12 000 entrées de journal de ~7 Ko : 13,9 s, temps dominé par le transfert ;
+- ticket : une requête indexée ;
+- aucun endpoint existant de la caisse modifié.
+
+**Hors périmètre, à reprendre :**
+- impression d'un avoir depuis la caisse ;
+- lien vers le ticket dans le mail ScanNOrder.
+
 ### Conformité caisse, lot D — archive fiscale et ticket figé complet (2026-10-08)
 
 **Contexte.** Constat C7 de l'audit (`docs/attestation-conformite-00-audit.md`) : aucune archive fiscale ligne par ligne (BOI §220 à §250). La phase 0 a aussi montré un ticket figé incomplet : options, suppléments, frais et remises manquaient, et le surcoût des options n'était pas conservé côté serveur. Brief, décisions D1 à D7 d'Ilies, journal et mesures : `docs/attestation-conformite-05-lot-D-brief.md`.
