@@ -60,6 +60,11 @@ Déployer le lot A seul en production n'aurait rien de faux, mais introduirait l
   - côté back-office : historique par période et par registre, remises en banque, écarts, export pour le comptable ;
   - ce n'est pas une obligation BOI (pas des règlements de clients), mais c'est utile au restaurateur et au comptable. Les mouvements sont tracés au journal d'audit, et un registre fermé n'est jamais modifié.
 
+- **Impression d'un ticket d'avoir depuis la caisse** (demande d'Ilies, 2026-10-08) :
+  - l'API l'expose déjà : `GET /orders/{id}/receipt`, entrée `receipts[]` de type `REFUND`, avec son numéro fiscal ;
+  - côté caisse Flutter : à l'écran de remboursement (et depuis l'historique), imprimer l'avoir figé `AVOIR N°F-AAAA-NNNNNN`, comme le ticket de vente (lot E) ;
+  - `ReceiptBytesBuilder.buildOrderInvoice` sait déjà rendre un avoir (`fiscalReceipt` de type remboursement) ; il manque le choix du document à imprimer.
+
 ## Fonctionnement commun à tous les lots
 
 - **Phase 0 :** recensement rendu avant tout code ; **une phase, un point d'arrêt.**
