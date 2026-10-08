@@ -222,7 +222,7 @@ func closeDay(ctx context.Context, db *sql.DB, merchantID, timezone string, loc 
 		ORDER BY period_start DESC LIMIT 1`, merchantID).Scan(&prevStart, &prevGrand, &prevPerpetual)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		opening, err := computeOpening(ctx, d, merchantID, loc, day)
+		opening, err := ComputeOpening(ctx, d, merchantID, loc, day)
 		if err != nil {
 			return false, err
 		}
@@ -427,10 +427,11 @@ func loadDayOrderClosures(ctx context.Context, d *dbx.DB, merchantID string, fro
 	return out, rows.Err()
 }
 
-// computeOpening : tickets de l'établissement antérieurs à son premier jour
+// ComputeOpening : tickets de l'établissement antérieurs à son premier jour
 // clôturé (décision d'Ilies : source « tickets »). Un ticket sans ventilation
-// (antérieur au lot B) compte pour son total.
-func computeOpening(ctx context.Context, d *dbx.DB, merchantID string, loc *time.Location, day time.Time) (*ClosureOpening, error) {
+// (antérieur au lot B) compte pour son total. Sert aussi à la vérification
+// d'intégrité (lot E).
+func ComputeOpening(ctx context.Context, d *dbx.DB, merchantID string, loc *time.Location, day time.Time) (*ClosureOpening, error) {
 	until := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc)
 	yearStart := time.Date(day.Year(), 1, 1, 0, 0, 0, 0, loc)
 	rows, err := d.QueryContext(ctx, `
@@ -460,9 +461,19 @@ func computeOpening(ctx context.Context, d *dbx.DB, merchantID string, loc *time
 	return o, rows.Err()
 }
 
-// closeAggregate scelle une clôture de mois ou d'année : somme des journées
-// closes de [start, end], cumuls de la dernière journée.
+// closeAggregate scelle une clôture de mois ou d'année.
 func closeAggregate(ctx context.Context, d *dbx.DB, merchantID, timezone, periodType string, start, end time.Time) error {
+	p, err := ComputeAggregateClosure(ctx, d, merchantID, timezone, periodType, start, end)
+	if err != nil {
+		return err
+	}
+	return insertClosure(ctx, d, p)
+}
+
+// ComputeAggregateClosure calcule une clôture de mois ou d'année : somme des
+// journées closes de [start, end], cumuls de la dernière journée (sans
+// ClosedAt). Sert aussi à la vérification d'intégrité (lot E).
+func ComputeAggregateClosure(ctx context.Context, d *dbx.DB, merchantID, timezone, periodType string, start, end time.Time) (ClosurePayload, error) {
 	rows, err := d.QueryContext(ctx, `
 		SELECT sales_ttc, sales_ht, refunds_ttc, refunds_ht, net_ttc, net_ht,
 		       vat_by_rate::text, payments_by_mop::text, by_channel::text,
@@ -473,7 +484,7 @@ func closeAggregate(ctx context.Context, d *dbx.DB, merchantID, timezone, period
 		  AND period_start >= CAST(? AS date) AND period_start <= CAST(? AS date)
 		ORDER BY period_start`, merchantID, start.Format(dateLayout), end.Format(dateLayout))
 	if err != nil {
-		return fmt.Errorf("load %s days: %w", periodType, err)
+		return ClosurePayload{}, fmt.Errorf("load %s days: %w", periodType, err)
 	}
 	defer rows.Close()
 	p := ClosurePayload{
@@ -490,7 +501,7 @@ func closeAggregate(ctx context.Context, d *dbx.DB, merchantID, timezone, period
 		var s ClosurePayload
 		if err := rows.Scan(&s.SalesTTC, &s.SalesHT, &s.RefundsTTC, &s.RefundsHT, &s.NetTTC, &s.NetHT,
 			&vatRaw, &payRaw, &chRaw, &receipts, &first, &last, &orders, &grand, &perpetual); err != nil {
-			return fmt.Errorf("scan %s day: %w", periodType, err)
+			return ClosurePayload{}, fmt.Errorf("scan %s day: %w", periodType, err)
 		}
 		p.SalesTTC += s.SalesTTC
 		p.SalesHT += s.SalesHT
@@ -514,13 +525,13 @@ func closeAggregate(ctx context.Context, d *dbx.DB, merchantID, timezone, period
 		var dayPays []PaymentTotal
 		var dayCh []ChannelTotal
 		if err := json.Unmarshal([]byte(vatRaw), &dayVAT); err != nil {
-			return fmt.Errorf("decode day vat: %w", err)
+			return ClosurePayload{}, fmt.Errorf("decode day vat: %w", err)
 		}
 		if err := json.Unmarshal([]byte(payRaw), &dayPays); err != nil {
-			return fmt.Errorf("decode day payments: %w", err)
+			return ClosurePayload{}, fmt.Errorf("decode day payments: %w", err)
 		}
 		if err := json.Unmarshal([]byte(chRaw), &dayCh); err != nil {
-			return fmt.Errorf("decode day channels: %w", err)
+			return ClosurePayload{}, fmt.Errorf("decode day channels: %w", err)
 		}
 		for _, v := range dayVAT {
 			t := vat[v.Rate]
@@ -547,7 +558,7 @@ func closeAggregate(ctx context.Context, d *dbx.DB, merchantID, timezone, period
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("load %s days: %w", periodType, err)
+		return ClosurePayload{}, fmt.Errorf("load %s days: %w", periodType, err)
 	}
 	p.VATByRate = sortedVAT(vat)
 	p.ByChannel = sortedChannels(channels)
@@ -565,7 +576,7 @@ func closeAggregate(ctx context.Context, d *dbx.DB, merchantID, timezone, period
 		}
 		return !a.Enabled && b.Enabled
 	})
-	return insertClosure(ctx, d, p)
+	return p, nil
 }
 
 // insertClosure scelle la clôture (chaînée sur la dernière de l'établissement)
