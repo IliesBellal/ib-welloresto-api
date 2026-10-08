@@ -124,6 +124,18 @@ func (h *OrdersLifeCycleHandler) GetPayments(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+// GetReceipt GET /orders/{order_id}/receipt — tickets fiscaux figés de la
+// commande (numéro, lignes, TVA ventilée, paiements), à imprimer par la
+// caisse (conformité caisse lot E, C8).
+func (h *OrdersLifeCycleHandler) GetReceipt(w http.ResponseWriter, r *http.Request) {
+	resp, err := h.ordersLifeCycleService.GetOrderReceipts(r.Context(), chi.URLParam(r, "order_id"))
+	if err != nil {
+		models.SendErrorJSON(w, "order_life_cycle", "get_receipt", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "order_life_cycle", "get_receipt", resp)
+}
+
 func (h *OrdersLifeCycleHandler) DeletePayment(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

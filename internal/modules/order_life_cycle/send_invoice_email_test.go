@@ -13,6 +13,7 @@ import (
 	"welloresto-api/internal/modules/auth"
 	"welloresto-api/internal/modules/customers"
 	"welloresto-api/internal/modules/pos/accounting"
+	"welloresto-api/internal/modules/receipt"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 )
@@ -66,6 +67,10 @@ func (f *fakeReceiptService) GetSaleReceiptByOrderID(ctx context.Context, orderI
 		return f.saleReceipt, f.err
 	}
 	return f.receipt, f.err
+}
+
+func (f *fakeReceiptService) GetOrderReceipts(ctx context.Context, merchantID, orderID string) (*receipt.OrderReceipts, error) {
+	return nil, f.err
 }
 
 type fakeAuditService struct {

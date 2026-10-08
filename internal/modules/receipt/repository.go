@@ -17,6 +17,7 @@ type ReceiptRepository interface {
 	GetSaleReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error)
 	GetOrderSaleLines(ctx context.Context, orderID string) ([]fiscal.SaleLine, int64, error)
 	GetReceiptChainHead(ctx context.Context, merchantID, orderID string) (*ChainHead, error)
+	ListOrderReceipts(ctx context.Context, merchantID, orderID string) (state string, list []storedReceipt, found bool, err error)
 }
 
 // ChainHead est la tête de la chaîne des tickets d'un établissement, lue sous

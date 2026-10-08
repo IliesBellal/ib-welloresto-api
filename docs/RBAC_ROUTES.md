@@ -444,6 +444,7 @@ opérationnelle quotidienne (écran d'historique de l'app Flutter), pas du repor
 | POST | `/orders/history` | authMiddleware | aucun |
 | GET | `/orders/{order_id}` | authMiddleware | aucun |
 | GET | `/orders/{order_id}/payments` | authMiddleware | aucun |
+| GET | `/orders/{order_id}/receipt` | authMiddleware | aucun |
 | POST | `/orders/create` | authMiddleware | aucun |
 | POST | `/orders/{order_id}/update` | authMiddleware | aucun |
 | PATCH | `/orders/{order_id}/reopen` | authMiddleware | `pos.ticket.reopen` |

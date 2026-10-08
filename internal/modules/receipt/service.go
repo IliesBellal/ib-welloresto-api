@@ -23,6 +23,7 @@ type ReceiptService interface {
 	CancelSaleReceipt(ctx context.Context, merchantID, orderID string) error
 	GetReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error)
 	GetSaleReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error)
+	GetOrderReceipts(ctx context.Context, merchantID, orderID string) (*OrderReceipts, error)
 }
 
 type receiptService struct {

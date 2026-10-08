@@ -1615,6 +1615,8 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		r.Get("/{order_id}", ordersH.GetOrder)
 
 		r.Get("/{order_id}/payments", ordersLifeCycleH.GetPayments)
+		// Ticket fiscal figé, à imprimer par la caisse (conformité caisse lot E).
+		r.Get("/{order_id}/receipt", ordersLifeCycleH.GetReceipt)
 
 		// --- 2. ENDPOINTS DE CRÉATION / MODIFICATION (Protégés) ---
 		// RBAC lot 2 : le verrou IsEmailVerified qui était ici a été retiré —

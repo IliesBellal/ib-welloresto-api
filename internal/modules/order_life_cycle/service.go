@@ -541,6 +541,16 @@ func (s *OrdersLifeCycleService) GetPayments(ctx context.Context, orderID string
 	return s.ordersLifeCycleRepo.GetPaymentsForOrder(ctx, orderID)
 }
 
+// GetOrderReceipts renvoie les tickets fiscaux figés d'une commande de
+// l'établissement de l'utilisateur (models.ErrNotFound sinon).
+func (s *OrdersLifeCycleService) GetOrderReceipts(ctx context.Context, orderID string) (*receipt.OrderReceipts, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.receiptService.GetOrderReceipts(ctx, user.MerchantID, orderID)
+}
+
 // DisablePayment annule un paiement depuis la caisse (DELETE
 // /orders/{id}/payments/{payment_id}) : aide à l'encaissement, possible
 // seulement sur une commande ouverte et un registre ouvert (lot C conformité
