@@ -29,10 +29,10 @@
 | Phase | Contenu | État |
 |---|---|---|
 | 1 | Version : `internal/version` 2.0.0, `GET /version`, [versions-logiciel.md](versions-logiciel.md) | **Faite**, commitée (`d0d4438`) |
-| 2 | Attestation côté API : migration 176, PDF fidèle au modèle, garde-fous, stockage, journal d'audit, routes | Faite et commitée, tests unitaires verts. **Test d'intégration à lancer après la migration 176** |
+| 2 | Attestation côté API : migration 176, PDF fidèle au modèle, garde-fous, stockage, journal d'audit, routes | Faite et commitée ; migration 176 appliquée sur staging, test d'intégration vert |
 | 3 | Back-office : page « Attestation de conformité » | Faite (type-check, lint) |
 | 4 | Caisse Flutter : « Attestation de conformité » dans les réglages, à la place de l'ancien « Document NF525 » | Faite (analyse, tests) |
-| 5 | Documentation, commits | Faite. Le test d'intégration et la mesure de génération suivront la migration 176. |
+| 5 | Documentation, mesures, commits | Faite |
 
 ## Journal
 
@@ -145,9 +145,20 @@ L'ancien « Document NF525 » est retiré (constat de la phase 0). `flutter anal
 
 ## Reste à faire pour clore le lot
 
-1. **Appliquer la migration 176** sur staging (Ilies). Je lance ensuite `TestAttestations_Postgres` et je mesure la durée d'une génération (contrôle d'intégrité compris).
-2. **Point d'attention, date de mise sur le marché.** Le volet 1 dit « mis sur le marché à compter du 15/07/2026, dans sa version n° 2.0.0 ». Or la 2.0.0 (lots A à F) n'est pas encore en production. Si un contrôleur rapproche cette date de celle du déploiement, l'écart se voit. Deux options :
+1. **Point d'attention, date de mise sur le marché.** Le volet 1 dit « mis sur le marché à compter du 15/07/2026, dans sa version n° 2.0.0 ». Or la 2.0.0 (lots A à F) n'est pas encore en production. Si un contrôleur rapproche cette date de celle du déploiement, l'écart se voit. Deux options :
    - retenir comme date celle de la mise en production de la 2.0.0, par `ATTESTATION_RELEASE_DATE`, sans changer le code ;
    - garder le 15/07/2026, si cette date est celle de la mise sur le marché du logiciel dans sa version courante.
-3. Le conseil d'Ilies peut confirmer la signature électronique simple (F1). Ce n'est pas bloquant.
-4. **Ouvrir la génération** (`ATTESTATION_ENABLED=true`) après la mise en production et un `cmd/verify_fiscal --all` sans erreur.
+2. Le conseil d'Ilies peut confirmer la signature électronique simple (F1). Ce n'est pas bloquant.
+3. **Ouvrir la génération** (`ATTESTATION_ENABLED=true`) après la mise en production et un `cmd/verify_fiscal --all` sans erreur.
+
+### Phase 5 — Tests et mesures (2026-10-08, migrations 175 et 176 appliquées sur staging par Ilies)
+
+- `TestAttestations_Postgres` : **vert**, du premier coup. Il couvre :
+  - les six garde-fous ;
+  - les sept cas de volet 2 invalide ;
+  - la génération, la liste, le lien et l'envoi, chacun avec son entrée au journal ;
+  - le cloisonnement par établissement ;
+  - un ticket altéré, qui bloque la génération.
+- **Durée d'une génération** : **930 ms** depuis le poste. Elle comprend le contrôle d'intégrité des 31 derniers jours, le PDF, le dépôt, l'écriture en base et au journal. Elle reste très en deçà du délai d'attente de 90 s de la caisse.
+- **Migration 175** : les deux index sont utilisés (plans `EXPLAIN` sur staging, structure seulement). Les paiements d'un jour et les commandes closes d'un jour se lisent par parcours d'index, au lieu d'un parcours complet de la table.
+- Suites d'intégration relancées, toutes migrations en place, toutes vertes : `fiscal`, `fiscalarchive`, `fiscalverify`, `accounting`, `receipt`, `attestations`, `tasks`, `cash_registers`, `order_life_cycle`.

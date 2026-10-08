@@ -481,3 +481,7 @@ Les écarts vont dans un rapport (50 premiers en clair, nombre total compté) ; 
 - Recalcul serveur du prix comme contrôle seulement : l'écart TTC / lignes est déjà journalisé (`Warn`), sans blocage.
 - Alignement de l'export comptable, des rapports et de la TVA des registres sur les options payantes.
 - Purge des fichiers orphelins de R2 : un envoi suivi d'une insertion ratée, ou d'un mois écrit par une autre instance. Ils sont sans effet, mais occupent de la place.
+
+### Après le lot (2026-10-08)
+
+Migration 175 appliquée sur staging par Ilies. Les deux index sont utilisés par la clôture journalière et l'archive (plans `EXPLAIN`, structure seulement). Suites d'intégration vertes.

@@ -146,10 +146,12 @@ func TestAttestations_Postgres(t *testing.T) {
 	release()
 
 	// Génération.
+	started := time.Now()
 	gen, err := svc.Generate(userCtx, valid)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
+	t.Logf("génération (contrôle d'intégrité, PDF, dépôt, base, journal) : %v", time.Since(started).Round(time.Millisecond))
 	a := gen.Attestation
 	stored := storage.files[gen.DownloadURL[len("https://signed.example/"):]]
 	if a.Version != "2.0.0" || a.MajorRoot != "2" || a.Obsolete || a.SignerName != "MARTIN Paul" ||

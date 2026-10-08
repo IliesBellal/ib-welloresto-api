@@ -19,7 +19,9 @@
 - **Traçabilité** : PDF dans le bucket privé, ligne `attestations` (migration 176) avec toutes les valeurs reportées, entrée `ATTESTATION_GENERATED` au journal d'audit chaîné (empreinte du PDF) ; téléchargements et envois au comptable tracés aussi.
 - **Accès** : page back-office « Attestation de conformité » ; caisse Flutter, réglages, à la place de l'ancien « Document NF525 », qui annonçait à tort une certification. Une attestation d'une racine majeure antérieure est signalée comme périmée.
 
-**Reste** : appliquer la migration 176, puis le test d'intégration ; ouvrir la génération après la mise en production et un contrôle d'intégrité sans erreur sur les données réelles.
+**Mesures** : une génération prend 930 ms depuis le poste, contrôle d'intégrité compris. Migration 176 appliquée sur staging, tests verts.
+
+**Reste** : ouvrir la génération après la mise en production et un contrôle d'intégrité sans erreur sur les données réelles.
 
 ### Conformité caisse, lot E — contrôle d'intégrité et ticket fiscal imprimé (2026-10-08)
 
