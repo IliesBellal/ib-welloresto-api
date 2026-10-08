@@ -5,6 +5,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"strconv"
 	"testing"
 	"time"
 
@@ -22,6 +23,8 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 	cleanup := func() {
 		_, _ = db.ExecContext(ctx, `DELETE FROM payments WHERE order_id = $1`, orderID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM orderitems WHERE order_id = $1`, orderID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM payments WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM audit_logs WHERE merchant_id = $1`, merchantID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM orders WHERE merchant_id = $1`, merchantID)
 	}
 	t.Cleanup(func() { cleanup() })
@@ -106,7 +109,16 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 		t.Fatalf("read back payment after CancelOrder: %v", err)
 	}
 	if paymentEnabled {
-		t.Fatal("expected payment disabled after CancelOrder (UPDATE...FROM branch)")
+		t.Fatal("expected payment disabled after CancelOrder")
+	}
+	// Lot C conformité caisse (R7) : annulé par la fonction unique, avec sa
+	// trace (source UBER_EATS).
+	var auditSource string
+	if err := db.QueryRowContext(ctx, `
+		SELECT new_values->>'source' FROM audit_logs
+		WHERE merchant_id = $1 AND action = 'PAYMENT_CANCELLED' AND old_values->>'order_id' = $2`,
+		merchantID, strconv.FormatInt(orderID, 10)).Scan(&auditSource); err != nil || auditSource != "UBER_EATS" {
+		t.Fatalf("expected a PAYMENT_CANCELLED audit entry from UBER_EATS, got %q (%v)", auditSource, err)
 	}
 
 	// MarkFailed on a second order.
@@ -147,6 +159,11 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 		t.Fatalf("seed order 3: %v", err)
 	}
 	t.Cleanup(func() { _, _ = db.ExecContext(ctx, `DELETE FROM orders WHERE order_id = $1`, orderID3) })
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO payments (merchant_id, user_id, order_id, amount, mop, enabled)
+		VALUES ($1, 'itest-user', $2, 1200, 'UBER_EATS', true)`, merchantID, orderID3); err != nil {
+		t.Fatalf("seed payment 3: %v", err)
+	}
 
 	if err := repo.CancelOrder(ctx, brandOrderID3); err != nil {
 		t.Fatalf("CancelOrder (already closed) failed against postgres: %v", err)
@@ -159,6 +176,11 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 	}
 	if brandStatus3 != "CLOSED" || state3 != "CLOSED" || closedAt3.Valid {
 		t.Fatalf("CancelOrder must not alter (nor date) an already-closed order, got status=%q state=%q delivered_on=%v", brandStatus3, state3, closedAt3)
+	}
+	// Lot C conformité caisse (R7) : ni ses paiements (la vente reste au Z).
+	var payment3Enabled bool
+	if err := db.QueryRowContext(ctx, `SELECT enabled FROM payments WHERE order_id = $1`, orderID3).Scan(&payment3Enabled); err != nil || !payment3Enabled {
+		t.Fatalf("CancelOrder must not cancel the payment of an already-closed order (enabled=%v, err=%v)", payment3Enabled, err)
 	}
 }
 

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
@@ -244,53 +243,10 @@ func (r *Repository) SyncProduct(ctx context.Context, merchantID string, item De
 
 // --- Status Update Logic (Transaction Based) ---
 
-// UpdateOrderRejected met à jour la commande en REJECTED/CANCELED
-func (r *Repository) UpdateOrderRejected(ctx context.Context, brandOrderID string, status string) error {
-	db := dbx.GetDB(ctx, r.database)
-
-	// brand_status s'écrit toujours en majuscules (B3) : Deliveroo envoie ses
-	// statuts en minuscules ("rejected", "canceled"), seul provider de ce
-	// dépôt à le faire.
-	// cancelled_by_type (PROMPT 11, §2) : ce handler est le webhook confirmant
-	// un rejet — déclenché soit par Deliveroo de son propre chef, soit en
-	// confirmation d'un rejet initié par un staff via order_life_cycle.
-	// SetOrderDenied (qui appelle DenyOrderLocal, STAFF, de façon synchrone,
-	// AVANT de déclencher deliverooSvc.DenyOrder de façon asynchrone — un
-	// chemin d'annulation staff pour Deliveroo existe bel et bien dans ce
-	// dépôt, contrairement à ce que le rétro-remplissage de la migration 114
-	// supposait). `cancelled_by_type IS NULL` protège ce cas : PLATFORM
-	// n'est posé que si rien ne l'a déjà classé.
-	query := `
-		UPDATE orders
-		SET brand_status = ?, state = 'CLOSED', merchant_approval = 'DENIED',
-		    cancelled_by_type = CASE WHEN cancelled_by_type IS NULL THEN 'PLATFORM' ELSE cancelled_by_type END
-		WHERE brand_order_id = ?`
-	_, err := db.ExecContext(ctx, query, strings.ToUpper(status), brandOrderID)
-	return err
-}
-
-// DisablePayments désactive les paiements pour une commande annulée
-func (r *Repository) DisablePayments(ctx context.Context, brandOrderID string) error {
-	db := dbx.GetDB(ctx, r.database)
-
-	// MySQL's UPDATE...JOIN has no direct Postgres equivalent; Postgres uses
-	// UPDATE...FROM instead.
-	query := `
-		UPDATE payments p
-		JOIN orders o ON p.order_id = o.order_id
-		SET p.enabled = FALSE
-		WHERE o.brand_order_id = ?`
-	if dbx.ActiveDialect() == dbx.Postgres {
-		query = `
-		UPDATE payments
-		SET enabled = FALSE
-		FROM orders
-		WHERE payments.order_id = orders.order_id AND orders.brand_order_id = ?`
-	}
-	_, err := db.ExecContext(ctx, query, brandOrderID)
-
-	return err
-}
+// Le refus et l'annulation Deliveroo passent par
+// order_life_cycle.DeleteOrder (paiements annulés par fiscal.CancelOrderPayments,
+// lot C conformité caisse) : UpdateOrderRejected et DisablePayments, sans
+// appelant, ont été supprimés (ils écrivaient sans contrôle ni trace).
 
 // UpdateOrderAccepted met à jour le statut ACCEPTED (avec logique toggle scheduled du PHP)
 func (r *Repository) UpdateOrderAccepted(ctx context.Context, brandOrderID string, isScheduledToggle bool) error {

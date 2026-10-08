@@ -966,14 +966,14 @@ func (s *StripeWebhookService) HandleRefund(ctx context.Context, data json.RawMe
 		return fmt.Errorf("unmarshal refund: %w", err)
 	}
 
-	// On a besoin de l'ID du PaymentIntent pour désactiver le paiement en base.
+	// On a besoin de l'ID du PaymentIntent pour retrouver le paiement en base.
 	// Le refund object contient payment_intent ID (string).
 	piID := ""
 	if refundedCharge.PaymentIntent != nil {
 		piID = refundedCharge.PaymentIntent.ID
 	}
 
-	if err := s.repo.DisablePayment(ctx, piID); err != nil {
+	if err := s.cancelRefundedPayments(ctx, piID, &refundedCharge); err != nil {
 		return err
 	}
 
@@ -1017,6 +1017,52 @@ func (s *StripeWebhookService) HandleRefund(ctx context.Context, data json.RawMe
 		SupportEmail:  "contact@welloresto.fr",
 	}
 	go s.email.SendRefundNotification(refundedCharge.BillingDetails.Email, refundData)
+	return nil
+}
+
+// cancelRefundedPayments applique un remboursement Stripe à la caisse (lot C
+// conformité caisse, R7 : docs/attestation-conformite-03-lot-C-brief.md).
+// Commande ouverte et remboursement total : le paiement est annulé par la
+// fonction unique, avec sa trace d'audit. Sinon rien ne change, et c'est
+// journalisé :
+//   - commande close (ou registre fermé) : la vente reste au ticket, au Z et
+//     aux clôtures ; l'avoir se fait depuis la caisse (remboursement) ;
+//   - remboursement partiel : nos interfaces ne remboursent qu'en totalité,
+//     un partiel vient du tableau de bord Stripe et ne se traduit pas en
+//     annulation.
+//
+// Avant le lot C, le paiement était désactivé dans tous les cas, ce qui, sur
+// une commande close remboursée par avoir, retirait la vente deux fois.
+func (s *StripeWebhookService) cancelRefundedPayments(ctx context.Context, piID string, charge *stripe.Charge) error {
+	log := logger.FromContext(ctx)
+	if piID == "" {
+		return nil
+	}
+	payments, err := s.repo.GetActivePaymentsByIntent(ctx, piID)
+	if err != nil {
+		return err
+	}
+	full := charge.Refunded || (charge.Amount > 0 && charge.AmountRefunded >= charge.Amount)
+	for _, p := range payments {
+		if !full {
+			log.Warn(fmt.Sprintf("[stripe webhook] remboursement partiel (%d / %d) du paiement %s, commande %s : journalisé, paiement inchangé",
+				charge.AmountRefunded, charge.Amount, p.PaymentID, p.OrderID))
+			continue
+		}
+		err := s.repo.CancelRefundedPayment(ctx, p, "Remboursement Stripe "+charge.ID)
+		switch {
+		case errors.Is(err, models.ErrPaymentOrderClosed), errors.Is(err, models.ErrPaymentRegisterClosed):
+			log.Warn(fmt.Sprintf("[stripe webhook] remboursement du paiement %s, commande %s close ou registre fermé : aucun effet en caisse (%v)",
+				p.PaymentID, p.OrderID, err))
+		case err != nil:
+			return err
+		default:
+			if s.redis != nil {
+				s.redis.Delete(ctx, helpers.GetRedisOrderKey(p.MerchantID, p.OrderID))
+			}
+			s.notification.SendNotificationAsync(p.MerchantID, p.OrderID, notification.NotificationTypeOrderUpdate)
+		}
+	}
 	return nil
 }
 

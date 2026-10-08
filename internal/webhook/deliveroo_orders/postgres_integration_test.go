@@ -138,35 +138,6 @@ func TestRepository_OrderLifecycle_Postgres(t *testing.T) {
 		t.Fatalf("expected CONFIRMED, got %q", brandStatus)
 	}
 
-	// DisablePayments: UPDATE...FROM (Postgres) vs UPDATE...JOIN (MySQL).
-	if err := repo.DisablePayments(ctx, brandOrderID); err != nil {
-		t.Fatalf("DisablePayments failed against postgres: %v", err)
-	}
-	var paymentEnabled bool
-	if err := db.QueryRowContext(ctx, `SELECT enabled FROM payments WHERE order_id = $1`, orderID).Scan(&paymentEnabled); err != nil {
-		t.Fatalf("read back payment: %v", err)
-	}
-	if paymentEnabled {
-		t.Fatal("expected payment disabled after DisablePayments")
-	}
-
-	if err := repo.UpdateOrderRejected(ctx, brandOrderID, "REJECTED"); err != nil {
-		t.Fatalf("UpdateOrderRejected failed against postgres: %v", err)
-	}
-	var state, cancelledByType string
-	if err := db.QueryRowContext(ctx, `SELECT brand_status, state, merchant_approval, cancelled_by_type FROM orders WHERE order_id = $1`, orderID).
-		Scan(&brandStatus, &state, &approval, &cancelledByType); err != nil {
-		t.Fatalf("read back after UpdateOrderRejected: %v", err)
-	}
-	if brandStatus != "REJECTED" || state != "CLOSED" || approval != "DENIED" {
-		t.Fatalf("unexpected state after UpdateOrderRejected: status=%q state=%q approval=%q", brandStatus, state, approval)
-	}
-	// PROMPT 11, §2: no cancelled_by_type was set before this call, so the
-	// webhook confirming the rejection is treated as platform-driven.
-	if cancelledByType != "PLATFORM" {
-		t.Fatalf("expected cancelled_by_type=PLATFORM after UpdateOrderRejected (previously unset), got %q", cancelledByType)
-	}
-
 	// GetNextOrderNum: existing order_num 5 -> "6".
 	next, err := repo.GetNextOrderNum(ctx, merchantID)
 	if err != nil {
@@ -174,32 +145,6 @@ func TestRepository_OrderLifecycle_Postgres(t *testing.T) {
 	}
 	if next != "6" {
 		t.Fatalf("expected \"6\", got %q", next)
-	}
-
-	// A staff-initiated Deliveroo deny (order_life_cycle.SetOrderDenied calls
-	// DenyOrderLocal synchronously, STAFF, before async-triggering
-	// deliverooSvc.DenyOrder — whose webhook confirmation lands here) must not
-	// be clobbered by this webhook's own write. Seeded after GetNextOrderNum
-	// above so its order_num doesn't shift that assertion.
-	const brandOrderIDStaffDenied = "itest-deliveroo-brand-order-staffdenied"
-	var orderIDStaffDenied int64
-	if err := db.QueryRowContext(ctx, `
-		INSERT INTO orders (merchant_id, order_num, brand, brand_order_id, brand_status, price, TVA, HT, created_by, cancelled_by_type)
-		VALUES ($1, 6, 'DELIVEROO', $2, 'ACCEPTED', 1000, 0, 1000, '226', 'STAFF')
-		RETURNING order_id`, merchantID, brandOrderIDStaffDenied).Scan(&orderIDStaffDenied); err != nil {
-		t.Fatalf("seed staff-denied order: %v", err)
-	}
-	t.Cleanup(func() { _, _ = db.ExecContext(ctx, `DELETE FROM orders WHERE order_id = $1`, orderIDStaffDenied) })
-
-	if err := repo.UpdateOrderRejected(ctx, brandOrderIDStaffDenied, "REJECTED"); err != nil {
-		t.Fatalf("UpdateOrderRejected (staff-denied) failed against postgres: %v", err)
-	}
-	var cancelledByTypeAfter string
-	if err := db.QueryRowContext(ctx, `SELECT cancelled_by_type FROM orders WHERE order_id = $1`, orderIDStaffDenied).Scan(&cancelledByTypeAfter); err != nil {
-		t.Fatalf("read back cancelled_by_type after UpdateOrderRejected (staff-denied): %v", err)
-	}
-	if cancelledByTypeAfter != "STAFF" {
-		t.Fatalf("UpdateOrderRejected must not overwrite an already-set cancelled_by_type — got %q, want STAFF (preserved)", cancelledByTypeAfter)
 	}
 }
 

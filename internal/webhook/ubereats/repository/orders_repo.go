@@ -8,6 +8,8 @@ import (
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/fiscal"
 	"welloresto-api/internal/logger"
+	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/receipt"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -40,9 +42,15 @@ func (r *OrdersRepository) GetOrderIDsByBrandOrderID(ctx context.Context, brandO
 // --- CANCEL ORDER ---
 //
 // Conformité caisse (C10) : les commandes encore ouvertes sont clôturées
-// (date de clôture, qui les rattache à leur clôture journalière scellée),
-// dans une seule transaction avec la désactivation des paiements (inchangée
-// ici : lot C).
+// (date de clôture, qui les rattache à leur clôture journalière scellée).
+//
+// Lot C conformité caisse (R7) : seules les commandes encore ouvertes sont
+// touchées. Leurs paiements sont annulés par la fonction unique
+// (fiscal.CancelOrderPayments, source UBER_EATS, trace d'audit), dans la même
+// transaction que la clôture ; une commande rouverte après une vente reçoit
+// l'avoir de cette vente. Une commande déjà close ne change pas (avant le lot
+// C, ses paiements étaient désactivés, ce qui retirait une vente déjà au
+// ticket et au Z) : c'est journalisé.
 func (r *OrdersRepository) CancelOrder(ctx context.Context, brandOrderID string) error {
 	log := logger.FromContext(ctx)
 
@@ -59,40 +67,36 @@ func (r *OrdersRepository) CancelOrder(ctx context.Context, brandOrderID string)
 		if err != nil {
 			return err
 		}
+		if len(open) == 0 {
+			log.Warn("Uber Eats cancel ignored: no open order for brand_order_id " + brandOrderID)
+			return nil
+		}
+		receipts := receipt.NewReceiptService(receipt.NewReceiptRepository(r.database))
 		for _, o := range open {
-			args := append(fiscal.ClosureArgs(), o.OrderID)
-			if _, err := db.ExecContext(txCtx, `
-				UPDATE orders
-				SET brand_status = 'CANCELED',
-				    deletion_reason_id = '39',
-				    cancelled_by_type = 'PLATFORM',
-				    `+fiscal.ClosureColumns+`
-				WHERE order_id = ?
-			`, args...); err != nil {
+			if _, err := fiscal.CancelOrderPayments(txCtx, r.database, fiscal.PaymentCancellation{
+				MerchantID: o.MerchantID, OrderID: o.OrderID,
+				Source: fiscal.CancelSourceUberEats, UserID: models.UberEatsWebhookUserID,
+				Reason: "Annulation Uber Eats",
+			}, func(txCtx context.Context, hasSaleReceipt bool) error {
+				if hasSaleReceipt {
+					if err := receipts.CancelSaleReceipt(txCtx, o.MerchantID, o.OrderID); err != nil {
+						return err
+					}
+				}
+				args := append(fiscal.ClosureArgs(), o.OrderID)
+				_, err := db.ExecContext(txCtx, `
+					UPDATE orders
+					SET brand_status = 'CANCELED',
+					    deletion_reason_id = '39',
+					    cancelled_by_type = 'PLATFORM',
+					    `+fiscal.ClosureColumns+`
+					WHERE order_id = ?
+				`, args...)
+				return err
+			}); err != nil {
 				log.Error("Error canceling order: " + err.Error())
 				return err
 			}
-		}
-
-		// MySQL's UPDATE...JOIN has no direct Postgres equivalent; Postgres uses
-		// UPDATE...FROM instead.
-		disablePaymentsQuery := `
-			UPDATE payments p
-			JOIN orders o ON p.order_id = o.order_id
-			SET p.enabled = FALSE
-			WHERE o.brand_order_id = ?
-		`
-		if dbx.ActiveDialect() == dbx.Postgres {
-			disablePaymentsQuery = `
-			UPDATE payments
-			SET enabled = FALSE
-			FROM orders
-			WHERE payments.order_id = orders.order_id AND orders.brand_order_id = ?
-		`
-		}
-		if _, err := db.ExecContext(txCtx, disablePaymentsQuery, brandOrderID); err != nil {
-			log.Error("Error updating payment status: " + err.Error())
-			return err
 		}
 		return nil
 	})

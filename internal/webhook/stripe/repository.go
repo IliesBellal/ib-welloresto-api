@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/fiscal"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 )
@@ -72,7 +73,9 @@ type Repository interface {
 	GetAccountIDByPaymentIntent(cdb context.Context, paymentIntentID string) (string, error)
 	UpdateFees(cdb context.Context, paymentIntentID string, wrFees, stripeFees, totalFee int64) error
 	UpdatePaymentIntentStatus(cdb context.Context, paymentIntentID, status string) error
-	DisablePayment(cdb context.Context, paymentIntentID string) error
+	// Remboursement (charge.refunded, lot C conformité caisse, R7)
+	GetActivePaymentsByIntent(cdb context.Context, paymentIntentID string) ([]IntentPayment, error)
+	CancelRefundedPayment(cdb context.Context, p IntentPayment, reason string) error
 
 	// Subscription (LOT B B2a-0 : remplace l'ancien CreateInvoice/PayInvoice,
 	// qui écrivaient subscription_invoices — confirmé sans aucun lecteur
@@ -497,14 +500,50 @@ func (r *mysqlRepo) UpdatePaymentIntentStatus(cdb context.Context, paymentIntent
 	return err
 }
 
-func (r *mysqlRepo) DisablePayment(cdb context.Context, paymentIntentID string) error {
-	db := dbx.GetDB(cdb, r.database)
+// IntentPayment est un paiement actif rattaché à un PaymentIntent Stripe.
+type IntentPayment struct {
+	PaymentID  string
+	OrderID    string
+	MerchantID string
+}
 
-	// UPDATE...JOIN rewritten as EXISTS (portable MySQL/Postgres).
-	query := `UPDATE payments p
-	          SET enabled = false
-	          WHERE EXISTS (SELECT 1 FROM stripe_payments sp WHERE sp.payment_id = p.payment_id AND sp.payment_intent_id = ?)`
-	_, err := db.ExecContext(cdb, query, paymentIntentID)
+// GetActivePaymentsByIntent liste les paiements encore actifs d'un
+// PaymentIntent (un seul en pratique).
+func (r *mysqlRepo) GetActivePaymentsByIntent(cdb context.Context, paymentIntentID string) ([]IntentPayment, error) {
+	db := dbx.GetDB(cdb, r.database)
+	rows, err := db.QueryContext(cdb, `
+		SELECT p.payment_id::text, p.order_id::text, o.merchant_id
+		FROM stripe_payments sp
+		JOIN payments p ON p.payment_id = sp.payment_id
+		JOIN orders o ON o.order_id = p.order_id
+		WHERE sp.payment_intent_id = ? AND p.enabled = TRUE
+		ORDER BY p.payment_id`, paymentIntentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []IntentPayment
+	for rows.Next() {
+		var p IntentPayment
+		if err := rows.Scan(&p.PaymentID, &p.OrderID, &p.MerchantID); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// CancelRefundedPayment annule un paiement remboursé sur Stripe par la
+// fonction unique (fiscal.CancelPayment) : seulement sur une commande et un
+// registre ouverts, avec sa trace d'audit (source STRIPE) ; la commande
+// repasse non payée. models.ErrPaymentOrderClosed ou
+// models.ErrPaymentRegisterClosed sinon : rien n'est modifié.
+func (r *mysqlRepo) CancelRefundedPayment(cdb context.Context, p IntentPayment, reason string) error {
+	_, err := fiscal.CancelPayment(cdb, r.database, fiscal.PaymentCancellation{
+		MerchantID: p.MerchantID, OrderID: p.OrderID, PaymentID: p.PaymentID,
+		Source: fiscal.CancelSourceStripe, UserID: models.StripeWebhookUserID, Reason: reason,
+		MarkOrderUnpaid: true,
+	})
 	return err
 }
 

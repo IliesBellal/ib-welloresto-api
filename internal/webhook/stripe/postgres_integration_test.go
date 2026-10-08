@@ -5,6 +5,7 @@ package stripe
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"welloresto-api/internal/database/dbx/pgtest"
+	"welloresto-api/internal/models"
 	"welloresto-api/internal/utils/dbutils"
 
 	"github.com/stripe/stripe-go/v78"
@@ -303,16 +305,30 @@ func TestStripeRepository_Postgres(t *testing.T) {
 		t.Fatalf("UpdatePaymentIntentStatus failed against postgres: %v", err)
 	}
 
-	// DisablePayment: UPDATE...JOIN -> EXISTS rewrite.
-	if err := repo.DisablePayment(ctx, "itest-pi-1"); err != nil {
-		t.Fatalf("DisablePayment failed against postgres: %v", err)
+	// Remboursement (lot C, R7) : paiement actif du PaymentIntent, annulé par
+	// la fonction unique seulement si sa commande est ouverte.
+	intentPayments, err := repo.GetActivePaymentsByIntent(ctx, "itest-pi-1")
+	if err != nil || len(intentPayments) != 1 || intentPayments[0].PaymentID != strconv.FormatInt(paymentID, 10) {
+		t.Fatalf("GetActivePaymentsByIntent = (%+v, %v)", intentPayments, err)
 	}
+	var orderState string
+	if err := db.QueryRowContext(ctx, `SELECT state FROM orders WHERE order_id = $1`, intentPayments[0].OrderID).Scan(&orderState); err != nil {
+		t.Fatalf("read order state: %v", err)
+	}
+	err = repo.CancelRefundedPayment(ctx, intentPayments[0], "itest refund")
 	var paymentEnabled bool
 	if err := db.QueryRowContext(ctx, `SELECT enabled FROM payments WHERE payment_id = $1`, paymentID).Scan(&paymentEnabled); err != nil {
 		t.Fatalf("read back payment enabled: %v", err)
 	}
-	if paymentEnabled {
-		t.Fatal("expected payment disabled after DisablePayment")
+	switch orderState {
+	case "OPEN":
+		if err != nil || paymentEnabled {
+			t.Fatalf("open order: CancelRefundedPayment = %v, enabled %v", err, paymentEnabled)
+		}
+	default:
+		if !errors.Is(err, models.ErrPaymentOrderClosed) || !paymentEnabled {
+			t.Fatalf("closed order: CancelRefundedPayment = %v, enabled %v (want refused, unchanged)", err, paymentEnabled)
+		}
 	}
 
 	// --- Subscription (LOT B B2a-0): to_timestamp epoch handling, now
