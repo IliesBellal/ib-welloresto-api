@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +24,10 @@ func (f *fakeArchiveStorage) UploadPrivateFile(_ context.Context, key string, fi
 	_, _ = io.Copy(io.Discard, file)
 	f.uploads++
 	return key, nil
+}
+
+func (f *fakeArchiveStorage) GetFile(_ context.Context, key string) ([]byte, error) {
+	return nil, errors.New("not stored: " + key)
 }
 
 func (f *fakeArchiveStorage) GenerateSignedURL(_ context.Context, key string, _ time.Duration) (string, error) {
@@ -141,4 +146,18 @@ func TestFiscalArchivesRoutes_Postgres(t *testing.T) {
 		t.Fatalf("other merchant list = (%+v, %v)", other, err)
 	}
 
+	// Contrôle d'intégrité (lot E, phase 4) : jours clos sans vente, aucune
+	// erreur ; période trop longue ; contrôle déjà en cours.
+	check, err := svc.VerifyFiscalIntegrity(userCtx, FiscalIntegrityRequest{DateFrom: "2026-09-01", DateTo: "2026-09-10"}, storage)
+	if err != nil || !check.Report.OK() || check.Report.MerchantID != merchantID || !strings.Contains(check.Text, "RÉSULTAT : CONFORME") {
+		t.Fatalf("VerifyFiscalIntegrity = (%+v, %v)", check, err)
+	}
+	if _, err := svc.VerifyFiscalIntegrity(userCtx, FiscalIntegrityRequest{DateFrom: "2026-08-01", DateTo: "2026-09-01"}, storage); !errors.Is(err, models.ErrFiscalPeriodInvalid) {
+		t.Fatalf("integrity, 32 days: err = %v", err)
+	}
+	release, _, _ = fiscal.TryLock(ctx, db, "fiscal:integrity:"+merchantID)
+	if _, err := svc.VerifyFiscalIntegrity(userCtx, FiscalIntegrityRequest{DateFrom: "2026-09-01", DateTo: "2026-09-02"}, storage); !errors.Is(err, models.ErrFiscalIntegrityBusy) {
+		t.Fatalf("integrity busy: err = %v", err)
+	}
+	release()
 }

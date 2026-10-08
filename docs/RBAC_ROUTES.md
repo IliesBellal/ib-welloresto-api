@@ -167,6 +167,7 @@ Groupe entier derrière `reports.financial.read` (RBAC lot 8).
 | GET | `/accounting/fiscal-archives` | authMiddleware | `reports.financial.read` |
 | POST | `/accounting/fiscal-archives` | authMiddleware | `reports.financial.read` |
 | GET | `/accounting/fiscal-archives/{archive_id}/download` | authMiddleware | `reports.financial.read` |
+| POST | `/accounting/fiscal-integrity` | authMiddleware | `reports.financial.read` |
 
 ## `/stocks`
 

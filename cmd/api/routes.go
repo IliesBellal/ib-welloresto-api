@@ -1079,6 +1079,8 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		r.Get("/fiscal-archives", posAccountingHandler.ListFiscalArchives)
 		r.Post("/fiscal-archives", posAccountingHandler.GenerateFiscalArchive)
 		r.Get("/fiscal-archives/{archive_id}/download", posAccountingHandler.FiscalArchiveDownload)
+		// Contrôle d'intégrité des données fiscales (lot E), lecture seule.
+		r.Post("/fiscal-integrity", posAccountingHandler.VerifyFiscalIntegrity)
 	})
 
 	// --- STOCKS ---

@@ -316,6 +316,7 @@ var (
 	ErrFiscalPeriodNotClosed = errors.New("fiscal_period_not_closed")
 	ErrFiscalArchiveBusy     = errors.New("fiscal_archive_busy")
 	ErrFiscalArchiveStorage  = errors.New("fiscal_archive_storage_unavailable")
+	ErrFiscalIntegrityBusy   = errors.New("fiscal_integrity_busy")
 
 	ErrOrderOpen = errors.New("order_open")
 
@@ -1234,6 +1235,12 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		errorStatus = "fiscal_archive_busy"
 		errorMsg = "an archive is already being generated for this merchant"
 		userMessage = "Une archive est déjà en cours de génération pour cet établissement. Réessayez dans quelques instants."
+
+	case errors.Is(err, ErrFiscalIntegrityBusy):
+		status = http.StatusConflict
+		errorStatus = "fiscal_integrity_busy"
+		errorMsg = "an integrity check is already running for this merchant"
+		userMessage = "Un contrôle d'intégrité est déjà en cours pour cet établissement. Réessayez dans quelques instants."
 
 	case errors.Is(err, ErrFiscalArchiveStorage):
 		status = http.StatusServiceUnavailable
