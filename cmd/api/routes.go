@@ -1073,6 +1073,12 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		r.Post("/vat/calculate", posAccountingHandler.CalculateVAT)
 		r.Post("/vat/export-csv", posAccountingHandler.ExportVATCSV)
 		r.Post("/registers/{register_id}/export-pdf", posAccountingHandler.ExportRegisterPDF)
+
+		// Archives fiscales (conformité caisse lot D) : liste, lien signé tracé
+		// au journal d'audit, génération à la demande d'une période close.
+		r.Get("/fiscal-archives", posAccountingHandler.ListFiscalArchives)
+		r.Post("/fiscal-archives", posAccountingHandler.GenerateFiscalArchive)
+		r.Get("/fiscal-archives/{archive_id}/download", posAccountingHandler.FiscalArchiveDownload)
 	})
 
 	// --- STOCKS ---

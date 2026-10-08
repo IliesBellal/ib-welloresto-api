@@ -21,9 +21,14 @@ const (
 
 	ActionCustomerInvoiceLink = "CUSTOMER_INVOICE_LINK"
 
-	ResourceOrder    = "orders"
-	ResourcePayment  = "payments"
-	ResourceCustomer = "customers"
+	// ActionFiscalArchiveDownload : lien de téléchargement d'une archive
+	// fiscale délivré (conformité caisse lot D), une entrée par lien.
+	ActionFiscalArchiveDownload = "FISCAL_ARCHIVE_DOWNLOAD"
+
+	ResourceOrder         = "orders"
+	ResourcePayment       = "payments"
+	ResourceCustomer      = "customers"
+	ResourceFiscalArchive = "fiscal_archives"
 )
 
 type AuditLog struct {

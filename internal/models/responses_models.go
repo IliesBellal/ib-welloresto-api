@@ -311,6 +311,12 @@ var (
 	ErrReopenOrderSealed           = errors.New("reopen_order_sealed")
 	ErrReopenPaymentRegisterClosed = errors.New("reopen_payment_register_closed")
 
+	// Archives fiscales (conformité caisse lot D).
+	ErrFiscalPeriodInvalid   = errors.New("fiscal_period_invalid")
+	ErrFiscalPeriodNotClosed = errors.New("fiscal_period_not_closed")
+	ErrFiscalArchiveBusy     = errors.New("fiscal_archive_busy")
+	ErrFiscalArchiveStorage  = errors.New("fiscal_archive_storage_unavailable")
+
 	ErrOrderOpen = errors.New("order_open")
 
 	ErrMFARequired = errors.New("mfa_required")
@@ -1210,6 +1216,30 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		errorStatus = "reopen_payment_register_closed"
 		errorMsg = "cannot reopen an order with a payment recorded in a closed cash register"
 		userMessage = "Cette commande ne peut plus être rouverte : un de ses paiements a été encaissé sur un registre déjà fermé. Pour la corriger, faites un remboursement."
+
+	case errors.Is(err, ErrFiscalPeriodInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "fiscal_period_invalid"
+		errorMsg = "the archive period is invalid"
+		userMessage = "Période invalide : choisissez une date de début et une date de fin, sur 31 jours au plus."
+
+	case errors.Is(err, ErrFiscalPeriodNotClosed):
+		status = http.StatusConflict
+		errorStatus = "fiscal_period_not_closed"
+		errorMsg = "every day of the archive period must be fiscally closed"
+		userMessage = "Cette période n'est pas entièrement clôturée : une archive ne couvre que des jours clos. Les journées sont clôturées automatiquement chaque nuit."
+
+	case errors.Is(err, ErrFiscalArchiveBusy):
+		status = http.StatusConflict
+		errorStatus = "fiscal_archive_busy"
+		errorMsg = "an archive is already being generated for this merchant"
+		userMessage = "Une archive est déjà en cours de génération pour cet établissement. Réessayez dans quelques instants."
+
+	case errors.Is(err, ErrFiscalArchiveStorage):
+		status = http.StatusServiceUnavailable
+		errorStatus = "fiscal_archive_storage_unavailable"
+		errorMsg = "the archive storage is unavailable"
+		userMessage = "Le stockage des archives est momentanément indisponible. Réessayez plus tard."
 
 	case errors.Is(err, ErrCashRegisterStillOpen):
 		status = http.StatusConflict
