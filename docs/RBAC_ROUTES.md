@@ -31,11 +31,12 @@ reste à concevoir.
 
 ---
 
-## `/health`, `/test`, `/webhooks` — public
+## `/health`, `/version`, `/test`, `/webhooks` — public
 
 | Méthode | Route | Auth | Droit requis |
 |---|---|---|---|
 | GET | `/health` | aucune | aucun |
+| GET | `/version` | aucune | aucun |
 | GET | `/test/test-mailer` | aucune | aucun |
 | GET | `/test/test-sms` | aucune | aucun |
 | POST | `/test/notification` | aucune | aucun |

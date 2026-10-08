@@ -26,6 +26,7 @@ import (
 	"welloresto-api/internal/modules/reservation"
 	"welloresto-api/internal/modules/scannorder"
 	tasksPkg "welloresto-api/internal/tasks"
+	"welloresto-api/internal/version"
 	"welloresto-api/internal/webhook/deliveroo_menu"
 	"welloresto-api/internal/webhook/deliveroo_orders"
 
@@ -35,6 +36,7 @@ import (
 
 	"welloresto-api/internal/config"
 	"welloresto-api/internal/middleware"
+	"welloresto-api/internal/models"
 	"welloresto-api/internal/permission"
 
 	// ---- MODULES ----
@@ -728,6 +730,17 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("OK"))
+	})
+	// Nom et version du logiciel attesté (conformité caisse lot F,
+	// docs/versions-logiciel.md) : public, affiché par la caisse et le
+	// back-office, repris sur l'attestation.
+	r.Get("/version", func(w http.ResponseWriter, _ *http.Request) {
+		models.SendJSON(w, http.StatusOK, "app", "version", map[string]string{
+			"software":       version.Product,
+			"version":        version.Version,
+			"major_root":     version.MajorRoot(),
+			"minor_versions": version.MinorPattern(),
+		})
 	})
 	r.Route("/test", func(r chi.Router) {
 		r.Get("/test-mailer", mailService.TriggerTestEmail)
