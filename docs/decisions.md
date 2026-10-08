@@ -1,3 +1,38 @@
+### Conformité caisse, lot D — archive fiscale et ticket figé complet (2026-10-08)
+
+**Contexte.** Constat C7 de l'audit (`docs/attestation-conformite-00-audit.md`) : aucune archive fiscale ligne par ligne (BOI §220 à §250). La phase 0 a aussi montré un ticket figé incomplet : options, suppléments, frais et remises manquaient, et le surcoût des options n'était pas conservé côté serveur. Brief, décisions D1 à D7 d'Ilies, journal et mesures : `docs/attestation-conformite-05-lot-D-brief.md`.
+
+**Décisions.**
+- **Format** : ZIP de CSV (`;`, UTF-8 avec BOM, montants en centimes et en euros), notice en français, `MANIFEST.json` des empreintes.
+  - Contenu : tickets, lignes et TVA des tickets ; commandes et leurs lignes ; paiements ; journal (commandes et paiements seulement, D7) ; clôtures ; registres.
+  - Pas d'horodatage par un tiers (D2) : la date certaine vient de la chaîne signée `fiscal_archives` (migration 174).
+- **Génération** :
+  - tâche horaire `RunFiscalArchives`, une archive par mois dont la clôture mensuelle est écrite, une seule instance à la fois (`fiscal.TryLock`), 10 minutes par passage au plus. Elle rattrape d'elle-même les mois passés : pas de commande de rattrapage ;
+  - à la demande (D3), au back-office, sur une période close de 31 jours au plus, une génération à la fois par établissement ;
+  - lecture en un seul instantané (`REPEATABLE READ`), construction en flux, envoi au R2 privé sous une clé unique jamais écrasée, puis ligne scellée.
+- **Contrôle croisé** (`fiscalarchive.Verify`) à chaque génération : manifeste, lignes contre TVA de chaque ticket, clôtures journalières contre tickets, mois contre jours. Un écart est journalisé en erreur, sans empêcher l'archive.
+- **Accès** (D4 : back-office seulement, pas d'envoi par courriel) :
+  - routes `/accounting/fiscal-archives` sous `reports.financial.read` ;
+  - chaque lien de téléchargement, valable une heure, est précédé d'une entrée `FISCAL_ARCHIVE_DOWNLOAD` au journal d'audit, sinon pas de lien ;
+  - page back-office « Archives fiscales ».
+- **Ticket figé complet** (D6) : `fiscal.BuildReceiptItems` produit articles, options, suppléments, livraison et remises avec leurs totaux, HT réparti au plus grand reste.
+  - Le surcoût de chaque option est figé à la commande dans `order_item_configuration.extra_price` (migration 173) : prix envoyé par la caisse s'il n'est pas nul, toujours pour Uber Eats et Deliveroo, prix du catalogue sinon.
+  - Un écart entre le TTC de la commande et ses lignes est journalisé (`Warn`), jamais bloquant.
+  - Pas de lignes d'options sur les tickets Uber Eats et Deliveroo, en attendant l'analyse des données de production.
+- **Migration 175** (index par période, `CONCURRENTLY`), à appliquer avant les rattrapages ; le code fonctionne sans elle.
+
+**Mesures** (depuis le poste, base distante) :
+- clôture de commande inchangée (p50 307 à 318 ms) ;
+- création de commande : aucun aller-retour de plus ;
+- archive d'un mois très chargé : 7 à 9 s, pic mémoire 7,4 Mo ;
+- contrôle croisé : 155 ms ;
+- passage horaire sans travail : une requête.
+
+**Hors périmètre, à reprendre :**
+- options sur les tickets Uber Eats ;
+- alignement de l'export comptable et des rapports sur les options ;
+- purge des fichiers R2 orphelins.
+
 ### Conformité caisse, lot C — réouverture encadrée, reclôture et annulations de paiement tracées (2026-10-08)
 
 **Contexte.** Constats C1 (une commande close se rouvrait sans contrôle, et chaque reclôture émettait un nouveau ticket de vente sans avoir) et C2 (une annulation de paiement ne laissait aucune trace, et les webhooks désactivaient aussi les paiements de commandes closes) de l'audit (`docs/attestation-conformite-00-audit.md`). Règles R1 à R7 et décisions d'Ilies après la phase 0 : brief, journal et mesures dans `docs/attestation-conformite-03-lot-C-brief.md`.

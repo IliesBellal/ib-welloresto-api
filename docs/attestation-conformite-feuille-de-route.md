@@ -21,9 +21,11 @@
 |---|---|---|---|---|
 | **B** — [brief](attestation-conformite-02-lot-B-brief.md) | Clôtures journalières, mensuelles et annuelles scellées ; scellement des commandes par la clôture journalière ; retrait de la chaîne par commande ; TVA ventilée sur les tickets et les avoirs | C6, C9, S1, S3, S5 | A | Grande |
 | **C** — [brief](attestation-conformite-03-lot-C-brief.md) | Réouverture encadrée et reclôture (avoir et nouveau ticket si la vente change) ; annulations de paiement tracées ; webhooks limités aux commandes ouvertes ; messages de la caisse Flutter | C1, C2, S2, S6 | B (contrôle « commande scellée ») | Moyenne à grande |
-| **D** | Archive fiscale mensuelle : CSV ouvert, notice en français, empreinte et signature, stockage privé, journal de génération, téléchargement depuis le back-office | C7, S4 | B | Moyenne |
+| **D** — [brief](attestation-conformite-05-lot-D-brief.md) | Archive fiscale mensuelle : CSV ouvert, notice en français, empreinte et signature, stockage privé, journal de génération, téléchargement depuis le back-office | C7, S4 | B | Moyenne |
 | **E** | Commande de vérification (toutes les chaînes, les clôtures, et le contrôle croisé commande / ticket) ; numéro fiscal exposé par l'API et imprimé sur le ticket de la caisse | C4, C8 | B, C, D (C8 peut avancer en parallèle dès maintenant) | Moyenne |
 | **F** | Nom et numéro de version du logiciel, règle version majeure / mineure ; génération autonome de l'attestation (modèle BOI-LETTRE-000242) depuis la caisse et le back-office | — | E | Moyenne |
+
+**Plan anticipé des lots D, E et F :** [attestation-conformite-04-plan-D-E-F.md](attestation-conformite-04-plan-D-E-F.md) (2026-10-08, à valider).
 
 **Ordre :** B → C → D → E → F. C8 (dans E) ne dépend de rien et peut être avancé si un développeur Flutter est disponible.
 
@@ -38,8 +40,9 @@ Le tableau ci-dessous décrit l'ordre logique ; il est remplacé par cette mise 
 | Après | Ce qui part en production | Prérequis |
 |---|---|---|
 | **B** | Lots A et B ensemble, avec les migrations 168 à 171 | Requête de contrôle des doublons de tickets (en tête de la 169). Ordre : 168, 169, 170, puis `cmd/backfill_fiscal_closures --from=… --apply` (clé de production), puis le code, puis 171. |
-| C | Lot C | Migration 172 (index des tickets par commande, `CONCURRENTLY`) **avant** le code : sans elle, chaque clôture parcourt toute la table des tickets sous le verrou de la chaîne. Ordre global de la mise en production unique : 168, 169, 170, 172, rattrapage des clôtures, code, 171. |
-| D, E | Chaque lot à sa fin | Migrations du lot, s'il y en a |
+| C | Lot C | Migration 172 (index des tickets par commande, `CONCURRENTLY`) **avant** le code : sans elle, chaque clôture parcourt toute la table des tickets sous le verrou de la chaîne. Ordre global de la mise en production unique : 168, 169, 170, 172, 173 (lot D, prix des options), 174 (archives), 175 (index, CONCURRENTLY), rattrapage des clôtures, code (la tâche horaire archive ensuite d'elle-même les mois passés, lot D phase 3), 171. |
+| D | Lot D | Migrations 173 (prix des options) et 174 (archives) avant le code ; 175 (index, `CONCURRENTLY`) avant le rattrapage des clôtures. Le client R2 privé doit être configuré (`R2_PRIVATE_BUCKET`, déjà exigé au démarrage) : sans lui, la tâche des archives le signale en erreur à chaque passage. |
+| E | Lot E | Migrations du lot, s'il y en a |
 | E | — | **Première attestation possible** (signature manuelle sur le modèle officiel) : tous les constats bloquants C1 à C8 sont traités |
 | F | Génération autonome des attestations | Version du logiciel fixée |
 
