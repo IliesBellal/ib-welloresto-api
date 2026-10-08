@@ -86,6 +86,10 @@ func SetupTasks(
 	// (docs/attestation-conformite-02-lot-B-brief.md). Idempotent entre
 	// instances ; rattrapage initial : cmd/backfill_fiscal_closures.
 	add("@hourly", taskManager.RunFiscalClosures)
+	// Archives fiscales mensuelles (lot D) : une par mois clos, une seule
+	// instance à la fois, rattrapage des mois passés compris
+	// (docs/attestation-conformite-05-lot-D-brief.md).
+	add("@hourly", taskManager.RunFiscalArchives)
 
 	// ── RBAC ─────────────────────────────────────────────────────────────────
 	// Réconcilie le rôle admin de chaque établissement avec le catalogue de

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/fiscalarchive"
 	"welloresto-api/internal/infrastructure/brevo_mailer"
 	"welloresto-api/internal/infrastructure/brevo_sms"
 	"welloresto-api/internal/infrastructure/r2"
@@ -706,7 +707,13 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	notificationH := notificationModule.NewNotificationHandler(notificationService)
 
 	// Option A: instantiate a single TasksManager in SetupRoutes and share it with cron wiring and admin manual trigger.
-	taskManager := tasksPkg.NewTasksManager(selectedDB, &mailService, ordersLifeCycleService, stripeManager, bookingsService, aiCache, upsellRepo, dunningService, subscriptionsService, log)
+	// Interface nil (et non pointeur nil typé) si R2 privé est indisponible :
+	// RunFiscalArchives le signale au lieu de paniquer.
+	var fiscalArchiveStore fiscalarchive.Store
+	if r2PrivateClient != nil {
+		fiscalArchiveStore = r2PrivateClient
+	}
+	taskManager := tasksPkg.NewTasksManager(selectedDB, &mailService, ordersLifeCycleService, stripeManager, bookingsService, aiCache, upsellRepo, dunningService, subscriptionsService, fiscalArchiveStore, log)
 	adminUpsellH := adminModule.NewAdminUpsellHandler(taskManager, log)
 
 	// ============================================================

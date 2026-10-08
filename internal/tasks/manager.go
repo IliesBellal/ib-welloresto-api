@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"log"
 	aicache "welloresto-api/internal/ai/cache"
+	"welloresto-api/internal/fiscalarchive"
 	"welloresto-api/internal/infrastructure/mailer"
 	stripeclient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/modules/bookings"
@@ -29,7 +30,10 @@ type TasksManager struct {
 	DunningService *dunningModule.Service
 	// SubscriptionsService — LOT B B2c-1 : échéances de trial (RunTrialExpiryCheck).
 	SubscriptionsService *subscriptionsModule.Service
-	Logger               *zap.Logger
+	// FiscalArchiveStore — conformité caisse lot D : bucket R2 privé des
+	// archives fiscales (RunFiscalArchives). Nil si R2 est indisponible.
+	FiscalArchiveStore fiscalarchive.Store
+	Logger             *zap.Logger
 }
 
 // NewTasksManager crée une nouvelle instance du gestionnaire avec les dépendances injectées
@@ -43,6 +47,7 @@ func NewTasksManager(
 	upsellRepo *upsellModule.Repository,
 	dunningService *dunningModule.Service,
 	subscriptionsService *subscriptionsModule.Service,
+	fiscalArchiveStore fiscalarchive.Store,
 	logger *zap.Logger,
 ) *TasksManager {
 	return &TasksManager{
@@ -55,6 +60,7 @@ func NewTasksManager(
 		UpsellRepo:           upsellRepo,
 		DunningService:       dunningService,
 		SubscriptionsService: subscriptionsService,
+		FiscalArchiveStore:   fiscalArchiveStore,
 		Logger:               logger,
 	}
 }
