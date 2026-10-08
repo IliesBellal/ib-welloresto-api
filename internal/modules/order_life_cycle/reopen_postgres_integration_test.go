@@ -142,7 +142,7 @@ func TestReopenAndAccept_Service_Postgres(t *testing.T) {
 		p := payment(o, openReg)
 		ht := int64(1000)
 		if err := dbutils.RunInTx(ctx, db, func(txCtx context.Context) error {
-			return receiptSvc.GenerateFiscalReceipt(txCtx, &models.Order{OrderID: o, MerchantID: &merchantID, TTC: 1000, HT: &ht}, nil, nil)
+			return receiptSvc.GenerateFiscalReceipt(txCtx, &models.Order{OrderID: o, MerchantID: &merchantID, TTC: 1000, HT: &ht}, nil)
 		}); err != nil {
 			t.Fatal(err)
 		}

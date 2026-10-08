@@ -132,6 +132,12 @@ func TestOrderLifeCycleRepository_OptionsExtrasCostFreeze_Postgres(t *testing.T)
 	}
 	usedItems := []models.UsedItem{{OrderItemID: strconv.FormatInt(orderItemID, 10), Quantity: 1}}
 
+	// Lot D conformité caisse : surcoût catalogue de l'option liée (repli
+	// quand la commande n'en porte pas), figé à l'écriture (migration 173).
+	if _, err := db.ExecContext(ctx, `UPDATE configurable_attribute_options SET extra_price = 150 WHERE id = $1`, linkedOptionID); err != nil {
+		t.Fatalf("seed option catalog price: %v", err)
+	}
+
 	req := &models.RequestObject{
 		MerchantID: merchantID,
 		Order: models.OrderRequest{
@@ -148,7 +154,7 @@ func TestOrderLifeCycleRepository_OptionsExtrasCostFreeze_Postgres(t *testing.T)
 						{ID: attrID, Options: []models.ConfigurationOption{
 							{ID: strconv.FormatInt(linkedOptionID, 10), Quantity: 3},   // 3 * 100 = 300
 							{ID: strconv.FormatInt(unpricedOptionID, 10), Quantity: 1}, // INCOMPLETE_RECIPE
-							{ID: strconv.FormatInt(unlinkedOptionID, 10), Quantity: 1}, // NO_RECIPE
+							{ID: strconv.FormatInt(unlinkedOptionID, 10), Quantity: 1, ExtraPrice: 80}, // NO_RECIPE ; surcoût envoyé par la caisse
 						}},
 					}},
 				},
@@ -253,5 +259,22 @@ func TestOrderLifeCycleRepository_OptionsExtrasCostFreeze_Postgres(t *testing.T)
 	}
 	if configCostAfter.Int64 != 300 {
 		t.Fatalf("order_item_configuration cost_price_unit changed after a later purchase_price update — got %v, want 300 (frozen)", configCostAfter)
+	}
+
+	// --- Lot D : surcoût facturé figé (extra_price) ---
+	// Option liée : la commande n'en porte pas -> catalogue (150), puis le
+	// catalogue change -> inchangé. Option sans composant : celui envoyé (80).
+	if _, err := db.ExecContext(ctx, `UPDATE configurable_attribute_options SET extra_price = 999 WHERE id = $1`, linkedOptionID); err != nil {
+		t.Fatalf("update option catalog price: %v", err)
+	}
+	for optionID, want := range map[int64]int64{linkedOptionID: 150, unlinkedOptionID: 80} {
+		var got sql.NullInt64
+		if err := db.QueryRowContext(ctx, `SELECT extra_price FROM order_item_configuration WHERE order_item_id = $1 AND configuration_attribute_option_id = $2`,
+			orderItemID, optionID).Scan(&got); err != nil {
+			t.Fatalf("read back extra_price: %v", err)
+		}
+		if !got.Valid || got.Int64 != want {
+			t.Fatalf("option %d: extra_price = %v, want %d (frozen at write time)", optionID, got, want)
+		}
 	}
 }

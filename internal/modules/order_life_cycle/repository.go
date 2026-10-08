@@ -1806,7 +1806,8 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 			for _, attr := range p.Config.Attributes {
 				for _, opt := range attr.Options {
 					costPriceUnit, costPriceReason := freezeOptionCost(lineOptionCosts, opt.ID, opt.Quantity)
-					configsArgs = append(configsArgs, p.OrderItemID, attr.ID, opt.ID, opt.Quantity, costPriceUnit, costPriceReason)
+					extraPrice := freezeOptionPrice(lineOptionCosts, req.Order.Brand, opt.ID, opt.ExtraPrice)
+					configsArgs = append(configsArgs, p.OrderItemID, attr.ID, opt.ID, opt.Quantity, costPriceUnit, costPriceReason, extraPrice)
 				}
 			}
 		}
@@ -1838,8 +1839,8 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 	}
 	if len(configsArgs) > 0 {
 		if err := r.bulkInsert(ctx,
-			"INSERT INTO order_item_configuration (order_item_id, configuration_attribute_id, configuration_attribute_option_id, quantity, cost_price_unit, cost_price_reason) VALUES",
-			6, configsArgs); err != nil {
+			"INSERT INTO order_item_configuration (order_item_id, configuration_attribute_id, configuration_attribute_option_id, quantity, cost_price_unit, cost_price_reason, extra_price) VALUES",
+			7, configsArgs); err != nil {
 			return fmt.Errorf("bulk insert configs failed: %w", err)
 		}
 	}
@@ -2641,6 +2642,7 @@ func (r *OrdersLifeCycleRepository) insertExtrasWithoutsConfigs(ctx context.Cont
 						Quantity:        opt.Quantity,
 						CostPriceUnit:   costPriceUnit,
 						CostPriceReason: costPriceReason,
+						ExtraPrice:      freezeOptionPrice(optionCosts, req.Order.Brand, opt.ID, opt.ExtraPrice),
 					})
 				}
 			}
@@ -2707,12 +2709,12 @@ func (r *OrdersLifeCycleRepository) BulkInsertConfigs(ctx context.Context, list 
 		return nil
 	}
 	parts := make([]string, 0, len(list))
-	args := make([]interface{}, 0, len(list)*6)
+	args := make([]interface{}, 0, len(list)*7)
 	for _, c := range list {
-		parts = append(parts, "(?, ?, ?, ?, ?, ?)")
-		args = append(args, c.OrderItemID, c.AttributeID, c.OptionID, c.Quantity, c.CostPriceUnit, c.CostPriceReason)
+		parts = append(parts, "(?, ?, ?, ?, ?, ?, ?)")
+		args = append(args, c.OrderItemID, c.AttributeID, c.OptionID, c.Quantity, c.CostPriceUnit, c.CostPriceReason, c.ExtraPrice)
 	}
-	query := "INSERT INTO order_item_configuration (order_item_id, configuration_attribute_id, configuration_attribute_option_id, quantity, cost_price_unit, cost_price_reason) VALUES " + strings.Join(parts, ",")
+	query := "INSERT INTO order_item_configuration (order_item_id, configuration_attribute_id, configuration_attribute_option_id, quantity, cost_price_unit, cost_price_reason, extra_price) VALUES " + strings.Join(parts, ",")
 	_, err := db.ExecContext(ctx, query, args...)
 	return err
 }

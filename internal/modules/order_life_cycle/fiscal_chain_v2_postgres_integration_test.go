@@ -296,9 +296,8 @@ func (e *fiscalTestEnv) closeErr(orderID string, price int64) error {
 			return err
 		}
 		ht := price * 100 / 110
-		items := []models.SnapshotItem{{Name: "Café crème « maison »", Quantity: 2, PriceTTC: price / 2, TaxRate: 1000, TaxAmount: 45}}
 		payments := []models.SnapshotPayment{{Amount: int(price), MOP: "CB"}}
-		if err := e.receipts.GenerateFiscalReceipt(txCtx, &models.Order{OrderID: orderID, MerchantID: &e.merchantID, TTC: price, HT: &ht}, items, payments); err != nil {
+		if err := e.receipts.GenerateFiscalReceipt(txCtx, &models.Order{OrderID: orderID, MerchantID: &e.merchantID, TTC: price, HT: &ht}, payments); err != nil {
 			return err
 		}
 		return e.audit.InsertLogWithChain(txCtx, &models.AuditLog{

@@ -274,8 +274,9 @@ func computeInvoiceVATBreakdown(order *models.Order, deliveryFeesRate *float64, 
 	return lines
 }
 
-// invoiceProductVATRate reprend le choix de taux de receipt.BuildItemsSnapshot
-// (taux sur place par défaut) ; nil si le taux applicable n'est pas renseigné.
+// invoiceProductVATRate reprend le choix de taux des tickets antérieurs au
+// ticket complet (ancien receipt.BuildItemsSnapshot : taux sur place par
+// défaut) ; nil si le taux applicable n'est pas renseigné.
 func invoiceProductVATRate(product models.ProductEntry, orderType string) *float64 {
 	switch orderType {
 	case models.OrderTypeDelivery:

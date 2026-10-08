@@ -11,11 +11,14 @@ import (
 	"time"
 	"welloresto-api/internal/fiscal"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
+
+	"go.uber.org/zap"
 )
 
 type ReceiptService interface {
-	GenerateFiscalReceipt(ctx context.Context, order *models.Order, items []models.SnapshotItem, payments []models.SnapshotPayment) error
+	GenerateFiscalReceipt(ctx context.Context, order *models.Order, payments []models.SnapshotPayment) error
 	GenerateRefundReceipt(ctx context.Context, merchantID string, orderID string, originalReceipt *models.Receipt, refundAmountNegative int, mop string) error
 	CancelSaleReceipt(ctx context.Context, merchantID, orderID string) error
 	GetReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error)
@@ -37,7 +40,14 @@ func NewReceiptService(repo ReceiptRepository) ReceiptService {
 // encore en vigueur. Identique : aucun ticket. Différent : avoir de ce
 // ticket (pour ce qu'il en reste après avoirs), puis nouveau ticket. Une
 // vente déjà entièrement annulée par avoirs ne compte plus : nouveau ticket.
-func (s *receiptService) GenerateFiscalReceipt(ctx context.Context, order *models.Order, items []models.SnapshotItem, payments []models.SnapshotPayment) error {
+//
+// Ticket complet (lot D conformité caisse) : les lignes figées sont
+// reconstituées depuis la base (fiscal.BuildReceiptItems) — articles, options
+// payantes, suppléments, frais de livraison et remises de caisse — et leur
+// somme vaut la TVA ventilée. Un écart avec le TTC de la commande, transmis
+// par la caisse, est journalisé (le ticket ne peut pas être refusé : la vente
+// est faite) et reste visible au ticket, son total différant de ses lignes.
+func (s *receiptService) GenerateFiscalReceipt(ctx context.Context, order *models.Order, payments []models.SnapshotPayment) error {
 	// 1. Verrou de la chaîne, dernier ticket de l'établissement et vente en
 	// vigueur de la commande (une requête).
 	head, err := s.repo.GetReceiptChainHead(ctx, *order.MerchantID, order.OrderID)
@@ -45,15 +55,20 @@ func (s *receiptService) GenerateFiscalReceipt(ctx context.Context, order *model
 		return fmt.Errorf("failed to get last receipt data: %w", err)
 	}
 
-	// 2. Contenu du ticket, dont la ventilation de TVA par taux, nette des
-	// remises de caisse (C9, lot B conformité caisse)
+	// 2. Contenu du ticket : lignes complètes et ventilation de TVA par taux,
+	// nette des remises de caisse (C9, lot B ; ticket complet, lot D)
+	saleLines, discount, err := s.repo.GetOrderSaleLines(ctx, order.OrderID)
+	if err != nil {
+		return fmt.Errorf("failed to compute receipt lines: %w", err)
+	}
+	items, details := fiscal.BuildReceiptItems(saleLines, discount)
+	if gap := fiscal.SaleLinesTTCMismatch(order.TTC, details); gap != "" {
+		logger.FromContext(ctx).Warn("ticket : TTC de la commande différent de ses lignes de vente",
+			zap.String("order_id", order.OrderID), zap.String("ecart", gap))
+	}
 	itemsJSON, _ := json.Marshal(items)
 	paymentsJSON, _ := json.Marshal(payments)
-	taxLines, discount, err := s.repo.GetOrderTaxLines(ctx, order.OrderID)
-	if err != nil {
-		return fmt.Errorf("failed to compute receipt tax details: %w", err)
-	}
-	taxDetailsJSON, err := json.Marshal(fiscal.BuildTaxDetails(taxLines, discount))
+	taxDetailsJSON, err := json.Marshal(details)
 	if err != nil {
 		return fmt.Errorf("failed to encode receipt tax details: %w", err)
 	}
@@ -250,11 +265,11 @@ func (s *receiptService) buildRefundReceipt(ctx context.Context, originalReceipt
 	// (sans ventilation), des taux de la commande. Une ligne d'avoir par taux.
 	origTax, ok := fiscal.ParseTaxDetails(originalReceipt.TaxDetails)
 	if !ok {
-		taxLines, discount, err := s.repo.GetOrderTaxLines(ctx, originalReceipt.OrderID)
+		saleLines, discount, err := s.repo.GetOrderSaleLines(ctx, originalReceipt.OrderID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compute refund tax details: %w", err)
 		}
-		origTax = fiscal.BuildTaxDetails(taxLines, discount)
+		origTax = fiscal.BuildTaxDetails(fiscal.SaleTaxLines(saleLines), discount)
 	}
 	refundTax := fiscal.ProrateTaxDetails(origTax, int64(refundAmountNegative))
 	totalHT := refundAmountNegative

@@ -108,7 +108,7 @@ func TestReceiptTaxDetails_Postgres(t *testing.T) {
 
 	// Ticket de vente.
 	inTx(func(txCtx context.Context) error {
-		return svc.GenerateFiscalReceipt(txCtx, &models.Order{OrderID: orderID, MerchantID: &merchantID, TTC: 2800, HT: &ht}, nil, nil)
+		return svc.GenerateFiscalReceipt(txCtx, &models.Order{OrderID: orderID, MerchantID: &merchantID, TTC: 2800, HT: &ht}, nil)
 	})
 	sale, err := svc.GetSaleReceiptByOrderID(ctx, orderID)
 	if err != nil {

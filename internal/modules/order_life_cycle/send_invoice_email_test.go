@@ -45,7 +45,7 @@ type fakeReceiptService struct {
 	saleReceipt *models.Receipt
 }
 
-func (f *fakeReceiptService) GenerateFiscalReceipt(ctx context.Context, order *models.Order, items []models.SnapshotItem, payments []models.SnapshotPayment) error {
+func (f *fakeReceiptService) GenerateFiscalReceipt(ctx context.Context, order *models.Order, payments []models.SnapshotPayment) error {
 	return nil
 }
 

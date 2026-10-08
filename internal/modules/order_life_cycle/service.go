@@ -272,11 +272,10 @@ func (s *OrdersLifeCycleService) HandlerFiscalReceiptGeneration(ctx context.Cont
 	fullOrder := fullOrders.Orders[0] // On suppose que la commande existe et qu'on a un seul résultat
 
 	// 3) --- Construction des Snapshots ---
-	itemsSnap := receiptUtils.BuildItemsSnapshot(fullOrder.Products, *fullOrder.OrderType)
 	paymentsSnap := receiptUtils.BuildPaymentsSnapshot(fullOrder.Payments)
 
 	// 4) --- Génération du Reçu Fiscal ---
-	if err := s.receiptService.GenerateFiscalReceipt(ctx, &fullOrder, itemsSnap, paymentsSnap); err != nil {
+	if err := s.receiptService.GenerateFiscalReceipt(ctx, &fullOrder, paymentsSnap); err != nil {
 		return fmt.Errorf("failed to generate fiscal receipt: %w", err)
 	}
 

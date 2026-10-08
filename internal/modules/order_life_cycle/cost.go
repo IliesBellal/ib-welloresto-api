@@ -174,6 +174,9 @@ type recipeCostEntry struct {
 type optionCostEntry struct {
 	costCents float64
 	ok        bool
+	// catalogPrice : configurable_attribute_options.extra_price au moment de
+	// l'écriture (surcoût de l'option au catalogue), lu par la même requête.
+	catalogPrice sql.NullInt64
 }
 
 // lineCostResult mirrors what resolveOrderItemCost returns, but as plain
@@ -415,7 +418,7 @@ func (r *OrdersLifeCycleRepository) resolveOptionCostsBatch(ctx context.Context,
 	rows, err := db.QueryContext(ctx, `
 		SELECT cao.id, cao.component_id, cao.quantity, cao.unit_of_measure,
 		       c.purchase_price, c.purchase_price_quantity, c.unit_of_measure,
-		       conv.ratio
+		       conv.ratio, cao.extra_price
 		FROM configurable_attribute_options cao
 		LEFT JOIN components c ON c.component_id = cao.component_id AND c.merchant_id = ?
 		LEFT JOIN unit_of_measure_convert conv ON conv.id_from = cao.unit_of_measure AND conv.id_to = c.unit_of_measure
@@ -439,19 +442,20 @@ func (r *OrdersLifeCycleRepository) resolveOptionCostsBatch(ctx context.Context,
 		var purchasePriceQty sql.NullFloat64
 		var componentUOM sql.NullInt64
 		var ratio sql.NullFloat64
+		var catalogPrice sql.NullInt64
 
 		if err := rows.Scan(&optionID, &componentID, &optQty, &optUOM,
-			&purchasePrice, &purchasePriceQty, &componentUOM, &ratio); err != nil {
+			&purchasePrice, &purchasePriceQty, &componentUOM, &ratio, &catalogPrice); err != nil {
 			log.Warn("resolveOptionCostsBatch: scan failed", zap.Error(err))
 			continue
 		}
 
 		if !componentID.Valid {
-			results[optionID] = optionCostEntry{ok: true} // no ingredient linked: a real 0.
+			results[optionID] = optionCostEntry{ok: true, catalogPrice: catalogPrice} // no ingredient linked: a real 0.
 			continue
 		}
 		if !optQty.Valid || !optUOM.Valid || !purchasePrice.Valid || !purchasePriceQty.Valid || !componentUOM.Valid {
-			results[optionID] = optionCostEntry{ok: false}
+			results[optionID] = optionCostEntry{ok: false, catalogPrice: catalogPrice}
 			continue
 		}
 		var ratioPtr *float64
@@ -459,7 +463,7 @@ func (r *OrdersLifeCycleRepository) resolveOptionCostsBatch(ctx context.Context,
 			ratioPtr = &ratio.Float64
 		}
 		cost, ok := costing.UnitCost(optQty.Float64, int(optUOM.Int64), int(componentUOM.Int64), ratioPtr, int(purchasePrice.Int64), purchasePriceQty.Float64)
-		results[optionID] = optionCostEntry{costCents: cost, ok: ok}
+		results[optionID] = optionCostEntry{costCents: cost, ok: ok, catalogPrice: catalogPrice}
 	}
 	if err := rows.Err(); err != nil {
 		log.Warn("resolveOptionCostsBatch: rows iteration failed", zap.Error(err))
@@ -559,6 +563,28 @@ func freezeOptionCost(optionCosts map[string]optionCostEntry, optionID string, q
 	}
 	cost := costing.RoundToCents(entry.costCents * float64(quantity))
 	return &cost, nil
+}
+
+// freezeOptionPrice fige le surcoût unitaire facturé d'une option (lot D
+// conformité caisse : le ticket et sa TVA comptent les options payantes,
+// order_item_configuration.extra_price, migration 173) :
+//   - Uber Eats et Deliveroo : le prix de la plateforme porté par la commande
+//     (le client l'a payé à ce prix), jamais notre catalogue ;
+//   - caisse, borne, ScanNOrder : le prix porté par la commande (la caisse
+//     envoie celui qu'elle a facturé, ScanNOrder celui du catalogue serveur) ;
+//     à défaut (0 ou absent), le catalogue au moment de l'écriture.
+//
+// nil si aucun prix n'est connu.
+func freezeOptionPrice(optionCosts map[string]optionCostEntry, brand, optionID string, payloadPrice int) *int {
+	if payloadPrice != 0 || brand == models.BrandUberEats || brand == models.BrandDeliveroo {
+		price := payloadPrice
+		return &price
+	}
+	if entry, found := optionCosts[optionID]; found && entry.catalogPrice.Valid {
+		price := int(entry.catalogPrice.Int64)
+		return &price
+	}
+	return nil
 }
 
 // freezeExtraCost computes the frozen cost_price_unit/cost_price_reason for

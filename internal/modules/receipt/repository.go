@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/fiscal"
 	"welloresto-api/internal/models"
@@ -14,7 +15,7 @@ type ReceiptRepository interface {
 	InsertReceipt(ctx context.Context, receipt *models.Receipt) error
 	GetReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error)
 	GetSaleReceiptByOrderID(ctx context.Context, orderID string) (*models.Receipt, error)
-	GetOrderTaxLines(ctx context.Context, orderID string) ([]fiscal.TaxLine, int64, error)
+	GetOrderSaleLines(ctx context.Context, orderID string) ([]fiscal.SaleLine, int64, error)
 	GetReceiptChainHead(ctx context.Context, merchantID, orderID string) (*ChainHead, error)
 }
 
@@ -139,53 +140,97 @@ func (r *receiptRepository) InsertReceipt(ctx context.Context, receipt *models.R
 	return err
 }
 
-// GetOrderTaxLines renvoie les parts TTC de la commande par taux et le total
-// de ses remises de caisse actives, pour ventiler la TVA de son ticket (C9) :
-// mêmes règles que l'export comptable (pos/accounting GetOrderVATLines) —
-// chaque ligne (prix + suppléments) × quantité au taux figé sur la ligne
-// (migration 164, à défaut celui de la catégorie du produit), les frais de
-// livraison non nuls à leur propre taux.
-func (r *receiptRepository) GetOrderTaxLines(ctx context.Context, orderID string) ([]fiscal.TaxLine, int64, error) {
+// GetOrderSaleLines renvoie le détail de la vente d'une commande et le total
+// de ses remises de caisse actives, d'où se déduisent les lignes figées de son
+// ticket et sa TVA ventilée (lot B C9, lot D ticket complet). Mêmes règles que
+// l'export comptable (pos/accounting GetOrderVATLines), options payantes en
+// plus :
+//   - chaque article : prix × quantité, au taux figé sur la ligne (migration
+//     164, à défaut celui de la catégorie du produit) ;
+//   - ses options payantes : surcoût figé (migration 173, à défaut celui du
+//     catalogue) × quantité de l'option × quantité de l'article, au taux de
+//     l'article. Pas pour Uber Eats et Deliveroo : on ne sait pas encore si
+//     le prix unitaire de la plateforme inclut ses modificateurs (le compter
+//     deux fois serait pire que l'omettre), voir le brief du lot D ;
+//   - ses suppléments : prix × quantité de l'article, au taux de l'article ;
+//   - les frais de livraison non nuls, à leur propre taux.
+//
+// Une seule requête (chemin de chaque clôture de vente) ; les parts sont
+// triées par article (article, options, suppléments), puis la livraison.
+func (r *receiptRepository) GetOrderSaleLines(ctx context.Context, orderID string) ([]fiscal.SaleLine, int64, error) {
 	db := dbx.GetDB(ctx, r.database)
 
-	// Une seule requête (chemin de chaque clôture de vente) : parts « L » par
-	// taux, puis une ligne « D » portant le total des remises de caisse.
-	rows, err := db.QueryContext(ctx, `
-		SELECT 'L' AS kind, `+models.OrderItemTVARateSQL("oi", "tva")+` AS rate,
-		       ((oi.price + COALESCE((SELECT SUM(ex.price) FROM extra ex WHERE ex.order_item_id = oi.order_item_id), 0)) * oi.quantity) AS ttc
+	itemFrom := `
 		FROM orderitems oi
 		INNER JOIN orders o ON o.order_id = oi.order_id
 		INNER JOIN products p ON p.product_id = oi.product_id
-		INNER JOIN tva_categories tva ON tva.tva_id = `+models.OrderItemTVAIDSQL("oi", "o", "p")+`
+		INNER JOIN tva_categories tva ON tva.tva_id = ` + models.OrderItemTVAIDSQL("oi", "o", "p")
+	itemRate := models.OrderItemTVARateSQL("oi", "tva")
+	rows, err := db.QueryContext(ctx, `
+		SELECT 'A' AS kind, oi.order_item_id AS sort_item, 1 AS sort_kind, 0::bigint AS sort_sub,
+		       COALESCE(p.name, '') AS label, oi.quantity::bigint AS qty, oi.price::bigint AS unit, `+itemRate+` AS rate
+		`+itemFrom+`
 		WHERE oi.order_id = ?
 		UNION ALL
-		SELECT 'L', `+models.DeliveryFeesTVARateSQL("o_fees", "tva_fees")+`, o_fees.delivery_fees
+		SELECT 'O', oi.order_item_id, 2, oic.id::bigint,
+		       COALESCE(cao.title, ''), (oic.quantity * oi.quantity)::bigint,
+		       COALESCE(oic.extra_price, cao.extra_price, 0)::bigint, `+itemRate+`
+		`+itemFrom+`
+		INNER JOIN order_item_configuration oic ON oic.order_item_id = oi.order_item_id
+		LEFT JOIN configurable_attribute_options cao ON cao.id = oic.configuration_attribute_option_id
+		WHERE oi.order_id = ? AND oic.quantity > 0 AND COALESCE(oic.extra_price, cao.extra_price, 0) <> 0
+		  AND COALESCE(o.brand, '') NOT IN ('`+models.BrandUberEats+`', '`+models.BrandDeliveroo+`')
+		UNION ALL
+		SELECT 'E', oi.order_item_id, 3, ex.id::bigint,
+		       COALESCE(ce.name, ''), oi.quantity::bigint, ex.price::bigint, `+itemRate+`
+		`+itemFrom+`
+		INNER JOIN extra ex ON ex.order_item_id = oi.order_item_id
+		LEFT JOIN components ce ON ce.component_id = ex.component_id AND ce.merchant_id = o.merchant_id
+		WHERE oi.order_id = ?
+		UNION ALL
+		SELECT 'F', NULL, 4, 0, 'Frais de livraison', 1, o_fees.delivery_fees::bigint, `+models.DeliveryFeesTVARateSQL("o_fees", "tva_fees")+`
 		FROM orders o_fees
 		INNER JOIN tva_categories tva_fees ON tva_fees.tva_id = -1
 		WHERE o_fees.order_id = ? AND o_fees.delivery_fees <> 0
 		UNION ALL
-		SELECT 'D', 0, COALESCE(SUM(amount), 0) FROM payments
-		WHERE order_id = ? AND enabled = TRUE AND upper(mop) IN `+models.DiscountMOPsSQL, orderID, orderID, orderID)
+		SELECT 'D', NULL, 5, 0, '', 1, COALESCE(SUM(amount), 0)::bigint, 0 FROM payments
+		WHERE order_id = ? AND enabled = TRUE AND upper(mop) IN `+models.DiscountMOPsSQL+`
+		ORDER BY sort_item NULLS LAST, sort_kind, sort_sub`, orderID, orderID, orderID, orderID, orderID)
 	if err != nil {
-		return nil, 0, fmt.Errorf("load order tax lines: %w", err)
+		return nil, 0, fmt.Errorf("load order sale lines: %w", err)
 	}
 	defer rows.Close()
-	var lines []fiscal.TaxLine
+	var lines []fiscal.SaleLine
 	var discount int64
 	for rows.Next() {
-		var kind string
-		var l fiscal.TaxLine
-		if err := rows.Scan(&kind, &l.Rate, &l.TTC); err != nil {
-			return nil, 0, fmt.Errorf("scan order tax line: %w", err)
+		var kind, label string
+		var item sql.NullInt64
+		var sortKind, sortSub, qty, unit int64
+		var rate float64
+		if err := rows.Scan(&kind, &item, &sortKind, &sortSub, &label, &qty, &unit, &rate); err != nil {
+			return nil, 0, fmt.Errorf("scan order sale line: %w", err)
 		}
-		if kind == "D" {
-			discount = l.TTC
+		l := fiscal.SaleLine{Label: label, Quantity: qty, UnitTTC: unit, Rate: rate}
+		if item.Valid {
+			l.Item = strconv.FormatInt(item.Int64, 10)
+		}
+		switch kind {
+		case "A":
+			l.Kind = models.SnapshotKindArticle
+		case "O":
+			l.Kind = models.SnapshotKindOption
+		case "E":
+			l.Kind = models.SnapshotKindSupplement
+		case "F":
+			l.Kind = models.SnapshotKindDelivery
+		case "D":
+			discount = unit
 			continue
 		}
 		lines = append(lines, l)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("load order tax lines: %w", err)
+		return nil, 0, fmt.Errorf("load order sale lines: %w", err)
 	}
 	return lines, discount, nil
 }

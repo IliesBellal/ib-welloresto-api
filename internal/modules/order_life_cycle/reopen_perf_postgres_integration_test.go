@@ -75,14 +75,13 @@ func TestReopenPerf_Postgres(t *testing.T) {
 		}
 		return strconv.FormatInt(id, 10)
 	}
-	items := []models.SnapshotItem{{Name: "Plat", Quantity: 1, PriceTTC: price}}
 	closeOrder := func(orderID string) error {
 		return dbutils.RunInTx(ctx, db, func(txCtx context.Context) error {
 			if _, err := repo.SetDeliveredLocal(txCtx, orderID); err != nil {
 				return err
 			}
 			ht := int64(price)
-			return receipts.GenerateFiscalReceipt(txCtx, &models.Order{OrderID: orderID, MerchantID: &merchantID, TTC: price, HT: &ht}, items, nil)
+			return receipts.GenerateFiscalReceipt(txCtx, &models.Order{OrderID: orderID, MerchantID: &merchantID, TTC: price, HT: &ht}, nil)
 		})
 	}
 	reopen := func(orderID string) error {

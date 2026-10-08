@@ -126,6 +126,11 @@ type ConfigInsert struct {
 	// nil whenever it can't be trusted — CostPriceReason then explains why.
 	CostPriceUnit   *int
 	CostPriceReason *string
+
+	// ExtraPrice est le surcoût unitaire de l'option tel que facturé, figé à
+	// l'écriture (order_item_configuration.extra_price, migration 173, lot D
+	// conformité caisse) — voir order_life_cycle.freezeOptionPrice.
+	ExtraPrice *int
 }
 
 type OrderComment struct {

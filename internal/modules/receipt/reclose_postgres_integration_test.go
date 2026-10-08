@@ -90,14 +90,11 @@ func TestReceiptReclose_Postgres(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	line := func(name string, qty int, price, rate int64) models.SnapshotItem {
-		return models.SnapshotItem{Name: name, Quantity: qty, PriceTTC: price, TaxRate: rate * 100, TaxAmount: price * rate / (100 + rate)}
-	}
-	close := func(ttc int64, items []models.SnapshotItem, payments []models.SnapshotPayment) {
+	close := func(ttc int64, payments []models.SnapshotPayment) {
 		t.Helper()
 		ht := ttc
 		inTx(func(txCtx context.Context) error {
-			return svc.GenerateFiscalReceipt(txCtx, &models.Order{OrderID: orderID, MerchantID: &merchantID, TTC: ttc, HT: &ht}, items, payments)
+			return svc.GenerateFiscalReceipt(txCtx, &models.Order{OrderID: orderID, MerchantID: &merchantID, TTC: ttc, HT: &ht}, payments)
 		})
 	}
 	type row struct {
@@ -130,19 +127,17 @@ func TestReceiptReclose_Postgres(t *testing.T) {
 		return out
 	}
 
-	a, b := line("Plat", 2, 600, 10), line("Dessert", 1, 500, 20)
 	cash := []models.SnapshotPayment{{Amount: 1700, MOP: "ES"}}
 	card := []models.SnapshotPayment{{Amount: 1700, MOP: "CB"}}
 
 	// 1. Première clôture : un ticket.
-	close(1700, []models.SnapshotItem{a, b}, cash)
+	close(1700, cash)
 	if got := receipts(); len(got) != 1 || got[0].ttc != 1700 {
 		t.Fatalf("first close: %+v", got)
 	}
 
-	// 2. Reclôture identique, lignes dans un autre ordre et paiement changé
-	// (R3) : aucun ticket.
-	close(1700, []models.SnapshotItem{b, a}, card)
+	// 2. Reclôture identique, paiement changé (R3) : aucun ticket.
+	close(1700, card)
 	if got := receipts(); len(got) != 1 {
 		t.Fatalf("identical reclose issued %d receipts, want 1", len(got))
 	}
@@ -152,7 +147,7 @@ func TestReceiptReclose_Postgres(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `UPDATE orderitems SET quantity = 3 WHERE order_item_id = $1`, lineA); err != nil {
 		t.Fatal(err)
 	}
-	close(2300, []models.SnapshotItem{line("Plat", 3, 600, 10), b}, card)
+	close(2300, card)
 	got := receipts()
 	if len(got) != 3 || got[1].ttc != -1700 || got[2].ttc != 2300 {
 		t.Fatalf("changed reclose: %+v", got)
@@ -174,7 +169,7 @@ func TestReceiptReclose_Postgres(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `UPDATE orderitems SET quantity = 1 WHERE order_item_id = $1`, lineA); err != nil {
 		t.Fatal(err)
 	}
-	close(1100, []models.SnapshotItem{line("Plat", 1, 600, 10), b}, card)
+	close(1100, card)
 	got = receipts()
 	if len(got) != 6 || got[3].ttc != -300 || got[4].ttc != -2000 || got[5].ttc != 1100 {
 		t.Fatalf("reclose after partial refund: %+v", got)
@@ -191,7 +186,7 @@ func TestReceiptReclose_Postgres(t *testing.T) {
 
 	// 6. Vente entièrement annulée puis reclose à l'identique : elle ne compte
 	// plus, nouveau ticket.
-	close(1100, []models.SnapshotItem{line("Plat", 1, 600, 10), b}, card)
+	close(1100, card)
 	if got = receipts(); len(got) != 8 || got[7].ttc != 1100 {
 		t.Fatalf("reclose after full cancel: %+v", got)
 	}

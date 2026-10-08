@@ -98,7 +98,7 @@ func TestFiscalChainPerf_Postgres(t *testing.T) {
 			ht := price
 			if err := receipts.GenerateFiscalReceipt(txCtx, &models.Order{
 				OrderID: orderID, MerchantID: &merchantID, TTC: price, HT: &ht,
-			}, nil, nil); err != nil {
+			}, nil); err != nil {
 				return err
 			}
 			return auditRepo.InsertLogWithChain(txCtx, &models.AuditLog{
