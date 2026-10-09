@@ -20,19 +20,19 @@ func NewNotificationRepository(db *sql.DB) *NotificationRepository {
 	return &NotificationRepository{database: db}
 }
 
+// GetDeviceTokens retourne tous les tokens FCM enregistrés pour le merchant,
+// sans filtre de fraîcheur : last_used n'est mis à jour qu'au démarrage de
+// l'app, une caisse qui reste allumée plusieurs jours en serait sinon exclue
+// et ne recevrait plus de notification. Les tokens morts sont supprimés
+// quand FCM répond 404/410 (voir handleFCMError).
 func (r *NotificationRepository) GetDeviceTokens(ctx context.Context, merchantID string) ([]string, error) {
 	db := dbx.GetDB(ctx, r.database)
 
-	cutoff := "DATE_SUB(UTC_TIMESTAMP(), INTERVAL 2 DAY)"
-	if dbx.ActiveDialect() == dbx.Postgres {
-		cutoff = "now() - interval '2 days'"
-	}
-	rows, err := db.QueryContext(ctx, fmt.Sprintf(`
+	rows, err := db.QueryContext(ctx, `
         SELECT fcm_token
         FROM users_devices ud
         WHERE ud.merchant_id = ?
-		AND ud.last_used >= %s
-    `, cutoff), merchantID)
+    `, merchantID)
 	if err != nil {
 		return nil, err
 	}

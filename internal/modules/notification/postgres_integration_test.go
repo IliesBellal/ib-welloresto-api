@@ -42,13 +42,13 @@ func TestNotificationRepository_Postgres(t *testing.T) {
 
 	repo := NewNotificationRepository(db)
 
-	// GetDeviceTokens: last_used >= now() - interval '2 days' excludes the stale device.
+	// GetDeviceTokens has no freshness filter: the stale device is returned too.
 	tokens, err := repo.GetDeviceTokens(ctx, merchantID)
 	if err != nil {
 		t.Fatalf("GetDeviceTokens failed against postgres: %v", err)
 	}
-	if len(tokens) != 1 || tokens[0] != "fcm-recent" {
-		t.Fatalf("expected only the recent token, got %v", tokens)
+	if len(tokens) != 2 {
+		t.Fatalf("expected both the recent and the stale token, got %v", tokens)
 	}
 
 	if err := repo.DeleteDeviceToken(ctx, "fcm-recent"); err != nil {
@@ -58,8 +58,11 @@ func TestNotificationRepository_Postgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetDeviceTokens (after delete) failed: %v", err)
 	}
-	if len(tokens) != 0 {
-		t.Fatalf("expected no tokens after delete, got %v", tokens)
+	if len(tokens) != 1 || tokens[0] != "fcm-stale" {
+		t.Fatalf("expected only the stale token after deleting the recent one, got %v", tokens)
+	}
+	if err := repo.DeleteDeviceToken(ctx, "fcm-stale"); err != nil {
+		t.Fatalf("DeleteDeviceToken (stale) failed against postgres: %v", err)
 	}
 
 	// No valid FCM token yet.
