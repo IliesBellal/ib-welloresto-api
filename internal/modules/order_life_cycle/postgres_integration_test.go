@@ -450,3 +450,167 @@ func TestOrderLifeCycleRepository_Postgres(t *testing.T) {
 		t.Fatalf("stripe_payments.payment_id = %d, want %d (the pre-created row must be completed in place, not duplicated)", completedPaymentID, kioskPayID)
 	}
 }
+
+// TestRewardConsumption_Postgres couvre le parcours complet d'une récompense
+// de fidélité : appliquée au prix d'une commande (req.Order.UsedRewards,
+// calculé en amont par OrdersService.applyRewards) -> consommée et
+// rattachée à cette commande par CreateOrder (consumeUsedRewards) -> ne peut
+// plus être réutilisée tant qu'elle est attachée -> restituée
+// automatiquement si la commande est annulée (DeleteOrderLocal +
+// CustomersRepository.ReactivateRewards, déjà existant mais jusqu'ici jamais
+// déclenché en pratique puisque used_on_order_id n'était jamais écrit) ->
+// de nouveau utilisable. CreateOrder étant le seul point d'écriture réel
+// d'une commande (POS via PrepareCreateOrder, ScanNOrder, Kiosk, webhooks
+// Uber Eats/Deliveroo), ce parcours vaut pour tous les canaux qui ont une
+// notion de client.
+func TestRewardConsumption_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+
+	const siret = "siret-rwd-itest"
+	var merchantID string
+	cleanupFor := func(mid string) {
+		_, _ = db.ExecContext(ctx, `DELETE FROM customer_rewards WHERE loyalty_program_id = 'itest-rwd-lp'`)
+		_, _ = db.ExecContext(ctx, `DELETE FROM customer_loyalty_programs WHERE id = 'itest-rwd-lp'`)
+		if mid == "" {
+			return
+		}
+		for _, q := range []string{
+			`DELETE FROM payments WHERE merchant_id = $1`,
+			`DELETE FROM orderitems WHERE merchant_id = $1`,
+			`DELETE FROM order_location WHERE order_id IN (SELECT order_id FROM orders WHERE merchant_id = $1)`,
+			`DELETE FROM orders WHERE merchant_id = $1`,
+			`DELETE FROM customer WHERE merchant_id = $1`,
+			`DELETE FROM products WHERE merchant_Id = $1`,
+			`DELETE FROM cash_registers WHERE merchant_id = $1`,
+			`DELETE FROM merchant_parameters WHERE merchant_id = $1`,
+			`DELETE FROM merchant WHERE id = $1`,
+		} {
+			_, _ = db.ExecContext(ctx, q, mid)
+		}
+	}
+	var oldID int64
+	if err := db.QueryRowContext(ctx, `SELECT id FROM merchant WHERE siret = $1 LIMIT 1`, siret).Scan(&oldID); err == nil {
+		cleanupFor(strconv.FormatInt(oldID, 10))
+	} else {
+		cleanupFor("")
+	}
+	t.Cleanup(func() { cleanupFor(merchantID) })
+
+	var merchantIntID int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO merchant (fullname, address, street_number, street, zip_code, city, siret, web_site, merchanttel, token, timezone)
+		VALUES ('ITest RWD', 'a', '1', 's', '75001', 'Paris', $1, 'https://x', '06', 'mtok-rwd', 'UTC')
+		RETURNING id`, siret).Scan(&merchantIntID); err != nil {
+		t.Fatalf("seed merchant: %v", err)
+	}
+	merchantID = strconv.FormatInt(merchantIntID, 10)
+	if _, err := db.ExecContext(ctx, `INSERT INTO merchant_parameters (merchant_id, last_menu_update, cash_register_required_for_ordering) VALUES ($1, now(), true)`, merchantID); err != nil {
+		t.Fatalf("seed params: %v", err)
+	}
+
+	var prodID int64
+	if err := db.QueryRowContext(ctx, `INSERT INTO products (merchant_Id, name, price, category, status) VALUES ($1, 'itest-rwd-prod', 1000, 'c', '1') RETURNING product_id`, merchantID).Scan(&prodID); err != nil {
+		t.Fatalf("seed product: %v", err)
+	}
+	prodStr := strconv.FormatInt(prodID, 10)
+
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO cash_registers (merchant_id, cash_desk_id, device_id, user_id, cash_fund, start_date, closure_comment)
+		VALUES ($1, 1, 'itest-rwd-device', 'itest-rwd-user', 10000, now(), '')`, merchantID); err != nil {
+		t.Fatalf("seed cash register: %v", err)
+	}
+
+	var customerIntID int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO customer (merchant_id, customer_name, customer_tel, customer_brand)
+		VALUES ($1, 'reward-consumer', '+33000000001', 'WELLO_RESTO') RETURNING customer_id`, merchantID).Scan(&customerIntID); err != nil {
+		t.Fatalf("seed customer: %v", err)
+	}
+	customerID := strconv.FormatInt(customerIntID, 10)
+
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO customer_loyalty_programs
+			(id, merchant_id, name, description, type, target_value, target_order_type, reward_type, reward_value, rewards_order_type, enabled, available)
+		VALUES ('itest-rwd-lp', $1, 'rwd test', 'rwd test', 'orders_count', 5, 'IN TAKE_AWAY DELIVERY', 'fixed_discount', 300, 'IN TAKE_AWAY DELIVERY', true, true)
+	`, merchantID); err != nil {
+		t.Fatalf("seed program: %v", err)
+	}
+
+	var rewardID int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO customer_rewards (customer_id, loyalty_program_id, reward_type, reward_order_type, reward_value, creation_date)
+		VALUES ($1, 'itest-rwd-lp', 'fixed_discount', 'IN TAKE_AWAY DELIVERY', 300, now())
+		RETURNING reward_id
+	`, customerID).Scan(&rewardID); err != nil {
+		t.Fatalf("seed reward: %v", err)
+	}
+	rewardIDStr := strconv.FormatInt(rewardID, 10)
+
+	repo := NewOrdersLifeCycleRepository(db, customers.NewCustomerRepository(db))
+	custRepo := customers.NewCustomerRepository(db)
+
+	device := "itest-rwd-device"
+	createdBy := "itest-rwd-user"
+	newReq := func() *models.RequestObject {
+		return &models.RequestObject{
+			MerchantID: merchantID, DeviceID: &device,
+			Order: models.OrderRequest{
+				TTC: 700, TVA: 70, HT: 630, OrderType: "IN", CreatedBy: &createdBy,
+				Customer:    &models.CustomerRequest{CustomerID: &customerID},
+				Products:    []models.OrderProductPayload{{ProductID: prodStr, Quantity: 1, Price: 1000}},
+				UsedRewards: []*models.UsedReward{{RewardID: rewardIDStr}},
+			},
+		}
+	}
+
+	// --- commande #1 : consomme la récompense ---
+	res1, err := repo.CreateOrder(ctx, newReq())
+	if err != nil || res1.Status != "success" {
+		t.Fatalf("CreateOrder #1 = (%+v, %v)", res1, err)
+	}
+
+	var isUsed bool
+	var usageDateSet bool
+	var usedOnOrderID int64
+	if err := db.QueryRowContext(ctx, `
+		SELECT is_used, usage_date IS NOT NULL, COALESCE(used_on_order_id, 0) FROM customer_rewards WHERE reward_id = $1
+	`, rewardID).Scan(&isUsed, &usageDateSet, &usedOnOrderID); err != nil {
+		t.Fatalf("read back reward after order #1: %v", err)
+	}
+	wantOrderID, _ := strconv.ParseInt(res1.OrderID, 10, 64)
+	if !isUsed || !usageDateSet || usedOnOrderID != wantOrderID {
+		t.Fatalf("expected reward used and attached to order #1, got is_used=%v usage_date_set=%v used_on_order_id=%d (want %d)",
+			isUsed, usageDateSet, usedOnOrderID, wantOrderID)
+	}
+
+	// --- commande #2 : tente de réutiliser la même récompense -> doit échouer ---
+	if res2, err := repo.CreateOrder(ctx, newReq()); err == nil {
+		t.Fatalf("expected CreateOrder #2 (double-spend) to fail, got %+v", res2)
+	}
+
+	// --- annulation de la commande #1 -> la récompense doit être restituée ---
+	if err := repo.DeleteOrderLocal(ctx, res1.OrderID, "", "test cancel", createdBy); err != nil {
+		t.Fatalf("DeleteOrderLocal: %v", err)
+	}
+	if err := custRepo.ReactivateRewards(ctx, res1.OrderID); err != nil {
+		t.Fatalf("ReactivateRewards: %v", err)
+	}
+
+	var isUsedAfterCancel bool
+	var usedOnOrderIDAfterCancel int64
+	if err := db.QueryRowContext(ctx, `
+		SELECT is_used, COALESCE(used_on_order_id, 0) FROM customer_rewards WHERE reward_id = $1
+	`, rewardID).Scan(&isUsedAfterCancel, &usedOnOrderIDAfterCancel); err != nil {
+		t.Fatalf("read back reward after cancel: %v", err)
+	}
+	if isUsedAfterCancel || usedOnOrderIDAfterCancel != 0 {
+		t.Fatalf("expected reward restored after cancellation, got is_used=%v used_on_order_id=%d", isUsedAfterCancel, usedOnOrderIDAfterCancel)
+	}
+
+	// --- commande #3 : la récompense restituée doit être réutilisable ---
+	res3, err := repo.CreateOrder(ctx, newReq())
+	if err != nil || res3.Status != "success" {
+		t.Fatalf("CreateOrder #3 (after restoration) = (%+v, %v)", res3, err)
+	}
+}

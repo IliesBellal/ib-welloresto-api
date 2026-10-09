@@ -672,3 +672,87 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 		t.Fatalf("ExistsByBrandOrderID (absent) = (%v, %v), want (false, nil)", exists, err)
 	}
 }
+
+// TestGetRewards_OwnershipEnforced_Postgres couvre le correctif de sécurité
+// sur GetRewards : req.Order.Customer.AvailableRewards vient du payload
+// client (JSON "available_rewards"), jamais digne de confiance tel quel.
+// Avant ce correctif, le seul filtre était is_used = FALSE — un reward_id
+// d'un autre client (voire d'un autre marchand) suffisait à obtenir sa
+// remise. Ce test est volontairement séparé de TestOrdersRepository_Postgres
+// (qui échoue sur un défaut préexistant et sans rapport côté
+// discounts_schedules) pour rester vérifiable indépendamment.
+func TestGetRewards_OwnershipEnforced_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+
+	const merchantID = "999932"
+	const programID = "itest-ownership-lp"
+
+	cleanup := func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM customer_rewards WHERE loyalty_program_id = $1`, programID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM customer_loyalty_programs WHERE id = $1`, programID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM customer WHERE merchant_id = $1`, merchantID)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO customer_loyalty_programs
+			(id, merchant_id, name, description, type, target_value, reward_type, reward_value)
+		VALUES ($1, $2, 'ownership test', 'ownership test', 'orders_count', 5, 'fixed_discount', 300)
+	`, programID, merchantID); err != nil {
+		t.Fatalf("seed program: %v", err)
+	}
+
+	seedCustomerWithReward := func(tel string) (customerID, rewardID string) {
+		var cid int64
+		if err := db.QueryRowContext(ctx, `
+			INSERT INTO customer (merchant_id, customer_name, customer_tel, customer_brand)
+			VALUES ($1, 'ownership-test', $2, 'WELLO_RESTO') RETURNING customer_id`, merchantID, tel).Scan(&cid); err != nil {
+			t.Fatalf("seed customer: %v", err)
+		}
+		var rid int64
+		if err := db.QueryRowContext(ctx, `
+			INSERT INTO customer_rewards (customer_id, loyalty_program_id, reward_type, reward_value, creation_date)
+			VALUES ($1, $2, 'fixed_discount', 300, now()) RETURNING reward_id
+		`, strconv.FormatInt(cid, 10), programID).Scan(&rid); err != nil {
+			t.Fatalf("seed reward: %v", err)
+		}
+		return strconv.FormatInt(cid, 10), strconv.FormatInt(rid, 10)
+	}
+
+	customerA, rewardA := seedCustomerWithReward("+33000000002")
+	customerB, rewardB := seedCustomerWithReward("+33000000003")
+
+	repo := NewOrdersRepository(db, nil)
+
+	buildReq := func(customerID, rewardID string) *models.PricingRequest {
+		return &models.PricingRequest{
+			Order: &models.OrderRequest{
+				Customer: &models.CustomerRequest{
+					CustomerID:       &customerID,
+					AvailableRewards: []models.DBReward{{RewardID: rewardID}},
+				},
+			},
+		}
+	}
+
+	// Client A demandant la récompense du client B : doit être bloqué.
+	stolen, err := repo.GetRewards(ctx, buildReq(customerA, rewardB))
+	if err != nil {
+		t.Fatalf("GetRewards (cross-customer) failed against postgres: %v", err)
+	}
+	if len(stolen) != 0 {
+		t.Fatalf("expected reward owned by another customer to be blocked, got %+v", stolen)
+	}
+
+	// Chaque client demandant sa propre récompense : doit passer.
+	ownA, err := repo.GetRewards(ctx, buildReq(customerA, rewardA))
+	if err != nil || len(ownA) != 1 {
+		t.Fatalf("GetRewards (own reward, customer A) = (%+v, %v)", ownA, err)
+	}
+	ownB, err := repo.GetRewards(ctx, buildReq(customerB, rewardB))
+	if err != nil || len(ownB) != 1 {
+		t.Fatalf("GetRewards (own reward, customer B) = (%+v, %v)", ownB, err)
+	}
+}

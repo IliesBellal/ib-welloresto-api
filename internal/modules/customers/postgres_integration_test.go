@@ -5,6 +5,7 @@ package customers
 import (
 	"context"
 	"strconv"
+	"sync"
 	"testing"
 
 	"welloresto-api/internal/database/dbx/pgtest"
@@ -260,5 +261,104 @@ func TestCustomersRepository_Postgres(t *testing.T) {
 	programs, err = repo.GetLoyaltyPrograms(ctx, merchantID)
 	if err != nil || len(programs) != 0 {
 		t.Fatalf("expected no programs after soft delete, got (%d, %v)", len(programs), err)
+	}
+}
+
+// TestUpdateLoyaltyFromOrder_ConcurrentCalls_Postgres couvre la correction de
+// la race condition (migration 177_loyalty_progress_unique_constraints) :
+// avant elle, UpdateLoyaltyFromOrder vérifiait l'idempotence par un simple
+// SELECT avant INSERT, sans verrou — N exécutions concurrentes pour la même
+// commande pouvaient toutes passer ce test et créditer la progression
+// plusieurs fois. Les deux index uniques posés par la migration, combinés à
+// INSERT ... ON CONFLICT côté code, rendent ça impossible : ce test lance 20
+// appels réellement concurrents (goroutines + connexions séparées) sur la
+// même commande et vérifie qu'elle n'est créditée qu'une seule fois.
+//
+// Nécessite la migration 177 appliquée — échoue avec "there is no unique or
+// exclusion constraint matching the ON CONFLICT specification" sinon
+// (vérifié manuellement sur staging avant l'écriture de ce test).
+func TestUpdateLoyaltyFromOrder_ConcurrentCalls_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+
+	const merchantID = "999930"
+	const programID = "itest-race-lp"
+
+	cleanup := func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM customer_loyalty_progress_order WHERE loyalty_program_id = $1`, programID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM customer_loyalty_progress WHERE loyalty_program_id = $1`, programID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM customer_rewards WHERE loyalty_program_id = $1`, programID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM customer_loyalty_programs WHERE id = $1`, programID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM orders WHERE merchant_id = $1`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM customer WHERE merchant_id = $1`, merchantID)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	var customerIntID int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO customer (merchant_id, customer_name, customer_tel, customer_brand)
+		VALUES ($1, 'race-test', '+33000000000', 'WELLO_RESTO') RETURNING customer_id`, merchantID).Scan(&customerIntID); err != nil {
+		t.Fatalf("seed customer: %v", err)
+	}
+	customerID := strconv.FormatInt(customerIntID, 10)
+
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO customer_loyalty_programs
+			(id, merchant_id, name, description, type, target_value, target_order_type, reward_type, reward_value, rewards_order_type, enabled, available)
+		VALUES ($1, $2, 'race test', 'race test', 'orders_count', 2, 'IN TAKE_AWAY DELIVERY', 'fixed_discount', 100, 'IN TAKE_AWAY DELIVERY', true, true)
+	`, programID, merchantID); err != nil {
+		t.Fatalf("seed program: %v", err)
+	}
+
+	var orderIntID int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO orders (merchant_id, customer_id, order_num, brand, brand_status, order_type, state, price, TVA, HT, created_by)
+		VALUES ($1, $2, 1, 'WELLO_RESTO', 'ACCEPTED', 'IN', 'CLOSED', 1000, 100, 900, 'itest-race')
+		RETURNING order_id`, merchantID, customerID).Scan(&orderIntID); err != nil {
+		t.Fatalf("seed order: %v", err)
+	}
+	orderID := strconv.FormatInt(orderIntID, 10)
+
+	repo := NewCustomerRepository(db)
+	const concurrency = 20
+	var wg sync.WaitGroup
+	errs := make([]error, concurrency)
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = repo.UpdateLoyaltyFromOrder(ctx, orderID)
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("call %d: UpdateLoyaltyFromOrder failed: %v", i, err)
+		}
+	}
+
+	var ledgerCount int
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM customer_loyalty_progress_order WHERE order_id = $1 AND loyalty_program_id = $2
+	`, orderIntID, programID).Scan(&ledgerCount); err != nil {
+		t.Fatalf("count ledger rows: %v", err)
+	}
+	if ledgerCount != 1 {
+		t.Fatalf("expected exactly 1 ledger row after %d concurrent calls, got %d", concurrency, ledgerCount)
+	}
+
+	var progressRowCount, currentValue int
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*), MAX(current_value) FROM customer_loyalty_progress WHERE customer_id = $1 AND loyalty_program_id = $2
+	`, customerID, programID).Scan(&progressRowCount, &currentValue); err != nil {
+		t.Fatalf("count progress rows: %v", err)
+	}
+	if progressRowCount != 1 {
+		t.Fatalf("expected exactly 1 progress row, got %d", progressRowCount)
+	}
+	if currentValue != 1 {
+		t.Fatalf("expected current_value=1 (credited once, not %d times), got %d", concurrency, currentValue)
 	}
 }

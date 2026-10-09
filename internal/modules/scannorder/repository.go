@@ -5,12 +5,15 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/customers"
 	"welloresto-api/internal/modules/openinghours"
 	settingspkg "welloresto-api/internal/modules/planning/settings"
-	"welloresto-api/internal/database/dbx"
+
+	"go.uber.org/zap"
 )
 
 // snoMerchantJoinCast retourne le fragment merchant.id (integer) comparable a
@@ -823,6 +826,14 @@ func (r *Repository) GetCustomerByPhone(ctx context.Context, customer models.Cus
 		return &customer, nil
 	}
 	if err != nil {
+		// Loggé ici en plus du retour d'erreur : un appelant qui ignore cette
+		// erreur (ex. `customer, _ := GetCustomerByPhone(...)`) ne doit jamais
+		// créer un nouveau client en silence sans trace diagnosticable —
+		// c'est exactement ce qui rend un doublon de client invisible.
+		logger.FromContext(ctx).Error("GetCustomerByPhone: FindCustomerByPhone failed, customer lookup unreliable",
+			zap.String("merchant_id", *customer.MerchantID),
+			zap.Error(err),
+		)
 		return &customer, err
 	}
 	if existing == nil || existing.CustomerID == nil || *existing.CustomerID == "" {

@@ -294,10 +294,15 @@ func (r *CustomersRepository) FindCustomerByPhone(ctx context.Context, phone, me
 	normalizedPhone := helpers.NormalizePhoneNumber(phone, "FR")
 
 	var c models.Customer
+	// ORDER BY customer_id ASC : déterministe tant que des doublons existent
+	// pour (merchant_id, customer_tel) — sans ça, LIMIT 1 seul laisse Postgres
+	// choisir une ligne arbitraire parmi les doublons, potentiellement
+	// différente d'un appel à l'autre.
 	err := db.QueryRowContext(ctx, `
 		SELECT customer_id, customer_first_name, customer_last_name, customer_email, customer_tel
 		FROM customer
 		WHERE customer_tel = ? AND enabled = true AND merchant_id = ?
+		ORDER BY customer_id ASC
 		LIMIT 1
 	`, normalizedPhone, merchantID).Scan(&c.CustomerID, &c.CustomerFirstName, &c.CustomerLastName, &c.CustomerEmail, &c.CustomerTel)
 	if err != nil {
@@ -1641,34 +1646,8 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 			continue
 		}
 
-		// Vérifier si la commande a déjà été comptée
-		var exists int
-		err := db.QueryRowContext(ctx, "SELECT 1 FROM customer_loyalty_progress_order WHERE order_id = ? AND loyalty_program_id = ? LIMIT 1", orderID, p.ID).Scan(&exists)
-		if err == nil {
-			continue // Déjà traitée
-		} else if err != sql.ErrNoRows {
-			return err
-		}
-
-		// Récupérer la progression actuelle
-		var progressID string
-		var currentValue int
-		err = db.QueryRowContext(ctx, "SELECT id, current_value FROM customer_loyalty_progress WHERE customer_id = ? AND loyalty_program_id = ? LIMIT 1", customerID, p.ID).Scan(&progressID, &currentValue)
-
-		if err == sql.ErrNoRows {
-			// Créer la progression
-			newProgressID := helpers.GeneratePrefixedID("cus-progress")
-			_, err := db.ExecContext(ctx, fmt.Sprintf("INSERT INTO customer_loyalty_progress (id, customer_id, loyalty_program_id, current_value, last_update) VALUES (?, ?, ?, 0, %s)", dbx.UTCNow()), newProgressID, customerID, p.ID)
-			if err != nil {
-				return err
-			}
-			progressID = newProgressID
-			currentValue = 0
-		} else if err != nil {
-			return err
-		}
-
-		// 5. Calculer l'incrémentation
+		// 5. Calculer l'incrémentation — fait avant toute écriture : si rien
+		// à ajouter, on ne touche à rien (comportement inchangé).
 		increment := 0
 		switch p.Type {
 		case "orders_count":
@@ -1692,23 +1671,68 @@ func (r *CustomersRepository) UpdateLoyaltyFromOrder(ctx context.Context, orderI
 			continue // Rien à ajouter pour cette commande
 		}
 
-		newValue := currentValue + increment
-
-		// 6. Mettre à jour la progression et loguer
-		_, err = db.ExecContext(ctx, fmt.Sprintf("UPDATE customer_loyalty_progress SET current_value = ?, last_update = %s WHERE id = ?", dbx.UTCNow()), newValue, progressID)
+		// 6. S'assurer que la ligne de progression existe (valeur 0 si
+		// nouvelle), sans l'incrémenter encore — un UPDATE "no-op" sur
+		// conflit renvoie l'id existant en un aller-retour, sans toucher
+		// current_value. S'appuie sur l'index unique
+		// idx_customer_loyalty_progress_customer_program (migration 177) :
+		// deux exécutions concurrentes pour le même client+programme ne
+		// peuvent plus créer deux lignes.
+		newProgressID := helpers.GeneratePrefixedID("cus-progress")
+		var progressID string
+		err := db.QueryRowContext(ctx, fmt.Sprintf(`
+			INSERT INTO customer_loyalty_progress (id, customer_id, loyalty_program_id, current_value, last_update)
+			VALUES (?, ?, ?, 0, %s)
+			ON CONFLICT (customer_id, loyalty_program_id)
+			DO UPDATE SET customer_id = customer_loyalty_progress.customer_id
+			RETURNING id
+		`, dbx.UTCNow()), newProgressID, customerID, p.ID).Scan(&progressID)
 		if err != nil {
 			return err
 		}
 
+		// 7. Revendiquer la ligne du registre d'idempotence pour CETTE
+		// commande+programme. S'appuie sur l'index unique
+		// idx_customer_loyalty_progress_order_order_program (migration 177) :
+		// si une autre exécution a déjà inséré cette ligne entre-temps (ex.
+		// réouverture + re-clôture, webhook rejoué), l'INSERT ne fait rien et
+		// on s'arrête ici — la progression n'est jamais incrémentée deux
+		// fois pour la même commande, par construction (pas seulement par
+		// vérification préalable).
+		//
 		// id est une colonne auto-generee (identity en PG ; en MySQL la
 		// coercition string->0 declenchait deja l'auto_increment) : on la
 		// laisse se generer.
-		_, err = db.ExecContext(ctx, "INSERT INTO customer_loyalty_progress_order (loyalty_program_id, progress_id, order_id, increment_value) VALUES (?, ?, ?, ?)", p.ID, progressID, orderID, increment)
+		res, err := db.ExecContext(ctx, `
+			INSERT INTO customer_loyalty_progress_order (loyalty_program_id, progress_id, order_id, increment_value)
+			VALUES (?, ?, ?, ?)
+			ON CONFLICT (order_id, loyalty_program_id) DO NOTHING
+		`, p.ID, progressID, orderID, increment)
 		if err != nil {
 			return err
 		}
+		claimed, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if claimed == 0 {
+			continue // Déjà traitée par une autre exécution
+		}
 
-		// 7. Vérifier les paliers (Rewards)
+		// 8. Incrémenter la progression de façon atomique (UPDATE ... RETURNING
+		// plutôt que SELECT puis UPDATE) : la valeur avant incrément se déduit
+		// de la valeur après (newValue - increment), sans second aller-retour.
+		var newValue int
+		if err := db.QueryRowContext(ctx, fmt.Sprintf(`
+			UPDATE customer_loyalty_progress SET current_value = current_value + ?, last_update = %s
+			WHERE id = ?
+			RETURNING current_value
+		`, dbx.UTCNow()), increment, progressID).Scan(&newValue); err != nil {
+			return err
+		}
+		currentValue := newValue - increment
+
+		// 9. Vérifier les paliers (Rewards)
 		if p.TargetValue > 0 {
 			rewardsAlready := currentValue / p.TargetValue // Division entière en Go
 			rewardsExpected := newValue / p.TargetValue

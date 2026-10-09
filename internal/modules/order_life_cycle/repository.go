@@ -1431,6 +1431,19 @@ func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models
 		log.Error("insertPayments failure" + err.Error())
 		return nil, err
 	}
+
+	// Consomme les récompenses de fidélité réellement appliquées au prix de
+	// cette commande (req.Order.UsedRewards, calculé par
+	// OrdersService.applyRewards pendant ComputePricing — même commande,
+	// peu importe le canal : CreateOrder est le seul point d'écriture de
+	// commande, POS/Kiosk/ScanNOrder/webhooks y passent tous). Sans ça,
+	// used_on_order_id ne vaut jamais rien et la restitution automatique en
+	// cas d'annulation (CustomersRepository.ReactivateRewards,
+	// DenyOrderLocal) n'a rien à retrouver.
+	if err := r.consumeUsedRewards(ctx, req.Order.UsedRewards, orderID); err != nil {
+		log.Error("consumeUsedRewards failure " + err.Error())
+		return nil, err
+	}
 	/*
 		if err := tx.Commit(); err != nil {
 			return nil, err
@@ -1454,6 +1467,39 @@ func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models
 		OrderNum: &orderNum,
 		Action:   action,
 	}, nil
+}
+
+// consumeUsedRewards marque comme utilisées, et rattache à cette commande,
+// les récompenses de fidélité réellement appliquées à son prix. Chaque
+// UPDATE est conditionné à is_used = false : si la récompense a déjà été
+// consommée (course gagnée par une autre commande concurrente malgré le
+// filtre is_used=FALSE déjà appliqué par OrdersRepository.GetRewards au
+// moment du calcul de prix), la commande échoue plutôt que d'accorder une
+// remise sans contrepartie — même logique de "mieux vaut un échec visible"
+// que la contrainte d'unicité de la progression fidélité.
+func (r *OrdersLifeCycleRepository) consumeUsedRewards(ctx context.Context, usedRewards []*models.UsedReward, orderID string) error {
+	if len(usedRewards) == 0 {
+		return nil
+	}
+	db := dbx.GetDB(ctx, r.database)
+	for _, rw := range usedRewards {
+		res, err := db.ExecContext(ctx, fmt.Sprintf(`
+			UPDATE customer_rewards
+			SET is_used = true, usage_date = %s, used_on_order_id = ?
+			WHERE reward_id = ? AND is_used = false AND usage_date IS NULL
+		`, dbx.UTCNow()), orderID, rw.RewardID)
+		if err != nil {
+			return fmt.Errorf("consume reward %s: %w", rw.RewardID, err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return fmt.Errorf("reward %s already used or not found", rw.RewardID)
+		}
+	}
+	return nil
 }
 
 // InsertOrderLocations insère toutes les locations liées à une commande en une seule requête (Bulk Insert).

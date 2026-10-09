@@ -1028,6 +1028,17 @@ func (r *OrdersRepository) GetRewards(ctx context.Context, req *models.PricingRe
 		return []*models.DBReward{}, nil
 	}
 
+	// req.Order.Customer.AvailableRewards vient du payload client
+	// (CustomerRequest.AvailableRewards, JSON "available_rewards") — jamais
+	// digne de confiance tel quel. Sans ce garde, un reward_id d'un autre
+	// client (voire d'un autre marchand) suffisait à obtenir sa remise, le
+	// seul filtre existant étant is_used = FALSE. customer_id appartient à
+	// un seul client, donc un seul marchand : ce filtre suffit aussi côté
+	// marchand, pas besoin d'un filtre merchant_id séparé.
+	if req.Order.Customer.CustomerID == nil || *req.Order.Customer.CustomerID == "" {
+		return []*models.DBReward{}, nil
+	}
+
 	rewardIDs := make([]string, 0)
 	for _, rw := range req.Order.Customer.AvailableRewards {
 		rewardIDs = append(rewardIDs, rw.RewardID)
@@ -1036,7 +1047,7 @@ func (r *OrdersRepository) GetRewards(ctx context.Context, req *models.PricingRe
 	placeholders := strings.TrimRight(strings.Repeat("?,", len(rewardIDs)), ",")
 
 	query := fmt.Sprintf(`
-		SELECT 
+		SELECT
 		    cr.reward_id,
 		    cr.reward_type,
 		    cr.reward_order_type,
@@ -1050,14 +1061,16 @@ func (r *OrdersRepository) GetRewards(ctx context.Context, req *models.PricingRe
 		FROM customer_rewards cr
 		INNER JOIN customer_loyalty_programs clp ON clp.id = cr.loyalty_program_id
 		WHERE cr.reward_id IN (%s)
+		  AND cr.customer_id = ?
 		  AND cr.usage_date IS NULL
 		  AND cr.is_used = FALSE
 	`, placeholders)
 
-	args := make([]interface{}, len(rewardIDs))
-	for i, id := range rewardIDs {
-		args[i] = id
+	args := make([]interface{}, 0, len(rewardIDs)+1)
+	for _, id := range rewardIDs {
+		args = append(args, id)
 	}
+	args = append(args, *req.Order.Customer.CustomerID)
 
 	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query, args...)
 	if err != nil {

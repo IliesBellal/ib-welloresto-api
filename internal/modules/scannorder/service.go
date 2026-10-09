@@ -575,7 +575,14 @@ func (s *Service) GetPricingSNO(ctx context.Context, req *models.PricingRequest)
 	// 🔹 3. Enrich customer
 	if req.Order.Customer != nil {
 		req.Order.Customer.MerchantID = &merchant.MerchantID
-		customer, _ := s.repo.GetCustomerByPhone(ctx, *req.Order.Customer) // placeholder
+		customer, err := s.repo.GetCustomerByPhone(ctx, *req.Order.Customer)
+		if err != nil {
+			// Ne JAMAIS continuer avec un lookup échoué : le risque est de
+			// créer un nouveau client alors qu'il existe déjà (doublon
+			// silencieux). On échoue la requête plutôt que de deviner.
+			logger.FromContext(ctx).Error("GetPricingSNO: customer phone lookup failed", zap.Error(err))
+			return nil, fmt.Errorf("customer_lookup_failed: %w", err)
+		}
 		req.Order.Customer = customer
 	}
 
@@ -1170,7 +1177,15 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest
 	case "TAKE_AWAY":
 		if order.Customer.Tel != nil {
 			order.Customer.MerchantID = &merchant.MerchantID
-			customer, _ := s.repo.GetCustomerByPhone(ctx, *order.Customer)
+			customer, err := s.repo.GetCustomerByPhone(ctx, *order.Customer)
+			if err != nil {
+				// Même garde qu'en pricing (GetPricingSNO) : un lookup client
+				// qui échoue ne doit jamais être traité comme "client
+				// inconnu" silencieusement, sous peine de recréer un
+				// doublon pour un client existant.
+				log.Error("CreateOrderSNO: customer phone lookup failed", zap.Error(err))
+				return models.CreateOrderResult{Status: "error_customer_lookup"}, err
+			}
 			order.Customer = customer
 		}
 
