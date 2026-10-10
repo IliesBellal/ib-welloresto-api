@@ -50,6 +50,11 @@ var upsellLineHTExpr = `
 	END
 `
 
+// upsellLineTTCExpr is the line's TTC amount: oi.price and extra.price are
+// stored TTC (upsellLineHTExpr divides them by 1+VAT to get HT), so TTC is the
+// raw sum with no VAT arithmetic.
+var upsellLineTTCExpr = `((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity)`
+
 var upsellLinesFromJoins = `
 	FROM orderitems oi
 	INNER JOIN orders o ON o.order_id = oi.order_id
@@ -73,8 +78,9 @@ const upsellLinesWhereClause = `
 
 // UpsellTotals is GetUpsellTotals' aggregate row.
 type UpsellTotals struct {
-	UpsellLines          int64
-	UpsellRevenueHTCents int64
+	UpsellLines           int64
+	UpsellRevenueHTCents  int64
+	UpsellRevenueTTCCents int64
 }
 
 // GetUpsellTotals mirrors stats.StatsRepository.GetUpsellTotals, plus the
@@ -82,7 +88,8 @@ type UpsellTotals struct {
 func (r *Repository) GetUpsellTotals(ctx context.Context, merchantIDs, channels []string, startUTC, endUTC time.Time) (UpsellTotals, error) {
 	query := strings.TrimSpace(`
 		SELECT COUNT(*) AS total_lines,
-			`+roundToIntExpr("COALESCE(SUM("+upsellLineHTExpr+"), 0)")+` AS revenue_ht
+			`+roundToIntExpr("COALESCE(SUM("+upsellLineHTExpr+"), 0)")+` AS revenue_ht,
+			`+roundToIntExpr("COALESCE(SUM("+upsellLineTTCExpr+"), 0)")+` AS revenue_ttc
 	`) + "\n" + strings.TrimSpace(upsellLinesFromJoins) + "\n" +
 		strings.TrimSpace(upsellLinesWhereClause) + ` AND (` + channelCaseExpr + `) = ANY(?)`
 	filterPred, filterArgs := r.orderFilter.predicate()
@@ -92,7 +99,7 @@ func (r *Repository) GetUpsellTotals(ctx context.Context, merchantIDs, channels 
 	var totals UpsellTotals
 	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
 		return tx.QueryRowContext(ctx, query, args...).
-			Scan(&totals.UpsellLines, &totals.UpsellRevenueHTCents)
+			Scan(&totals.UpsellLines, &totals.UpsellRevenueHTCents, &totals.UpsellRevenueTTCCents)
 	})
 	if err != nil {
 		return UpsellTotals{}, fmt.Errorf("get upsell totals: %w", err)
@@ -154,18 +161,20 @@ type UpsellTotalsWithOrders struct {
 }
 
 // upsellTotalsWithOrdersSelectFragment returns one window's contribution
-// (lines, HT, distinct orders) to GetUpsellTotalsWithOrdersTwoPeriods'
+// (lines, HT, TTC, distinct orders) to GetUpsellTotalsWithOrdersTwoPeriods'
 // SELECT list.
 func upsellTotalsWithOrdersSelectFragment(w PeriodWindow) (string, []interface{}) {
 	expr, exprArgs := periodFilterPredicate(w, "o")
 	fragment := strings.TrimSpace(`
 		COUNT(*) FILTER (WHERE ` + expr + `),
 		` + roundToIntExpr("COALESCE(SUM("+upsellLineHTExpr+") FILTER (WHERE "+expr+"), 0)") + `,
+		` + roundToIntExpr("COALESCE(SUM("+upsellLineTTCExpr+") FILTER (WHERE "+expr+"), 0)") + `,
 		COUNT(DISTINCT o.order_id) FILTER (WHERE ` + expr + `)
 	`)
 	var args []interface{}
 	args = append(args, exprArgs...) // lines count FILTER
 	args = append(args, exprArgs...) // HT sum FILTER
+	args = append(args, exprArgs...) // TTC sum FILTER
 	args = append(args, exprArgs...) // distinct orders FILTER
 	return fragment, args
 }
@@ -197,8 +206,8 @@ func (r *Repository) GetUpsellTotalsWithOrdersTwoPeriods(ctx context.Context, me
 
 	err = r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
 		return tx.QueryRowContext(ctx, query, args...).Scan(
-			&currentTotals.UpsellLines, &currentTotals.UpsellRevenueHTCents, &currentTotals.OrdersWithUpsellCount,
-			&previousTotals.UpsellLines, &previousTotals.UpsellRevenueHTCents, &previousTotals.OrdersWithUpsellCount,
+			&currentTotals.UpsellLines, &currentTotals.UpsellRevenueHTCents, &currentTotals.UpsellRevenueTTCCents, &currentTotals.OrdersWithUpsellCount,
+			&previousTotals.UpsellLines, &previousTotals.UpsellRevenueHTCents, &previousTotals.UpsellRevenueTTCCents, &previousTotals.OrdersWithUpsellCount,
 		)
 	})
 	if err != nil {
@@ -263,9 +272,18 @@ func (r *Repository) GetUpsellOrdersTotalTwoPeriods(ctx context.Context, merchan
 	return currentCount, previousCount, nil
 }
 
-// GetUpsellByStaff mirrors stats.StatsRepository.ListUpsellByServer — same
-// self-service exclusion (a ScanNOrder/no-user order has no server to
-// credit), same display-name fallback chain as cancellations.go's
+// upsellScanNOrderLabel is the display name of the ScanNOrder self-service
+// "seller" in the per-server ranking.
+const upsellScanNOrderLabel = "ScanNOrder"
+
+// GetUpsellByStaff mirrors stats.StatsRepository.ListUpsellByServer, except
+// that ScanNOrder is kept as a row of its own instead of being dropped: like
+// the kiosk (created_by = 'KIOSK', shown under that name), it is a seller
+// that produces upsell lines without a server behind it, and leaving it out
+// hid most of that channel's upsell revenue. Legacy '-1' rows are folded
+// into the same SCANNORDER row (see order_life_cycle.resolveOrderSource).
+// Orders with no created_by at all are still skipped — there is nobody to
+// name. Same display-name fallback chain as cancellations.go's
 // GetCancellationsByStaff.
 func (r *Repository) GetUpsellByStaff(ctx context.Context, merchantIDs, channels []string, startUTC, endUTC time.Time) ([]UpsellStaffRow, error) {
 	// display_name, not name: products (joined via upsellLinesFromJoins)
@@ -274,18 +292,22 @@ func (r *Repository) GetUpsellByStaff(ctx context.Context, merchantIDs, channels
 	// cancellations.go's GetCancellationsByStaff doc comment describes for
 	// users.name, just against a different table this time.
 	filterPred, filterArgs := r.orderFilter.predicate()
+	const sellerIDExpr = `CASE WHEN o.created_by IN ('-1', 'SCANNORDER') THEN 'SCANNORDER' ELSE o.created_by END`
 	query := strings.TrimSpace(`
-		SELECT o.created_by AS user_id,
-			COALESCE(NULLIF(TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))), ''), o.created_by) AS display_name,
+		SELECT ` + sellerIDExpr + ` AS user_id,
+			CASE WHEN o.created_by IN ('-1', 'SCANNORDER') THEN '` + upsellScanNOrderLabel + `'
+				ELSE COALESCE(NULLIF(TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))), ''), o.created_by)
+			END AS display_name,
 			COUNT(*) AS upsell_lines,
-			`+roundToIntExpr("COALESCE(SUM("+upsellLineHTExpr+"), 0)")+` AS upsell_revenue_ht
+			`+roundToIntExpr("COALESCE(SUM("+upsellLineHTExpr+"), 0)")+` AS upsell_revenue_ht,
+			`+roundToIntExpr("COALESCE(SUM("+upsellLineTTCExpr+"), 0)")+` AS upsell_revenue_ttc
 	`) + "\n" + strings.TrimSpace(upsellLinesFromJoins) + `
 		LEFT JOIN users u ON u.user_id = o.created_by
 	` + strings.TrimSpace(upsellLinesWhereClause) + `
 		AND (` + channelCaseExpr + `) = ANY(?)` + filterPred + `
-		AND o.created_by NOT IN ('-1', 'SCANNORDER')
-		GROUP BY o.created_by, display_name
-		ORDER BY upsell_revenue_ht DESC
+		AND o.created_by IS NOT NULL
+		GROUP BY 1, 2
+		ORDER BY upsell_revenue_ttc DESC
 	`
 	args := append([]interface{}{merchantIDs, startUTC, endUTC, channels}, filterArgs...)
 
@@ -299,7 +321,7 @@ func (r *Repository) GetUpsellByStaff(ctx context.Context, merchantIDs, channels
 
 		for rows.Next() {
 			var row UpsellStaffRow
-			if err := rows.Scan(&row.UserID, &row.Name, &row.UpsellLines, &row.UpsellRevenueHTCents); err != nil {
+			if err := rows.Scan(&row.UserID, &row.Name, &row.UpsellLines, &row.UpsellRevenueHTCents, &row.UpsellRevenueTTCCents); err != nil {
 				return err
 			}
 			result = append(result, row)
@@ -328,12 +350,13 @@ func (r *Repository) GetUpsellTopProducts(ctx context.Context, merchantIDs, chan
 			p.name AS product_name,
 			SUM(oi.quantity) AS quantity_sold,
 			COUNT(*) AS upsell_lines,
-			`+roundToIntExpr("COALESCE(SUM("+upsellLineHTExpr+"), 0)")+` AS upsell_revenue_ht
+			`+roundToIntExpr("COALESCE(SUM("+upsellLineHTExpr+"), 0)")+` AS upsell_revenue_ht,
+			`+roundToIntExpr("COALESCE(SUM("+upsellLineTTCExpr+"), 0)")+` AS upsell_revenue_ttc
 	`) + "\n" + strings.TrimSpace(upsellLinesFromJoins) + "\n" +
 		strings.TrimSpace(upsellLinesWhereClause) + `
 		AND (` + channelCaseExpr + `) = ANY(?)` + filterPred + `
 		GROUP BY p.product_id, p.name
-		ORDER BY quantity_sold DESC, upsell_revenue_ht DESC, p.product_id ASC
+		ORDER BY quantity_sold DESC, upsell_revenue_ttc DESC, p.product_id ASC
 		LIMIT ?
 	`
 	args := append([]interface{}{merchantIDs, startUTC, endUTC, channels}, filterArgs...)
@@ -349,7 +372,7 @@ func (r *Repository) GetUpsellTopProducts(ctx context.Context, merchantIDs, chan
 
 		for rows.Next() {
 			var row UpsellProductRow
-			if err := rows.Scan(&row.ProductID, &row.Name, &row.QuantitySold, &row.UpsellLines, &row.UpsellRevenueHTCents); err != nil {
+			if err := rows.Scan(&row.ProductID, &row.Name, &row.QuantitySold, &row.UpsellLines, &row.UpsellRevenueHTCents, &row.UpsellRevenueTTCCents); err != nil {
 				return err
 			}
 			result = append(result, row)

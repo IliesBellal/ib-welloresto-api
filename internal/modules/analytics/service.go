@@ -2329,11 +2329,13 @@ func (s *Service) upsellPeriodTotalsTwoPeriods(ctx context.Context, repo *Reposi
 	currentPeriod = UpsellPeriodTotals{
 		From: currentFrom, To: currentTo,
 		UpsellLines: currentTotals.UpsellLines, UpsellRevenueHTCents: currentTotals.UpsellRevenueHTCents,
+		UpsellRevenueTTCCents: currentTotals.UpsellRevenueTTCCents,
 		OrdersWithUpsellCount: currentTotals.OrdersWithUpsellCount, TotalOrdersCount: currentOrdersTotal,
 	}
 	previousPeriod = UpsellPeriodTotals{
 		From: previousFrom, To: previousTo,
 		UpsellLines: previousTotals.UpsellLines, UpsellRevenueHTCents: previousTotals.UpsellRevenueHTCents,
+		UpsellRevenueTTCCents: previousTotals.UpsellRevenueTTCCents,
 		OrdersWithUpsellCount: previousTotals.OrdersWithUpsellCount, TotalOrdersCount: previousOrdersTotal,
 	}
 	return currentPeriod, previousPeriod, nil

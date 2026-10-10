@@ -134,3 +134,7 @@ func TestSendPublishedWeek_WithMerchantID_IsCounted(t *testing.T) {
 		t.Fatalf("merchant SMS calls = %v / uncounted calls = %d, want [merchant_1] / 0", counted.calls, txt.sendSMSCalls)
 	}
 }
+
+func (m *mockMailer) SendPayoutDocuments(to string, data mailer.PayoutDocumentsData, attachments []mailer.Attachment) error {
+	return nil
+}

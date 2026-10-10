@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Votre relevé de versement</title>
+</head>
+<body style="font-family: 'UberMoveText', 'Open Sans', Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #ffffff;">
+
+<table width="100%" style="max-width: 712px; margin: auto;">
+    <tbody>
+    <tr>
+        <td align="left" style="padding: 40px 20px;">
+            {{ if .TestNotice }}
+            <p style="font-size:12px; color:#8a5a00; background-color:#fff4d6; border-radius:6px; padding:10px 12px; line-height:18px;">{{ .TestNotice }}</p>
+            {{ end }}
+            <h1 style="font-size:24px; color:#000; margin:0 0 16px 0;">Votre relevé de versement</h1>
+            <p style="font-size:14px; color:#333; line-height:22px;">
+                Bonjour l'équipe {{ .MerchantName }},<br>
+                Un versement de <strong>{{ .Amount }}</strong> a été effectué sur votre compte bancaire
+                (arrivée le {{ .ArrivalDate }}, référence {{ .PayoutID }}).
+            </p>
+            <p style="font-size:14px; color:#333; line-height:22px;">
+                Vous trouverez en pièces jointes :
+            </p>
+            <ul style="font-size:14px; color:#333; line-height:22px;">
+                <li>le <strong>relevé de versement</strong>, qui détaille ce que contient ce virement ;</li>
+                {{ if .InvoiceNumber }}<li>la <strong>facture {{ .InvoiceNumber }}</strong> de la commission Wello Resto prélevée sur ces encaissements.</li>{{ end }}
+            </ul>
+            <p style="font-size:14px; color:#333; line-height:22px;">
+                Ces documents peuvent être transmis à votre comptable pour justifier le virement.
+            </p>
+            <p style="font-size:12px; color:#666; padding-top: 30px;">
+                Besoin d'aide ? Contactez-nous à <a href="mailto:{{ .SupportEmail }}" style="color:#000;">{{ .SupportEmail }}</a>
+            </p>
+        </td>
+    </tr>
+    </tbody>
+</table>
+</body>
+</html>

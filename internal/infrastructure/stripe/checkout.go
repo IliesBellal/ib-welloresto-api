@@ -128,6 +128,15 @@ func (c *StripeManager) CreateCheckoutSession(req CheckoutSessionRequestObject) 
 		PaymentIntentData: &stripe.CheckoutSessionPaymentIntentDataParams{
 			ApplicationFeeAmount: stripe.Int64(fees),
 			CaptureMethod:        stripe.String(string(captureMethod)),
+			// Métadonnées du PaymentIntent (donc du paiement, visibles dans le
+			// dashboard Stripe et dans les lignes d'un payout) ; celles de la
+			// session ci-dessus ne se propagent pas jusqu'à lui. Même forme
+			// que le PaymentIntent Terminal de la borne (channel=kiosk).
+			Metadata: map[string]string{
+				"order_id":    orderID,
+				"merchant_id": fmt.Sprintf("%v", merchant.MerchantID),
+				"channel":     "scannorder",
+			},
 		},
 	}
 

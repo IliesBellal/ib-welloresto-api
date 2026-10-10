@@ -46,6 +46,12 @@ type Service interface {
 	// "Wello Resto" s'il est vide) ; receiptNumber est le numéro de facture affiché.
 	SendInvoiceEmailToCustomer(to, customerName, merchantName, receiptNumber string, pdfBytes []byte, fileName string) error
 
+	// SendPayoutDocuments envoie au restaurateur le relevé de versement et, le
+	// cas échéant, la facture de commission d'un payout, en pièces jointes.
+	// SYNCHRONE : la tâche qui l'appelle ne marque le payout traité qu'une fois
+	// le mail parti.
+	SendPayoutDocuments(to string, data PayoutDocumentsData, attachments []Attachment) error
+
 	TriggerTestEmail(writer http.ResponseWriter, request *http.Request)
 }
 

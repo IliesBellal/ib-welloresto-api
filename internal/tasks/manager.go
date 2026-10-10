@@ -11,6 +11,7 @@ import (
 	"welloresto-api/internal/modules/bookings"
 	dunningModule "welloresto-api/internal/modules/dunning"
 	"welloresto-api/internal/modules/order_life_cycle"
+	payoutsModule "welloresto-api/internal/modules/payouts"
 	subscriptionsModule "welloresto-api/internal/modules/subscriptions"
 	upsellModule "welloresto-api/internal/modules/upsell"
 
@@ -33,7 +34,10 @@ type TasksManager struct {
 	// FiscalArchiveStore — conformité caisse lot D : bucket R2 privé des
 	// archives fiscales (RunFiscalArchives). Nil si R2 est indisponible.
 	FiscalArchiveStore fiscalarchive.Store
-	Logger             *zap.Logger
+	// PayoutService — justificatifs de versement (RunPayoutDocuments). Nil
+	// tant que SetupRoutes ne l'a pas branché.
+	PayoutService *payoutsModule.Service
+	Logger        *zap.Logger
 }
 
 // NewTasksManager crée une nouvelle instance du gestionnaire avec les dépendances injectées

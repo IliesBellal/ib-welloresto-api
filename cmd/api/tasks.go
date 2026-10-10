@@ -91,6 +91,13 @@ func SetupTasks(
 	// (docs/attestation-conformite-05-lot-D-brief.md).
 	add("@hourly", taskManager.RunFiscalArchives)
 
+	// ── Justificatifs de versement ───────────────────────────────────────────
+	// Relevé de versement + facture de commission de chaque payout Stripe payé
+	// (docs/payouts-justificatifs.md). Le webhook payout.paid met le payout en
+	// file ; cette tâche le traite, et retente toutes les heures tant que Stripe
+	// n'a pas fini de rapprocher les lignes du payout.
+	add("@hourly", taskManager.RunPayoutDocuments)
+
 	// ── RBAC ─────────────────────────────────────────────────────────────────
 	// Réconcilie le rôle admin de chaque établissement avec le catalogue de
 	// permissions — un ajout au catalogue n'a plus besoin d'un lancement manuel

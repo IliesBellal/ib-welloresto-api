@@ -1101,9 +1101,10 @@ type UpsellResponse struct {
 type UpsellProductRow struct {
 	ProductID            string `json:"product_id"`
 	Name                 string `json:"name"`
-	QuantitySold         int64  `json:"quantity_sold"`
-	UpsellLines          int64  `json:"upsell_lines"`
-	UpsellRevenueHTCents int64  `json:"upsell_revenue_ht_cents"`
+	QuantitySold          int64  `json:"quantity_sold"`
+	UpsellLines           int64  `json:"upsell_lines"`
+	UpsellRevenueHTCents  int64  `json:"upsell_revenue_ht_cents"`
+	UpsellRevenueTTCCents int64  `json:"upsell_revenue_ttc_cents"`
 }
 
 // UpsellPeriodTotals.TotalOrdersCount is the rate's denominator, stated
@@ -1123,6 +1124,7 @@ type UpsellPeriodTotals struct {
 	To                    string `json:"to"`
 	UpsellLines           int64  `json:"upsell_lines"`
 	UpsellRevenueHTCents  int64  `json:"upsell_revenue_ht_cents"`
+	UpsellRevenueTTCCents int64  `json:"upsell_revenue_ttc_cents"`
 	OrdersWithUpsellCount int64  `json:"orders_with_upsell_count"`
 	TotalOrdersCount      int64  `json:"total_orders_count"`
 }
@@ -1188,10 +1190,11 @@ type UpsellByStaffResponse struct {
 // (server_id/server_name renamed user_id/name for consistency with this
 // package's own StaffCancellationRow/ClientRow naming).
 type UpsellStaffRow struct {
-	UserID               string `json:"user_id"`
-	Name                 string `json:"name"`
-	UpsellLines          int64  `json:"upsell_lines"`
-	UpsellRevenueHTCents int64  `json:"upsell_revenue_ht_cents"`
+	UserID                string `json:"user_id"`
+	Name                  string `json:"name"`
+	UpsellLines           int64  `json:"upsell_lines"`
+	UpsellRevenueHTCents  int64  `json:"upsell_revenue_ht_cents"`
+	UpsellRevenueTTCCents int64  `json:"upsell_revenue_ttc_cents"`
 }
 
 // ---- Remises (POST /analytics/discounts) ----

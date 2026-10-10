@@ -458,3 +458,7 @@ func TestSendInvoiceByEmail_RefundedOrder_SendsSaleReceiptNotCreditNote(t *testi
 		t.Fatalf("unmet SQL expectations: %v", err)
 	}
 }
+
+func (m *fakeMailerService) SendPayoutDocuments(to string, data mailer.PayoutDocumentsData, attachments []mailer.Attachment) error {
+	return nil
+}

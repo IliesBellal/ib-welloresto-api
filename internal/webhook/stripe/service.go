@@ -22,6 +22,7 @@ import (
 	"welloresto-api/internal/modules/dunning"
 	"welloresto-api/internal/modules/notification"
 	"welloresto-api/internal/modules/order_life_cycle"
+	"welloresto-api/internal/modules/payouts"
 	"welloresto-api/internal/utils/dbutils"
 
 	"github.com/stripe/stripe-go/v78"
@@ -59,6 +60,18 @@ type StripeWebhookService struct {
 	// et du SMS de confirmation (cf. SetScanNOrderBaseURL). Vide = domaine
 	// public par défaut (helpers.DefaultScanNOrderBaseURL).
 	scannorderBaseURL string
+	// payoutDocs met les payouts payés en file pour leurs justificatifs
+	// (cf. SetPayoutDocuments). Nil : aucun justificatif.
+	payoutDocs payoutDocumentRecorder
+}
+
+type payoutDocumentRecorder interface {
+	RecordPaidPayout(ctx context.Context, ref payouts.Ref) error
+}
+
+// SetPayoutDocuments branche la file des justificatifs de versement.
+func (s *StripeWebhookService) SetPayoutDocuments(recorder payoutDocumentRecorder) {
+	s.payoutDocs = recorder
 }
 
 // SetScanNOrderBaseURL fixe la base des liens de suivi envoyés au client.
@@ -1072,6 +1085,22 @@ func (s *StripeWebhookService) HandlePayoutPaid(ctx context.Context, data json.R
 	var payout Payout
 	if err := json.Unmarshal(data, &payout); err != nil {
 		return fmt.Errorf("failed to unmarshal payout: %w", err)
+	}
+
+	// Justificatifs (relevé + facture de commission) : mis en file avant le mail,
+	// pour qu'un échec d'écriture fasse rejouer l'événement par Stripe. Les
+	// payouts de la plateforme elle-même (sans compte connecté) sont ignorés.
+	if s.payoutDocs != nil && connectedAccountID != "" {
+		ref := payouts.Ref{
+			PayoutID:    payout.ID,
+			AccountID:   connectedAccountID,
+			Amount:      payout.Amount,
+			Currency:    payout.Currency,
+			ArrivalDate: time.Unix(payout.ArrivalDate, 0),
+		}
+		if err := s.payoutDocs.RecordPaidPayout(ctx, ref); err != nil {
+			return fmt.Errorf("record payout %s for documents: %w", payout.ID, err)
+		}
 	}
 
 	// Récupérer le Marchand

@@ -97,6 +97,25 @@ type PasswordResetMailData struct {
 	ExpiresIn int // en minutes
 }
 
+// Attachment est une pièce jointe de mail (fichier complet en mémoire).
+type Attachment struct {
+	Name    string
+	Content []byte
+}
+
+// PayoutDocumentsData pour le mail « relevé de versement + facture de commission ».
+type PayoutDocumentsData struct {
+	MerchantName  string
+	PayoutID      string
+	Amount        string // ex : "1450,00 €"
+	ArrivalDate   string // ex : "07/11/2026"
+	InvoiceNumber string // vide si aucune facture n'accompagne le relevé
+	SupportEmail  string
+	// TestNotice, non vide, est affiché en tête du mail (phase de test : le
+	// destinataire n'est pas le restaurateur).
+	TestNotice string
+}
+
 // InvoiceEmailData pour l'envoi de facture PDF en pièce jointe
 type InvoiceEmailData struct {
 	MerchantName  string

@@ -19,6 +19,7 @@ type StripeEvent struct {
 type Payout struct {
 	ID                  string `json:"id"`
 	Amount              int64  `json:"amount"`       // En centimes
+	Currency            string `json:"currency"`
 	ArrivalDate         int64  `json:"arrival_date"` // Timestamp
 	Status              string `json:"status"`
 	Destination         string `json:"destination"`

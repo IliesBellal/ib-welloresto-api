@@ -20,8 +20,8 @@ import (
 //     channel filter this package's tabs apply consistently;
 //   - the rate's denominator (GetUpsellOrdersTotal, every order in
 //     AnalyticsOrdersScope + channel filter, independent of is_upsell);
-//   - by-staff excludes SCANNORDER/no-user orders from the ranking, the same
-//     rule the by-staff numerator itself already applies;
+//   - by-staff lists ScanNOrder as a seller of its own next to the servers,
+//     ranked by TTC revenue;
 //   - the InstrumentationActive toggle: true for an establishment with at
 //     least one is_upsell=true row ever, false for one with none — PROMPT
 //     19's central mechanism, literally exercised here (not just "mentally
@@ -172,28 +172,42 @@ func TestUpsell_Postgres(t *testing.T) {
 		t.Fatalf("expected upsell revenue HT 5000, got %d", totalsAll.UpsellRevenueHTCents)
 	}
 
-	// --- By-staff: SCANNORDER (A2) excluded; user1 credited with A1+A4 only
-	// when the channel filter includes delivery. ---
+	if totals.UpsellRevenueTTCCents != 1000+2000 {
+		t.Fatalf("expected upsell revenue TTC 3000 (1000+2000), got %d", totals.UpsellRevenueTTCCents)
+	}
+	if totalsAll.UpsellRevenueTTCCents != 1000+2000+3000 {
+		t.Fatalf("expected upsell revenue TTC 6000, got %d", totalsAll.UpsellRevenueTTCCents)
+	}
+
+	// --- By-staff: ScanNOrder (A2) is a row of its own, like the kiosk; user1
+	// is credited with A1 (+A4 when the channel filter includes delivery).
+	// Rows are ranked by TTC revenue. ---
 	staffDineInTakeaway, err := repo.GetUpsellByStaff(ctx, []string{merchantA}, dineInTakeaway, startUTC, endUTC)
 	if err != nil {
 		t.Fatalf("GetUpsellByStaff (dine_in+takeaway): %v", err)
 	}
-	if len(staffDineInTakeaway) != 1 {
-		t.Fatalf("expected exactly 1 staff row (SCANNORDER excluded), got %+v", staffDineInTakeaway)
+	if len(staffDineInTakeaway) != 2 {
+		t.Fatalf("expected 2 staff rows (ScanNOrder + user1), got %+v", staffDineInTakeaway)
 	}
-	if staffDineInTakeaway[0].UserID != "itest-upsell-user1" || staffDineInTakeaway[0].UpsellLines != 1 || staffDineInTakeaway[0].UpsellRevenueHTCents != 833 {
-		t.Fatalf("expected user1 with 1 line / 833 HT (A1 only), got %+v", staffDineInTakeaway[0])
+	if sno := staffDineInTakeaway[0]; sno.UserID != "SCANNORDER" || sno.Name != upsellScanNOrderLabel || sno.UpsellLines != 1 || sno.UpsellRevenueHTCents != 1667 || sno.UpsellRevenueTTCCents != 2000 {
+		t.Fatalf("expected ScanNOrder with 1 line / 1667 HT / 2000 TTC (A2), got %+v", sno)
+	}
+	if u := staffDineInTakeaway[1]; u.UserID != "itest-upsell-user1" || u.UpsellLines != 1 || u.UpsellRevenueHTCents != 833 || u.UpsellRevenueTTCCents != 1000 {
+		t.Fatalf("expected user1 with 1 line / 833 HT / 1000 TTC (A1 only), got %+v", u)
 	}
 
 	staffAll, err := repo.GetUpsellByStaff(ctx, []string{merchantA}, allChannels, startUTC, endUTC)
 	if err != nil {
 		t.Fatalf("GetUpsellByStaff (all channels): %v", err)
 	}
-	if len(staffAll) != 1 {
-		t.Fatalf("expected exactly 1 staff row across all channels too, got %+v", staffAll)
+	if len(staffAll) != 2 {
+		t.Fatalf("expected 2 staff rows across all channels, got %+v", staffAll)
 	}
-	if staffAll[0].UpsellLines != 2 || staffAll[0].UpsellRevenueHTCents != 833+2500 {
-		t.Fatalf("expected user1 with 2 lines / 3333 HT (A1+A4, A2 still excluded), got %+v", staffAll[0])
+	if u := staffAll[0]; u.UserID != "itest-upsell-user1" || u.UpsellLines != 2 || u.UpsellRevenueHTCents != 833+2500 || u.UpsellRevenueTTCCents != 1000+3000 {
+		t.Fatalf("expected user1 first with 2 lines / 3333 HT / 4000 TTC (A1+A4), got %+v", u)
+	}
+	if sno := staffAll[1]; sno.UserID != "SCANNORDER" || sno.UpsellLines != 1 || sno.UpsellRevenueTTCCents != 2000 {
+		t.Fatalf("expected ScanNOrder second with 1 line / 2000 TTC, got %+v", sno)
 	}
 
 	// --- InstrumentationActive: true for A (has an is_upsell=true row, ever),

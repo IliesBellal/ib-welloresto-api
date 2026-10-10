@@ -69,6 +69,7 @@ import (
 	ordersLCModule "welloresto-api/internal/modules/order_life_cycle"
 	ordersModule "welloresto-api/internal/modules/orders"
 	outboundModule "welloresto-api/internal/modules/outbound"
+	payoutsModule "welloresto-api/internal/modules/payouts"
 	planningModule "welloresto-api/internal/modules/planning"
 	planningcommModule "welloresto-api/internal/modules/planningcomm"
 	posModule "welloresto-api/internal/modules/pos"
@@ -722,6 +723,18 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	taskManager := tasksPkg.NewTasksManager(selectedDB, &mailService, ordersLifeCycleService, stripeManager, bookingsService, aiCache, upsellRepo, dunningService, subscriptionsService, fiscalArchiveStore, log)
 	adminUpsellH := adminModule.NewAdminUpsellHandler(taskManager, log)
 
+	// Justificatifs de versement : le webhook payout.paid met les payouts en
+	// file, RunPayoutDocuments (cron) les traite. Interface nulle (et non
+	// pointeur nul typé) si R2 privé manque : les PDF partent alors sans archive.
+	var payoutStore payoutsModule.Store
+	if r2PrivateClient != nil {
+		payoutStore = r2PrivateClient
+	}
+	payoutService := payoutsModule.NewService(payoutsModule.NewRepository(selectedDB), stripeManager, payoutStore, mailService, log)
+	taskManager.PayoutService = payoutService
+	stripeWebhookService.SetPayoutDocuments(payoutService)
+	payoutsH := payoutsModule.NewHandler(payoutService)
+
 	// Attestations individuelles de l'éditeur (conformité caisse lot F).
 	// Interfaces nulles (et non pointeurs nuls typés) si R2 privé manque.
 	var attestationStorage attestationsModule.Storage
@@ -1113,6 +1126,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		r.With(middleware.RequirePermission(permission.SettingsManage)).Post("/attestations", attestationsH.Generate)
 		r.Get("/attestations/{attestation_id}/download", attestationsH.Download)
 		r.Post("/attestations/{attestation_id}/email", attestationsH.Email)
+		// Justificatifs de versement (relevé + facture de commission de chaque
+		// payout) : liste et liens signés d'une heure.
+		r.Get("/payouts", payoutsH.List)
+		r.Get("/payouts/{payout_id}/{kind}/download", payoutsH.Download)
 	})
 
 	// --- STOCKS ---
