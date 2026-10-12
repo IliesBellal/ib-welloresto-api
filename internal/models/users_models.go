@@ -10,6 +10,9 @@ const (
 	WelloRestoWebhookUserID  = "WELLO_RESTO"
 	StripeWebhookUserID      = "WEBHOOK_STRIPE"
 	ScanNOrderCashRegisterID = "SCANNORDER"
+	// KioskCashRegisterID est la sentinelle de orders.cash_register_id pour une
+	// commande de borne : posée à la création, jamais remplacée par un registre.
+	KioskCashRegisterID = "KIOSK"
 
 	StripeMOP      = "STRIPE"
 	TicketRestoMOP = "TR"

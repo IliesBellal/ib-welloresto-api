@@ -106,11 +106,15 @@ func TestRegisterPDFExport_Postgres(t *testing.T) {
 	paris, _ := time.LoadLocation("Europe/Paris")
 	registerStart := time.Date(2026, 9, 1, 12, 0, 0, 0, paris)
 	orderNum := 0
+	var kioskOrderID int64
 
 	// newRegister ouvre un registre de fA, y rattache une commande de 20 € à
 	// 10 % payée en CB, puis le ferme. mode force closing_mode ; enclose valide
 	// le registre ; manualReal ressaisit le réel (relevé) en CB pour 20 €.
-	newRegister := func(mode string, enclose, manualReal bool) (regID string, orderID int64) {
+	// kiosk ajoute une vente borne de 10 € (commande à la sentinelle 'KIOSK',
+	// paiement KIOSK sans registre) et ouvre le registre le lendemain, hors de
+	// la période des exports ci-dessous.
+	newRegister := func(mode string, enclose, manualReal, kiosk bool) (regID string, orderID int64) {
 		t.Helper()
 		req := &models.OpenCashRegisterRequest{DeviceID: "itest-regpdf-" + strconv.FormatInt(time.Now().UnixNano(), 10)}
 		req.CashRegister.CashDeskID = strconv.FormatInt(fA.cashDeskID, 10)
@@ -120,7 +124,11 @@ func TestRegisterPDFExport_Postgres(t *testing.T) {
 			t.Fatalf("OpenCashRegister: (%+v, %v)", opened, err)
 		}
 		regID = opened.CashRegister.CashRegisterId
-		if _, err := db.ExecContext(ctx, `UPDATE cash_registers SET start_date = $1, closing_mode = $2 WHERE cash_register_id = $3`, registerStart.UTC(), mode, regID); err != nil {
+		start := registerStart
+		if kiosk {
+			start = registerStart.AddDate(0, 0, 1)
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE cash_registers SET start_date = $1, closing_mode = $2 WHERE cash_register_id = $3`, start.UTC(), mode, regID); err != nil {
 			t.Fatalf("force start_date / closing_mode: %v", err)
 		}
 
@@ -141,6 +149,27 @@ func TestRegisterPDFExport_Postgres(t *testing.T) {
 			VALUES ($1, $2, $3, 2000, 'CB', $4, true)`, fA.merchantID, fA.userID, orderID, regID); err != nil {
 			t.Fatalf("seed payment: %v", err)
 		}
+		if kiosk {
+			orderNum++
+			var kioskOrder int64
+			if err := db.QueryRowContext(ctx, `
+				INSERT INTO orders (merchant_id, cash_register_id, order_num, brand, brand_status, state, price, TVA, HT, created_by, order_type, delivery_fees, creation_date, order_source)
+				VALUES ($1, 'KIOSK', $2, 'WELLO_RESTO', 'CLOSED', 'CLOSED', 0, 0, 0, 'KIOSK', 'IN', 0, $3, 'KIOSK')
+				RETURNING order_id`, fA.merchantID, orderNum, start.UTC()).Scan(&kioskOrder); err != nil {
+				t.Fatalf("seed kiosk order: %v", err)
+			}
+			if _, err := db.ExecContext(ctx, `
+				INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, price) VALUES ($1, $2, $3, 1, 1000)`,
+				kioskOrder, product, fA.merchantID); err != nil {
+				t.Fatalf("seed kiosk orderitem: %v", err)
+			}
+			if _, err := db.ExecContext(ctx, `
+				INSERT INTO payments (merchant_id, user_id, order_id, amount, mop, cash_register_id, enabled)
+				VALUES ($1, 'KIOSK', $2, 1000, 'KIOSK', NULL, true)`, fA.merchantID, kioskOrder); err != nil {
+				t.Fatalf("seed kiosk payment: %v", err)
+			}
+			kioskOrderID = kioskOrder
+		}
 
 		if _, err := crRepo.CloseCashRegister(ctx, regID, fA.merchantID, &models.CloseCashRegisterRequest{}); err != nil {
 			t.Fatalf("CloseCashRegister: %v", err)
@@ -159,9 +188,10 @@ func TestRegisterPDFExport_Postgres(t *testing.T) {
 		return regID, orderID
 	}
 
-	autoReg, _ := newRegister(cash_registers.ClosingModeAuto, true, false)
-	manualReg, manualOrder := newRegister(cash_registers.ClosingModeManual, true, true)
-	openReg, _ := newRegister(cash_registers.ClosingModeManual, false, false) // fermé mais non validé
+	autoReg, _ := newRegister(cash_registers.ClosingModeAuto, true, false, false)
+	manualReg, manualOrder := newRegister(cash_registers.ClosingModeManual, true, true, false)
+	openReg, _ := newRegister(cash_registers.ClosingModeManual, false, false, false) // fermé mais non validé
+	kioskReg, _ := newRegister(cash_registers.ClosingModeAuto, true, false, true)    // avec une vente borne
 
 	ctxA := middleware.WithUser(ctx, &auth.UserLoginRow{UserID: fA.userID, MerchantID: fA.merchantID})
 	ctxB := middleware.WithUser(ctx, &auth.UserLoginRow{UserID: fB.userID, MerchantID: fB.merchantID})
@@ -199,6 +229,39 @@ func TestRegisterPDFExport_Postgres(t *testing.T) {
 	mustContain("MANUAL", manualText, "Registre de caisse", "Manuel", "itest-regpdf-10", "Encaissements", "20.00 EUR")
 	if strings.Contains(manualText, "Attention") {
 		t.Errorf("MANUAL sain : pas de mention de dérive attendue")
+	}
+
+	// Vente borne (docs/ECART_REGISTRES_BORNE.md) : la commande garde la sentinelle
+	// 'KIOSK' mais son paiement est rattaché au registre à la clôture. La TVA du
+	// PDF et du ticket Z doit la compter, comme les encaissements : 20 € de caisse
+	// + 10 € de borne à 10 % = TTC 30,00, HT 27,27, TVA 2,73.
+	var kioskPaymentRegister, kioskOrderRegister string
+	if err := db.QueryRowContext(ctx, `SELECT p.cash_register_id, o.cash_register_id FROM payments p JOIN orders o ON o.order_id = p.order_id WHERE p.order_id = $1`, kioskOrderID).
+		Scan(&kioskPaymentRegister, &kioskOrderRegister); err != nil {
+		t.Fatalf("lecture du rattachement borne: %v", err)
+	}
+	if kioskPaymentRegister != kioskReg || kioskOrderRegister != "KIOSK" {
+		t.Fatalf("borne : paiement sur %q (want %q), commande sur %q (want la sentinelle KIOSK)", kioskPaymentRegister, kioskReg, kioskOrderRegister)
+	}
+	kioskText := pdfText(kioskReg)
+	mustContain("borne", kioskText, "30.00 EUR", "27.27 EUR", "2.73 EUR")
+	zReport := func(regID string) *models.CashRegisterReport {
+		t.Helper()
+		report, err := crRepo.GetCashRegisterReport(ctx, regID)
+		if err != nil {
+			t.Fatalf("GetCashRegisterReport(%s): %v", regID, err)
+		}
+		return report
+	}
+	var kioskMOPTotal int
+	for _, line := range zReport(kioskReg).MOP {
+		kioskMOPTotal += line.Amount
+	}
+	if z := zReport(kioskReg); z.TTC != 3000 || kioskMOPTotal != 3000 {
+		t.Errorf("ticket Z borne : TVA TTC %d, encaissements %d, want 3000 des deux côtés (écart = ventes borne)", z.TTC, kioskMOPTotal)
+	}
+	if z := zReport(autoReg); z.TTC != 2000 {
+		t.Errorf("ticket Z sans borne : TVA TTC %d, want 2000 (la vente borne n'est comptée que sur son registre)", z.TTC)
 	}
 
 	// Refus : non validé, inconnu, identifiant invalide, autre établissement.
@@ -291,6 +354,21 @@ func TestRegisterPDFExport_Postgres(t *testing.T) {
 	mustContain("dérive", pdfText(manualReg), "Attention", "modifi", "rapport comptable mensuel")
 	if strings.Contains(pdfText(autoReg), "Attention") {
 		t.Errorf("le registre AUTO sain ne doit pas porter la mention de dérive")
+	}
+
+	// Une commande borne aux paiements sur deux registres n'est comptée qu'une
+	// fois, sur le plus petit : un paiement actif ajouté sur autoReg (antérieur à
+	// kioskReg) y déplace la vente borne.
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO payments (merchant_id, user_id, order_id, amount, mop, cash_register_id, enabled)
+		VALUES ($1, $2, $3, 1, 'CB', $4, true)`, fA.merchantID, fA.userID, kioskOrderID, autoReg); err != nil {
+		t.Fatalf("seed paiement multi-registres: %v", err)
+	}
+	if z := zReport(autoReg); z.TTC != 3000 {
+		t.Errorf("multi-registres : ticket Z de %s TVA TTC %d, want 3000 (le plus petit registre prend la vente)", autoReg, z.TTC)
+	}
+	if z := zReport(kioskReg); z.TTC != 2000 {
+		t.Errorf("multi-registres : ticket Z de %s TVA TTC %d, want 2000 (la vente n'est pas comptée deux fois)", kioskReg, z.TTC)
 	}
 }
 

@@ -351,7 +351,8 @@ func (r *Repository) GetDiscountsPage(ctx context.Context, merchantIDs, channels
 
 	args = append(args, pageSize, (page-1)*pageSize)
 
-	var result []DiscountRow
+	// Non-nil: a nil slice marshals to `"rows": null` and crashes the tab.
+	result := make([]DiscountRow, 0)
 	var totalRows int64
 	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
 		rows, err := tx.QueryContext(ctx, query, args...)

@@ -377,6 +377,101 @@ func (r *Repository) GetProductsPage(ctx context.Context, merchantIDs []string, 
 	return result, totalProducts, nil
 }
 
+// GetProductsTotalsByMerchant is the group_by=merchant counterpart of
+// GetProductsScopeTotals' quantity/TTC/HT aggregates: one row per
+// establishment with at least one sale in scope, sorted by merchant_id. Same
+// scope, category filter and line expressions as GetProductsScopeTotals, so
+// the rows sum exactly to its TTC/quantity (HT can drift by a few cents from
+// per-establishment rounding — same accepted drift as GetProductsPage).
+func (r *Repository) GetProductsTotalsByMerchant(ctx context.Context, merchantIDs []string, categoryID string, startUTC, endUTC time.Time) ([]ProductsMerchantTotal, error) {
+	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
+	categoryFilter, args := productsCategoryFilter(categoryID, args)
+
+	query := strings.TrimSpace(`
+		SELECT
+			o.merchant_id,
+			COALESCE(SUM(oi.quantity), 0),
+			COALESCE(SUM((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity), 0),
+			`+roundToIntExpr("COALESCE(SUM("+htLineExpr+"), 0)")+`
+	`) + "\n" + htLineJoins + "\nWHERE " + where + categoryFilter + `
+		GROUP BY o.merchant_id
+		ORDER BY o.merchant_id
+	`
+
+	result := make([]ProductsMerchantTotal, 0, len(merchantIDs))
+	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
+		rows, err := tx.QueryContext(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var row ProductsMerchantTotal
+			if err := rows.Scan(&row.MerchantID, &row.QuantitySold, &row.RevenueTTCCents, &row.RevenueHTCents); err != nil {
+				return err
+			}
+			result = append(result, row)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get products totals by merchant: %w", err)
+	}
+	return result, nil
+}
+
+// GetProductsByProductAndMerchant splits exactly productIDs (the current
+// page's rows, never the full catalog — same bound as
+// GetProductsPreviousRevenue) per establishment. A product absent from the
+// returned map had no sale in the window; one establishment absent from a
+// product's slice had none for that product.
+func (r *Repository) GetProductsByProductAndMerchant(ctx context.Context, merchantIDs []string, productIDs []string, startUTC, endUTC time.Time) (map[string][]ProductsMerchantTotal, error) {
+	result := make(map[string][]ProductsMerchantTotal, len(productIDs))
+	if len(productIDs) == 0 {
+		return result, nil
+	}
+
+	where, args := AnalyticsOrdersScope(merchantIDs, startUTC, endUTC)
+	where, args = r.applyOrderFilter(where, args)
+	args = append(args, productIDs)
+
+	query := strings.TrimSpace(`
+		SELECT
+			p.product_id::text,
+			o.merchant_id,
+			COALESCE(SUM(oi.quantity), 0),
+			COALESCE(SUM((oi.price + COALESCE(e.extra_price, 0)) * oi.quantity), 0),
+			`+roundToIntExpr("COALESCE(SUM("+htLineExpr+"), 0)")+`
+	`) + "\n" + htLineJoins + "\nWHERE " + where + ` AND p.product_id::text = ANY(?)
+		GROUP BY p.product_id, o.merchant_id
+		ORDER BY p.product_id, o.merchant_id
+	`
+
+	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
+		rows, err := tx.QueryContext(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var productID string
+			var row ProductsMerchantTotal
+			if err := rows.Scan(&productID, &row.MerchantID, &row.QuantitySold, &row.RevenueTTCCents, &row.RevenueHTCents); err != nil {
+				return err
+			}
+			result[productID] = append(result[productID], row)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get products by product and merchant: %w", err)
+	}
+	return result, nil
+}
+
 // GetProductsPreviousRevenue returns the previous period's TTC revenue for
 // exactly productIDs (the current page's rows, never the full catalog) —
 // ProductRow.EvolutionPercent's data source. A product absent from the

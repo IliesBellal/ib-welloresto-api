@@ -311,7 +311,10 @@ func (r *Repository) GetUpsellByStaff(ctx context.Context, merchantIDs, channels
 	`
 	args := append([]interface{}{merchantIDs, startUTC, endUTC, channels}, filterArgs...)
 
-	var result []UpsellStaffRow
+	// Non-nil on purpose: a nil slice marshals to `"staff": null`, which the
+	// frontend reads as `.length` of null and crashes the whole tab on a
+	// period with no upsell sale.
+	result := make([]UpsellStaffRow, 0)
 	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
 		rows, err := tx.QueryContext(ctx, query, args...)
 		if err != nil {

@@ -58,6 +58,19 @@ func TestBuildProductsCacheKey_MerchantOrderIndependentButScopeSensitive(t *test
 	}
 }
 
+// TestProductsGroupByCacheSuffix pins the two properties the compared products
+// response depends on: the cumulated key is unchanged (no stale-cache
+// invalidation on deploy) and the compared one never collides with it.
+func TestProductsGroupByCacheSuffix(t *testing.T) {
+	if got := productsGroupByCacheSuffix(GroupByNone); got != "" {
+		t.Fatalf("expected an empty suffix for group_by=none, got %q", got)
+	}
+	base := buildProductsCacheKey([]string{"212", "228"}, "2026-01-01", "2026-01-31", "", ProductsSortQuantity, "desc", 1, ProductsDefaultPageSize)
+	if base+productsGroupByCacheSuffix(GroupByMerchant) == base+productsGroupByCacheSuffix(GroupByNone) {
+		t.Fatalf("group_by=merchant must not share a cache entry with group_by=none")
+	}
+}
+
 // TestBuildClientsCacheKey_MerchantOrderIndependentButScopeSensitive covers
 // the channels-keyed builder shared by Clients/Upsell.
 func TestBuildClientsCacheKey_MerchantOrderIndependentButScopeSensitive(t *testing.T) {

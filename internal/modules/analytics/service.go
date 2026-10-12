@@ -1271,6 +1271,14 @@ func (s *Service) GetProducts(ctx context.Context, req ProductsRequest) (*Produc
 		return nil, ErrInvalidRequest
 	}
 
+	groupBy := req.GroupBy
+	if groupBy == "" {
+		groupBy = GroupByNone
+	}
+	if groupBy != GroupByNone && groupBy != GroupByMerchant {
+		return nil, ErrInvalidRequest
+	}
+
 	sortBy := req.SortBy
 	if sortBy == "" {
 		sortBy = ProductsSortQuantity
@@ -1299,7 +1307,7 @@ func (s *Service) GetProducts(ctx context.Context, req ProductsRequest) (*Produc
 	}
 
 	if s.redis != nil {
-		cacheKey := buildProductsCacheKey(merchantIDs, req.DateFrom, req.DateTo, req.CategoryID, sortBy, sortDir, page, pageSize) + orderFilter.cacheKeySuffix()
+		cacheKey := buildProductsCacheKey(merchantIDs, req.DateFrom, req.DateTo, req.CategoryID, sortBy, sortDir, page, pageSize) + productsGroupByCacheSuffix(groupBy) + orderFilter.cacheKeySuffix()
 		if cached, ok := s.redis.Get(ctx, cacheKey); ok {
 			var resp ProductsResponse
 			if err := json.Unmarshal([]byte(cached), &resp); err == nil {
@@ -1366,6 +1374,19 @@ func (s *Service) GetProducts(ctx context.Context, req ProductsRequest) (*Produc
 		return nil, err
 	}
 
+	var byMerchant []ProductsMerchantTotal
+	var splitByProduct map[string][]ProductsMerchantTotal
+	if groupBy == GroupByMerchant {
+		byMerchant, err = repo.GetProductsTotalsByMerchant(ctx, merchantIDs, req.CategoryID, currentStartUTC, currentEndUTC)
+		if err != nil {
+			return nil, err
+		}
+		splitByProduct, err = repo.GetProductsByProductAndMerchant(ctx, merchantIDs, productIDs, currentStartUTC, currentEndUTC)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	rows := make([]ProductRow, len(aggRows))
 	for i, agg := range aggRows {
 		row := ProductRow{
@@ -1389,6 +1410,7 @@ func (s *Service) GetProducts(ctx context.Context, req ProductsRequest) (*Produc
 			evo := float64(agg.RevenueTTCCents-prevRevenue) / float64(prevRevenue) * 100
 			row.EvolutionPercent = &evo
 		}
+		row.ByMerchant = splitByProduct[agg.ProductID]
 		rows[i] = row
 	}
 
@@ -1417,7 +1439,7 @@ func (s *Service) GetProducts(ctx context.Context, req ProductsRequest) (*Produc
 	}
 
 	resp := &ProductsResponse{
-		Scope:      RevenueScope{MerchantIDs: merchantIDs, GroupBy: GroupByNone},
+		Scope:      RevenueScope{MerchantIDs: merchantIDs, GroupBy: groupBy},
 		CategoryID: req.CategoryID,
 		SortBy:     sortBy,
 		SortDir:    sortDir,
@@ -1434,14 +1456,15 @@ func (s *Service) GetProducts(ctx context.Context, req ProductsRequest) (*Produc
 		Pagination: models.PaginationMetadata{
 			TotalItems: int(totalProducts), TotalPages: totalPages, CurrentPage: page, Limit: pageSize,
 		},
-		Rows: rows,
+		Rows:       rows,
+		ByMerchant: byMerchant,
 	}
 
 	s.logInstrumentation(ctx, "products", merchantIDs, int(periodDays), len(rows), time.Since(started))
 
 	if s.redis != nil {
 		if encoded, err := json.Marshal(resp); err == nil {
-			cacheKey := buildProductsCacheKey(merchantIDs, req.DateFrom, req.DateTo, req.CategoryID, sortBy, sortDir, page, pageSize) + orderFilter.cacheKeySuffix()
+			cacheKey := buildProductsCacheKey(merchantIDs, req.DateFrom, req.DateTo, req.CategoryID, sortBy, sortDir, page, pageSize) + productsGroupByCacheSuffix(groupBy) + orderFilter.cacheKeySuffix()
 			s.redis.Set(ctx, cacheKey, string(encoded), models.AnalyticsCacheTTL)
 		}
 	}
@@ -1739,6 +1762,17 @@ func buildProductsCacheKey(merchantIDs []string, dateFrom, dateTo, categoryID, s
 	raw := strings.Join(sorted, ",") + "|" + dateFrom + "|" + dateTo + "|" + categoryID + "|" + sortBy + "|" + sortDir + "|" + fmt.Sprint(page) + "|" + fmt.Sprint(pageSize)
 	sum := sha256.Sum256([]byte(raw))
 	return models.AnalyticsCachePrefix + "products:" + hex.EncodeToString(sum[:])
+}
+
+// productsGroupByCacheSuffix keeps the cumulated (group_by=none) products
+// cache keys byte-identical to what they were before group_by existed, and
+// gives the compared response its own entry — it carries by_merchant fields
+// the cumulated one doesn't.
+func productsGroupByCacheSuffix(groupBy string) string {
+	if groupBy == GroupByMerchant {
+		return "|gb=merchant"
+	}
+	return ""
 }
 
 // logInstrumentation is the measurement PROMPT 03 §1.6 asks every analytics

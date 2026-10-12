@@ -54,8 +54,13 @@ func TestOrderScopePredicate_RegisterID(t *testing.T) {
 	if !strings.Contains(sql, "o.cash_register_id = ?") || !strings.Contains(sql, "o.brand = 'WELLO_RESTO'") {
 		t.Fatalf("predicate = %q, want le périmètre manuel et le filtre registre", sql)
 	}
-	if len(args) != 1 || args[0] != "42" {
-		t.Fatalf("args = %v, want [42]", args)
+	// Le registre est passé à chaque emplacement du prédicat (commande de caisse,
+	// puis commande de borne suivant ses paiements).
+	if len(args) != 3 || args[0] != "42" || args[1] != "42" || args[2] != "42" || strings.Count(sql, "?") != 3 {
+		t.Fatalf("args = %v pour %q, want trois fois 42", args, sql)
+	}
+	if !strings.Contains(sql, "'KIOSK'") {
+		t.Fatalf("predicate = %q, want la prise en compte des commandes borne", sql)
 	}
 
 	// Sans registre, rien n'est ajouté : les exports mensuels sont inchangés.
@@ -66,7 +71,7 @@ func TestOrderScopePredicate_RegisterID(t *testing.T) {
 
 	// L'ordre des arguments suit celui du SQL : sources, types, puis registre.
 	sql, args = orderScope{sources: []string{"KIOSK"}, orderTypes: []string{"IN"}, registerID: "7"}.predicate("o")
-	if len(args) != 3 || args[2] != "7" || strings.Index(sql, "order_source") > strings.Index(sql, "cash_register_id") {
+	if len(args) != 5 || args[2] != "7" || args[4] != "7" || strings.Index(sql, "order_source") > strings.Index(sql, "cash_register_id") {
 		t.Fatalf("predicate = (%q, %v), want sources, types puis registre", sql, args)
 	}
 }

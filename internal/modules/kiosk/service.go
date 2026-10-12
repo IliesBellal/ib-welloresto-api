@@ -100,7 +100,7 @@ func NewService(
 // 038) porte en plus l'identité précise de la borne.
 const (
 	kioskCreatedBy    = "KIOSK"
-	kioskCashRegister = "KIOSK"
+	kioskCashRegister = models.KioskCashRegisterID
 )
 
 // EnrollDevice valide un code d'enrôlement et crée la borne + son premier

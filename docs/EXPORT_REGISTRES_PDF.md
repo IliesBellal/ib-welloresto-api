@@ -111,6 +111,9 @@ existé dans l'API, et que personne n'utilisait) est supprimée au profit de
   `POSTGRES_URL` en local. Les tests unitaires (validation de la demande, contenu
   du PDF par mode, mention de dérive, périmètre SQL) passent.
 
+Les commandes de borne (sentinelle `'KIOSK'` dans `orders.cash_register_id`) suivent
+les paiements du registre pour la TVA — voir [ECART_REGISTRES_BORNE.md](ECART_REGISTRES_BORNE.md).
+
 ## Fichiers
 
 - API : [register_pdf.go](../internal/modules/pos/accounting/register_pdf.go)

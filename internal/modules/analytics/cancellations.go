@@ -378,7 +378,8 @@ func (r *Repository) GetCancellationsByReason(ctx context.Context, merchantIDs [
 		ORDER BY cnt DESC
 	`
 
-	var result []CancellationReasonTotal
+	// Non-nil: a nil slice marshals to `null` (see GetCancellationsByStaff).
+	result := make([]CancellationReasonTotal, 0)
 	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
 		rows, err := tx.QueryContext(ctx, query, args...)
 		if err != nil {
@@ -417,7 +418,7 @@ func (r *Repository) GetCancellationsByAuthorType(ctx context.Context, merchantI
 		ORDER BY cnt DESC
 	`
 
-	var result []CancellationAuthorTypeTotal
+	result := make([]CancellationAuthorTypeTotal, 0)
 	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
 		rows, err := tx.QueryContext(ctx, query, args...)
 		if err != nil {
@@ -540,7 +541,9 @@ func (r *Repository) GetCancellationsByStaff(ctx context.Context, merchantIDs []
 			AND NOT EXISTS (SELECT 1 FROM users u2 WHERE u2.user_id = o.created_by)
 	`
 
-	var result []StaffCancellationRow
+	// Non-nil on purpose: a nil slice marshals to `"staff": null` (see
+	// GetUpsellByStaff).
+	result := make([]StaffCancellationRow, 0)
 	var unattributedCount int64
 	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
 		rows, err := tx.QueryContext(ctx, staffQuery, allArgs...)

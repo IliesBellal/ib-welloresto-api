@@ -74,7 +74,7 @@ func (r *CashRegisterRepository) computeRegisterVAT(ctx context.Context, cashReg
 			FROM extra
 			GROUP BY order_item_id
 		) e ON e.order_item_id = oi.order_item_id
-		WHERE o.cash_register_id = ?
+		WHERE `+RegisterOrdersSQL("o")+`
 		  AND o.state = 'CLOSED'
 		  AND upper(o.brand_status) NOT IN `+models.VoidOrderBrandStatusesSQL+`
 		UNION ALL
@@ -84,11 +84,11 @@ func (r *CashRegisterRepository) computeRegisterVAT(ctx context.Context, cashReg
 		       o_fees.delivery_fees AS ttc
 		FROM orders o_fees
 		INNER JOIN tva_categories tva_fees ON tva_fees.tva_id = -1
-		WHERE o_fees.cash_register_id = ?
+		WHERE `+RegisterOrdersSQL("o_fees")+`
 		  AND o_fees.state = 'CLOSED'
 		  AND o_fees.delivery_fees <> 0
 		  AND upper(o_fees.brand_status) NOT IN `+models.VoidOrderBrandStatusesSQL+`
-	`, cashRegisterID, cashRegisterID)
+	`, append(RegisterOrdersArgs(cashRegisterID), RegisterOrdersArgs(cashRegisterID)...)...)
 	if err != nil {
 		return nil, fmt.Errorf("register VAT lines: %w", err)
 	}
@@ -128,13 +128,13 @@ func (r *CashRegisterRepository) computeRegisterVAT(ctx context.Context, cashReg
 		SELECT p.order_id, SUM(p.amount)
 		FROM payments p
 		INNER JOIN orders o ON o.order_id = p.order_id
-		WHERE o.cash_register_id = ?
+		WHERE `+RegisterOrdersSQL("o")+`
 		  AND o.state = 'CLOSED'
 		  AND upper(o.brand_status) NOT IN `+models.VoidOrderBrandStatusesSQL+`
 		  AND p.enabled = TRUE
 		  AND p.mop IN `+models.DiscountMOPsSQL+`
 		GROUP BY p.order_id
-	`, cashRegisterID)
+	`, RegisterOrdersArgs(cashRegisterID)...)
 	if err != nil {
 		return nil, fmt.Errorf("register discounts: %w", err)
 	}

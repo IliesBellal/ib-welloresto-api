@@ -600,6 +600,12 @@ type ProductsRequest struct {
 	DateFrom    string   `json:"date_from"`
 	DateTo      string   `json:"date_to"`
 	MerchantIDs []string `json:"merchant_ids,omitempty"`
+	// GroupBy is "none" (cumulé, default) or "merchant" (comparé). With
+	// "merchant", the response carries ByMerchant (per-establishment KPI
+	// totals) and every returned ProductRow carries its own ByMerchant split.
+	// Pagination/sorting still act on the cumulated per-product aggregate —
+	// the split is purely additive, never a different row set.
+	GroupBy string `json:"group_by,omitempty"`
 	// CategoryID filters to one productcateg.merchant_categ_id, validated by
 	// the service against GetProductCategories's own result for this scope —
 	// never trusted blindly. Empty means every category.
@@ -665,6 +671,18 @@ type ProductsCostCoverage struct {
 	IncompleteRecipeQuantity int64    `json:"incomplete_recipe_quantity"`
 }
 
+// ProductsMerchantTotal is one establishment's share of a product list's
+// quantity/TTC/HT — used both as ProductsResponse.ByMerchant (the whole scope)
+// and as ProductRow.ByMerchant (one product), populated only when
+// group_by=merchant. Establishments with no sale in the window are absent,
+// not zero rows.
+type ProductsMerchantTotal struct {
+	MerchantID      string `json:"merchant_id"`
+	QuantitySold    int64  `json:"quantity_sold"`
+	RevenueTTCCents int64  `json:"revenue_ttc_cents"`
+	RevenueHTCents  int64  `json:"revenue_ht_cents"`
+}
+
 // ProductRow is one line of the paginated table. CostPriceCents/MarginCents/
 // MarginPercent are nil whenever CostKnownQuantity is 0 — every line sold for
 // this product in the period was NO_RECIPE and/or INCOMPLETE_RECIPE. When
@@ -696,6 +714,10 @@ type ProductRow struct {
 	// previous-period sales at all (a new or newly-popular product; never a
 	// divide-by-zero masquerading as +∞% or a meaningless -100%).
 	EvolutionPercent *float64 `json:"evolution_percent,omitempty"`
+
+	// ByMerchant splits this product's quantity/TTC/HT per establishment —
+	// only when group_by=merchant (see ProductsRequest.GroupBy).
+	ByMerchant []ProductsMerchantTotal `json:"by_merchant,omitempty"`
 }
 
 // ProductsResponse. CategoryID/SortBy/SortDir echo back the applied
@@ -712,6 +734,9 @@ type ProductsResponse struct {
 	AvailableCategories []ProductCategoryOption    `json:"available_categories"`
 	Pagination          models.PaginationMetadata  `json:"pagination"`
 	Rows                []ProductRow               `json:"rows"`
+	// ByMerchant is the whole scope's current-period totals per establishment
+	// (not just the page's rows) — only when group_by=merchant.
+	ByMerchant []ProductsMerchantTotal `json:"by_merchant,omitempty"`
 }
 
 // ---- Options (POST /analytics/options) ----

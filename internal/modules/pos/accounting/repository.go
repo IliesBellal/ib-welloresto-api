@@ -10,6 +10,7 @@ import (
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
+	cashregisters "welloresto-api/internal/modules/cash_registers"
 )
 
 // acctCastChar caste une expression en texte selon le dialecte (jointures
@@ -230,7 +231,8 @@ type orderScope struct {
 	// déclaration de TVA, quel que soit le mode.
 	orderTypes []string
 	// registerID : restreint aux commandes d'un registre de caisse
-	// (orders.cash_register_id), pour le PDF d'un registre. Se combine avec
+	// (orders.cash_register_id, ou les paiements du registre pour une commande de
+	// borne), pour le PDF d'un registre. Se combine avec
 	// manual / sources comme le périmètre du mode de clôture du registre ; la
 	// période est alors ouverte (registerScopeWindow), le registre fait foi.
 	registerID string
@@ -262,8 +264,10 @@ func (s orderScope) predicate(alias string) (string, []interface{}) {
 		args = append(args, s.orderTypes)
 	}
 	if s.registerID != "" {
-		b.WriteString(" AND " + alias + ".cash_register_id = ?")
-		args = append(args, s.registerID)
+		// Les commandes de borne n'ont que la sentinelle dans orders : elles
+		// suivent leurs paiements (cashregisters.RegisterOrdersSQL).
+		b.WriteString(" AND " + cashregisters.RegisterOrdersSQL(alias))
+		args = append(args, cashregisters.RegisterOrdersArgs(s.registerID)...)
 	}
 	return b.String(), args
 }

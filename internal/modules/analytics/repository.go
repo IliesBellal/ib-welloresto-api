@@ -187,7 +187,7 @@ func (r *Repository) GetMerchantNames(ctx context.Context, merchantIDs []string)
 	}
 	defer rows.Close()
 
-	var merchants []AccessibleMerchant
+	merchants := make([]AccessibleMerchant, 0)
 	for rows.Next() {
 		var m AccessibleMerchant
 		if err := rows.Scan(&m.MerchantID, &m.Name); err != nil {
