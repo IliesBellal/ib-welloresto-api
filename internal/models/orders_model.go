@@ -68,6 +68,33 @@ func DeliveryFeesTVARateSQL(order, category string) string {
 	return "COALESCE(" + order + ".delivery_fees_tva_rate, " + category + ".tva_rate)"
 }
 
+// Options payantes d'une ligne (order_item_configuration), à ajouter au prix de
+// la ligne et à ses suppléments (extra) : elles ne sont dans aucun des deux, et
+// le ticket de caisse les compte (receipt.GetOrderSaleLines). Surcoût figé à la
+// vente (migration 173), à défaut celui du catalogue, × quantité de l'option.
+//
+// OrderItemPaidOptionsJoinSQL est la jointure (colonne option_price, en
+// centimes, par ligne) ; OrderItemPaidOptionsTTCSQL le terme à additionner au
+// prix unitaire de la ligne avant de multiplier par sa quantité. Uber Eats et
+// Deliveroo sont exclus, comme sur le ticket : on ne sait pas si le prix unitaire
+// de la plateforme inclut déjà ses modificateurs. Paramètres : alias de
+// orderitems / de la jointure / de orders.
+func OrderItemPaidOptionsJoinSQL(item, join string) string {
+	return `LEFT JOIN (
+			SELECT oic.order_item_id,
+			       CAST(SUM(oic.quantity * COALESCE(oic.extra_price, cao.extra_price, 0)) AS bigint) AS option_price
+			FROM order_item_configuration oic
+			LEFT JOIN configurable_attribute_options cao ON cao.id = oic.configuration_attribute_option_id
+			WHERE oic.quantity > 0
+			GROUP BY oic.order_item_id
+		) ` + join + ` ON ` + join + `.order_item_id = ` + item + `.order_item_id`
+}
+
+func OrderItemPaidOptionsTTCSQL(join, order string) string {
+	return "CASE WHEN COALESCE(" + order + ".brand, '') IN ('" + BrandUberEats + "', '" + BrandDeliveroo + "') THEN 0" +
+		" ELSE COALESCE(" + join + ".option_price, 0) END"
+}
+
 // OrderItemInsert represents an order item insert
 type OrderItemInsert struct {
 	OrderID         string

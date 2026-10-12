@@ -64,7 +64,7 @@ func (r *CashRegisterRepository) computeRegisterVAT(ctx context.Context, cashReg
 		SELECT o.order_id,
 		       tva.tva_id,
 		       `+models.OrderItemTVARateSQL("oi", "tva")+` AS rate,
-		       (oi.price + COALESCE(e.extra_price, 0)) * oi.quantity AS ttc
+		       (oi.price + COALESCE(e.extra_price, 0) + `+models.OrderItemPaidOptionsTTCSQL("opt", "o")+`) * oi.quantity AS ttc
 		FROM orders o
 		INNER JOIN orderitems oi ON oi.order_id = o.order_id
 		INNER JOIN products p ON p.product_id = oi.product_id
@@ -74,6 +74,7 @@ func (r *CashRegisterRepository) computeRegisterVAT(ctx context.Context, cashReg
 			FROM extra
 			GROUP BY order_item_id
 		) e ON e.order_item_id = oi.order_item_id
+		`+models.OrderItemPaidOptionsJoinSQL("oi", "opt")+`
 		WHERE `+RegisterOrdersSQL("o")+`
 		  AND o.state = 'CLOSED'
 		  AND upper(o.brand_status) NOT IN `+models.VoidOrderBrandStatusesSQL+`

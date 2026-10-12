@@ -129,3 +129,24 @@ de nouveau les 10 registres pour confirmer l'égalité, puis lancer le rattrapag
 - Un paiement borne n'est rattaché qu'à la **prochaine** clôture du merchant : une
   vente de la veille tombe dans le registre du lendemain, avec les deux moitiés
   désormais d'accord sur ce registre. Inchangé.
+
+## Second écart : les options payantes (2026-10-12)
+
+Après le premier correctif, des registres d'octobre gardaient quelques euros de
+TVA TTC en moins que les encaissements. Cause : les **options payantes**
+(`order_item_configuration.extra_price`, ou le prix du catalogue pour les lignes
+d'avant la migration 173) ne sont ni dans `orderitems.price` ni dans `extra`. Le
+ticket de caisse les compte (`receipt.GetOrderSaleLines`), pas la TVA du registre
+ni celle de l'export comptable, qui n'ajoutaient que les suppléments.
+
+Correctif : `models.OrderItemPaidOptionsJoinSQL` / `OrderItemPaidOptionsTTCSQL`,
+ajoutés au TTC des lignes dans `register_vat.go` et `pos/accounting`
+(`GetOrderVATLines`), avec la règle du ticket : surcoût figé, à défaut catalogue,
+× quantité de l'option × quantité de l'article, au taux de l'article ; Uber Eats et
+Deliveroo exclus (le prix plateforme inclut peut-être déjà ses modificateurs).
+
+Vérifié sur staging, en lecture seule : sur 500 commandes closes avec option
+payante, TTC des lignes = montant payé pour 404 avec les options, 6 sans.
+Les 96 restantes n'ont pas été analysées (staging peu représentatif).
+Non corrigés, même lacune : `pos/reports`, `stats`, `analytics` (TTC par produit).
+Test d'intégration non écrit pour ce cas.
