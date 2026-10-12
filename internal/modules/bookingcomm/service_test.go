@@ -430,3 +430,11 @@ func TestSendWaitlistAvailable_WithMerchantID_IsCounted(t *testing.T) {
 func (m *mockMailer) SendPayoutDocuments(to string, data mailer.PayoutDocumentsData, attachments []mailer.Attachment) error {
 	return nil
 }
+
+func (m *mockMailer) SendSubscriptionInvoice(to string, data mailer.SubscriptionInvoiceData, attachment mailer.Attachment) error {
+	return nil
+}
+
+func (m *mockMailer) SendCommissionInvoice(to string, data mailer.CommissionInvoiceData, attachments []mailer.Attachment) error {
+	return nil
+}

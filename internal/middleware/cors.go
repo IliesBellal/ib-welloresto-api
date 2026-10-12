@@ -42,7 +42,7 @@ func SetCORSHeaders(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-BasicAuth, X-App-Source, Idempotency-Key")
-		w.Header().Set("Access-Control-Expose-Headers", "Link")
+		w.Header().Set("Access-Control-Expose-Headers", "Link, X-Registers-Exported, X-Registers-Ignored")
 	}
 }
 
@@ -99,6 +99,9 @@ func CORSMiddleware() *cors.Cors {
 
 		ExposedHeaders: []string{
 			"Link",
+			// Export PDF des registres : nombre de PDF du ZIP et de registres écartés.
+			"X-Registers-Exported",
+			"X-Registers-Ignored",
 		},
 
 		AllowCredentials: true,

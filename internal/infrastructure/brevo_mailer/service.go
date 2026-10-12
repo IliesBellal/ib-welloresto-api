@@ -201,6 +201,42 @@ func (b *BrevoMailer) SendPayoutDocuments(to string, data mailer.PayoutDocuments
 	return b.sendEmailViaBrevoWithAttachments("Wello Resto", mailer.InvoiceEmail, to, subject, html, attachments)
 }
 
+// SendCommissionInvoice envoie la facture de commission mensuelle et son récapitulatif, de façon synchrone.
+func (b *BrevoMailer) SendCommissionInvoice(to string, data mailer.CommissionInvoiceData, attachments []mailer.Attachment) error {
+	if data.SupportEmail == "" {
+		data.SupportEmail = mailer.SupportEmail
+	}
+
+	html, err := b.renderTemplate("commission_invoice.html", data)
+	if err != nil {
+		return fmt.Errorf("failed to render commission invoice template: %w", err)
+	}
+
+	subject := "Votre facture de commission Wello Resto — " + data.Month
+	if data.TestNotice != "" {
+		subject = "[TEST] " + data.MerchantName + " — " + subject
+	}
+	return b.sendEmailViaBrevoWithAttachments("Wello Resto", mailer.InvoiceEmail, to, subject, html, attachments)
+}
+
+// SendSubscriptionInvoice envoie la facture Stripe d'un paiement d'abonnement, de façon synchrone.
+func (b *BrevoMailer) SendSubscriptionInvoice(to string, data mailer.SubscriptionInvoiceData, attachment mailer.Attachment) error {
+	if data.SupportEmail == "" {
+		data.SupportEmail = mailer.SupportEmail
+	}
+
+	html, err := b.renderTemplate("subscription_invoice.html", data)
+	if err != nil {
+		return fmt.Errorf("failed to render subscription invoice template: %w", err)
+	}
+
+	subject := "Votre facture Wello Resto n° " + data.InvoiceNumber
+	if data.TestNotice != "" {
+		subject = "[TEST] " + data.MerchantName + " — " + subject
+	}
+	return b.sendEmailViaBrevoWithAttachments("Wello Resto", mailer.InvoiceEmail, to, subject, html, []mailer.Attachment{attachment})
+}
+
 // TriggerTestEmail sends a test email
 func (b *BrevoMailer) TriggerTestEmail(writer http.ResponseWriter, request *http.Request) {
 	data := mailer.ScanNOrderConfirmationData{

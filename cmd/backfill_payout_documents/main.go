@@ -8,15 +8,15 @@
 // idempotente : un payout déjà traité n'est jamais renvoyé, et la facture d'un
 // payout n'est émise qu'une fois.
 //
-// ATTENTION : hors phase de test (documentsTestMode = false dans
-// internal/modules/payouts/legal.go), les mails partent chez les restaurateurs.
+// ATTENTION : hors phase de test (docsmode.TestMode = false dans
+// internal/docsmode), les mails partent chez les restaurateurs.
 // Lancer d'abord sans --apply : la commande liste ce qu'elle traiterait.
 //
 // Usage (la clé STRIPE_API_KEY et la base doivent être celles de l'environnement visé) :
 //
 //	# Un payout précis (le compte connecté est cherché automatiquement) :
-//	DB_DIALECT=postgres POSTGRES_URL=... STRIPE_API_KEY=... BREVO_API_KEY=... \
-//	  GOOGLE_API_KEY=x R2_PRIVATE_BUCKET=... PIN_PEPPER=x \
+//	POSTGRES_URL=... STRIPE_API_KEY=... BREVO_API_KEY=... \
+//	  R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_ENDPOINT=... R2_PRIVATE_BUCKET=... \
 //	  go run ./cmd/backfill_payout_documents --payout=po_xxx [--apply]
 //
 //	# Tous les payouts payés des 60 derniers jours :
@@ -25,18 +25,19 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
-	"welloresto-api/internal/config"
-	"welloresto-api/internal/database"
 	"welloresto-api/internal/infrastructure/brevo_mailer"
 	"welloresto-api/internal/infrastructure/r2"
 	stripeclient "welloresto-api/internal/infrastructure/stripe"
 	"welloresto-api/internal/modules/payouts"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"go.uber.org/zap"
 )
 
@@ -50,18 +51,18 @@ func main() {
 		log.Fatal("indiquer soit --payout=po_..., soit --since-days=N")
 	}
 
-	cfg := config.Load()
-	if cfg.Stripe.APIKey == "" {
-		log.Fatal("STRIPE_API_KEY n'est pas défini")
+	stripeKey, postgresURL := os.Getenv("STRIPE_API_KEY"), os.Getenv("POSTGRES_URL")
+	if stripeKey == "" || postgresURL == "" {
+		log.Fatal("STRIPE_API_KEY et POSTGRES_URL doivent être définis")
 	}
 
-	db, err := database.NewPostgres(cfg.Database)
+	db, err := sql.Open("pgx", postgresURL)
 	if err != nil {
 		log.Fatalf("connexion à la base : %v", err)
 	}
 	defer db.Close()
 
-	stripeMgr := stripeclient.NewStripeManager(cfg.Stripe.APIKey)
+	stripeMgr := stripeclient.NewStripeManager(stripeKey)
 	repo := payouts.NewRepository(db)
 	ctx := context.Background()
 
@@ -73,18 +74,18 @@ func main() {
 	// Archivage R2 optionnel : sans lui, les PDF partent quand même par mail.
 	var store payouts.Store
 	if r2Client, err := r2.NewClient(r2.UploadConfig{
-		AccessKeyID:     cfg.R2.AccessKeyID,
-		SecretAccessKey: cfg.R2.SecretAccessKey,
-		Endpoint:        cfg.R2.Endpoint,
-		Bucket:          cfg.R2.PrivateBucket,
-		PublicBaseURL:   cfg.R2.PublicBaseURL,
+		AccessKeyID:     os.Getenv("R2_ACCESS_KEY_ID"),
+		SecretAccessKey: os.Getenv("R2_SECRET_ACCESS_KEY"),
+		Endpoint:        os.Getenv("R2_ENDPOINT"),
+		Bucket:          os.Getenv("R2_PRIVATE_BUCKET"),
+		PublicBaseURL:   os.Getenv("R2_PUBLIC_BASE_URL"),
 	}); err != nil {
 		log.Printf("R2 privé indisponible, PDF non archivés : %v", err)
 	} else {
 		store = r2Client
 	}
 
-	mail := brevo_mailer.NewBrevoMailer(brevo_mailer.Config{APIKey: cfg.Brevo.APIKey})
+	mail := brevo_mailer.NewBrevoMailer(brevo_mailer.Config{APIKey: os.Getenv("BREVO_API_KEY")})
 	svc := payouts.NewService(repo, stripeMgr, store, mail, zap.NewExample())
 
 	if *payoutID != "" {

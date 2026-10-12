@@ -109,10 +109,38 @@ type PayoutDocumentsData struct {
 	PayoutID      string
 	Amount        string // ex : "1450,00 €"
 	ArrivalDate   string // ex : "07/11/2026"
-	InvoiceNumber string // vide si aucune facture n'accompagne le relevé
+	BackOfficeURL string // lien vers les virements dans le back-office
 	SupportEmail  string
 	// TestNotice, non vide, est affiché en tête du mail (phase de test : le
 	// destinataire n'est pas le restaurateur).
+	TestNotice string
+}
+
+// CommissionInvoiceData pour le mail mensuel « facture de commission +
+// récapitulatif » (deux PDF en pièces jointes).
+type CommissionInvoiceData struct {
+	MerchantName  string
+	InvoiceNumber string
+	Month         string // ex : "octobre 2026"
+	Amount        string // commission TTC, ex : "42,00 €"
+	PayoutCount   int
+	BackOfficeURL string // lien vers les factures dans le back-office
+	SupportEmail  string
+	// TestNotice, non vide, est affiché en tête du mail (le destinataire n'est
+	// pas le restaurateur).
+	TestNotice string
+}
+
+// SubscriptionInvoiceData pour le mail « facture d'abonnement » (PDF Stripe en pièce jointe).
+type SubscriptionInvoiceData struct {
+	MerchantName  string
+	InvoiceNumber string
+	Amount        string // ex : "79,00 €"
+	Period        string // ex : "du 01/10/2026 au 31/10/2026" ; vide si inconnue
+	HostedURL     string // page de la facture chez Stripe ; vide si inconnue
+	SupportEmail  string
+	// TestNotice, non vide, est affiché en tête du mail (le destinataire n'est
+	// pas le restaurateur).
 	TestNotice string
 }
 

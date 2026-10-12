@@ -20,6 +20,14 @@ var parisLocation = func() *time.Location {
 
 func formatDate(t time.Time) string { return t.In(parisLocation).Format("02/01/2006") }
 
+var frenchMonths = [...]string{"janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"}
+
+// monthLabel : "octobre 2026".
+func monthLabel(t time.Time) string {
+	t = t.In(parisLocation)
+	return fmt.Sprintf("%s %d", frenchMonths[t.Month()-1], t.Year())
+}
+
 // formatEUR formate des centimes à la française : 123456 -> "1 234,56 €".
 func formatEUR(cents int64) string {
 	sign := ""
@@ -37,7 +45,7 @@ func formatEUR(cents int64) string {
 }
 
 // document enveloppe gofpdf : texte UTF-8 (traduit en cp1252) et mise en page
-// commune aux deux justificatifs.
+// commune aux justificatifs.
 type document struct {
 	pdf *gofpdf.Fpdf
 	tr  func(string) string
@@ -78,6 +86,13 @@ func (d *document) row(bold bool, label, amount string) {
 	d.pdf.CellFormat(60, 8, d.tr(amount), "1", 1, "R", false, 0, "")
 }
 
+// specimen imprime le bandeau d'essai en phase de test.
+func (d *document) specimen(label string) {
+	d.pdf.SetTextColor(180, 90, 0)
+	d.text("B", 9, "L", 6, label)
+	d.pdf.SetTextColor(0, 0, 0)
+}
+
 func (d *document) bytes() ([]byte, error) {
 	buf := new(bytes.Buffer)
 	if err := d.pdf.Output(buf); err != nil {
@@ -93,28 +108,30 @@ func plural(n int, one, many string) string {
 	return one
 }
 
+// identityLines liste les mentions d'un établissement, sans les lignes vides.
+func identityLines(m *Merchant) []string {
+	out := []string{m.Name}
+	for _, kv := range [][2]string{{"Adresse", m.Address}, {"SIRET", m.SIRET}, {"N° TVA intracommunautaire", m.VATNumber}} {
+		if v := strings.TrimSpace(kv[1]); v != "" {
+			out = append(out, kv[0]+" : "+v)
+		}
+	}
+	return out
+}
+
 // buildStatementPDF produit le relevé de versement d'un payout : totaux par
-// canal, déductions et net versé, sans le détail des commandes. invoice, s'il
-// existe, est la facture de commission jointe au même envoi.
-func buildStatementPDF(m *Merchant, ref Ref, s *Summary, invoice *Invoice) ([]byte, error) {
+// canal, déductions et net versé, sans le détail des commandes.
+func buildStatementPDF(m *Merchant, ref Ref, s *Summary) ([]byte, error) {
 	d := newDocument()
 
 	d.text("B", 16, "L", 9, "Relevé de versement")
 	d.text("", 9, "L", 5, "Document récapitulatif établi par Wello Resto. Il ne tient pas lieu de facture.")
 	if documentsTestMode {
-		d.pdf.SetTextColor(180, 90, 0)
-		d.text("B", 9, "L", 6, "SPÉCIMEN — document d'essai")
-		d.pdf.SetTextColor(0, 0, 0)
+		d.specimen("SPÉCIMEN — document d'essai")
 	}
 
 	d.section("Établissement")
-	establishment := []string{m.Name}
-	for _, kv := range [][2]string{{"Adresse", m.Address}, {"SIRET", m.SIRET}, {"N° TVA intracommunautaire", m.VATNumber}} {
-		if v := strings.TrimSpace(kv[1]); v != "" {
-			establishment = append(establishment, kv[0]+" : "+v)
-		}
-	}
-	d.lines(10, 5.5, establishment...)
+	d.lines(10, 5.5, identityLines(m)...)
 
 	d.section("Versement")
 	d.lines(10, 5.5,
@@ -154,47 +171,39 @@ func buildStatementPDF(m *Merchant, ref Ref, s *Summary, invoice *Invoice) ([]by
 		d.pdf.SetTextColor(0, 0, 0)
 	}
 
-	if invoice != nil {
-		d.pdf.Ln(4)
-		d.lines(9, 5, fmt.Sprintf("La facture %s de la commission ci-dessus (%s TTC) est jointe à ce relevé.", invoice.Number, formatEUR(invoice.AmountTTC)))
-	}
+	d.pdf.Ln(4)
+	d.lines(9, 5, "La commission de ce versement est facturée une fois par mois : la facture et le récapitulatif de toutes les commissions du mois vous sont envoyés en début de mois suivant.")
 
 	d.pdf.Ln(6)
 	d.text("I", 8, "R", 5, fmt.Sprintf("Document généré le %s", formatDate(time.Now())))
 	return d.bytes()
 }
 
-// buildInvoicePDF produit la facture de la commission de la plateforme sur un
-// payout, acquittée par prélèvement sur les encaissements.
-func buildInvoicePDF(m *Merchant, ref Ref, inv *Invoice) ([]byte, error) {
+// buildInvoicePDF produit la facture mensuelle de la commission de la
+// plateforme, acquittée par prélèvement à la source sur les encaissements.
+func buildInvoicePDF(m *Merchant, inv *Invoice) ([]byte, error) {
 	d := newDocument()
 
 	d.text("B", 16, "L", 9, "FACTURE")
 	d.text("B", 11, "L", 6, "N° "+inv.Number)
 	d.text("", 10, "L", 5.5, "Date d'émission : "+formatDate(inv.IssuedAt))
 	if inv.Series == seriesTest {
-		d.pdf.SetTextColor(180, 90, 0)
-		d.text("B", 9, "L", 6, "SPÉCIMEN — facture d'essai, sans valeur comptable")
-		d.pdf.SetTextColor(0, 0, 0)
+		d.specimen("SPÉCIMEN — facture d'essai, sans valeur comptable")
 	}
 
 	d.section("Émetteur")
 	d.lines(10, 5.5, issuer.lines()...)
 
 	d.section("Client")
-	client := []string{m.Name}
-	for _, kv := range [][2]string{{"Adresse", m.Address}, {"SIRET", m.SIRET}, {"N° TVA intracommunautaire", m.VATNumber}} {
-		if v := strings.TrimSpace(kv[1]); v != "" {
-			client = append(client, kv[0]+" : "+v)
-		}
-	}
-	d.lines(10, 5.5, client...)
+	d.lines(10, 5.5, identityLines(m)...)
 
 	d.section("Prestation")
 	d.lines(10, 5.5,
 		"Commission de service Wello Resto (commandes en ligne et bornes de commande)",
-		fmt.Sprintf("Encaissements du %s au %s, versement Stripe du %s (réf. %s)",
-			formatDate(inv.PeriodStart), formatDate(inv.PeriodEnd), formatDate(ref.ArrivalDate), ref.PayoutID),
+		fmt.Sprintf("%s : %d %s Stripe arrivé%s du %s au %s",
+			monthLabel(inv.PeriodMonth), inv.PayoutCount, plural(inv.PayoutCount, "versement", "versements"),
+			plural(inv.PayoutCount, "", "s"), formatDate(inv.PeriodStart), formatDate(inv.PeriodEnd)),
+		"Le détail de chaque versement figure dans le récapitulatif joint.",
 	)
 
 	d.pdf.Ln(3)
@@ -203,6 +212,97 @@ func buildInvoicePDF(m *Merchant, ref Ref, inv *Invoice) ([]byte, error) {
 	d.row(true, "Total TTC", formatEUR(inv.AmountTTC))
 
 	d.pdf.Ln(5)
-	d.lines(9, 5, fmt.Sprintf("Facture acquittée : montant prélevé sur les encaissements du restaurateur lors du versement Stripe du %s.", formatDate(ref.ArrivalDate)))
+	d.lines(9, 5, "Facture acquittée : montant prélevé à la source sur les encaissements du restaurateur, avant chaque versement Stripe.")
+	return d.bytes()
+}
+
+// recapColumns : largeurs des colonnes du récapitulatif (190 mm au total).
+var recapColumns = [...]float64{20, 50, 24, 22, 24, 24, 26}
+
+func (d *document) recapHeader() {
+	d.pdf.SetFont("Arial", "B", 8)
+	d.pdf.SetFillColor(235, 235, 235)
+	for i, label := range []string{"Arrivée", "Référence Stripe", "Encaissements", "Remb. et ajust.", "Commission TTC", "Frais Stripe", "Net versé"} {
+		align := "R"
+		if i < 2 {
+			align = "L"
+		}
+		d.pdf.CellFormat(recapColumns[i], 7, d.tr(label), "1", 0, align, true, 0, "")
+	}
+	d.pdf.Ln(-1)
+}
+
+func (d *document) recapRow(bold bool, cells [7]string) {
+	style := ""
+	if bold {
+		style = "B"
+	}
+	for i, cell := range cells {
+		size := 8.0
+		align := "R"
+		if i == 1 {
+			size = 7 // la référence Stripe est longue
+		}
+		if i < 2 {
+			align = "L"
+		}
+		d.pdf.SetFont("Arial", style, size)
+		d.pdf.CellFormat(recapColumns[i], 6.5, d.tr(cell), "1", 0, align, false, 0, "")
+	}
+	d.pdf.Ln(-1)
+}
+
+// buildRecapPDF produit le récapitulatif mensuel des commissions : une ligne
+// par virement du mois, dont le total de commission égale celui de la facture.
+func buildRecapPDF(m *Merchant, inv *Invoice, lines []Line) ([]byte, error) {
+	d := newDocument()
+
+	d.text("B", 16, "L", 9, "Récapitulatif des commissions — "+monthLabel(inv.PeriodMonth))
+	d.text("", 9, "L", 5, "Document récapitulatif établi par Wello Resto, joint à la facture "+inv.Number+".")
+	if inv.Series == seriesTest {
+		d.specimen("SPÉCIMEN — document d'essai")
+	}
+
+	d.section("Établissement")
+	d.lines(10, 5.5, identityLines(m)...)
+
+	d.section("Versements du mois")
+	d.recapHeader()
+
+	var sales, other, commission, fees, net int64
+	discrepancy := false
+	for _, l := range lines {
+		sales += l.Sales()
+		other += l.Refunds + l.Adjustments
+		commission += l.Commission
+		fees += l.StripeFees
+		net += l.Net
+		discrepancy = discrepancy || l.Discrepancy != 0
+		d.recapRow(false, [7]string{
+			formatDate(l.ArrivalDate), l.PayoutID, formatEUR(l.Sales()), formatEUR(l.Refunds + l.Adjustments),
+			formatEUR(l.Commission), formatEUR(l.StripeFees), formatEUR(l.Net),
+		})
+	}
+	d.recapRow(true, [7]string{
+		"Total", fmt.Sprintf("%d %s", len(lines), plural(len(lines), "versement", "versements")),
+		formatEUR(sales), formatEUR(other), formatEUR(commission), formatEUR(fees), formatEUR(net),
+	})
+
+	d.section("Facture")
+	d.lines(10, 5.5, fmt.Sprintf("Commission du mois : %s HT + %s de TVA (%d %%) = %s TTC, facture %s.",
+		formatEUR(inv.AmountHT), formatEUR(inv.AmountVAT), vatRatePercent, formatEUR(inv.AmountTTC), inv.Number))
+	if commission != inv.AmountTTC {
+		d.pdf.SetTextColor(180, 90, 0)
+		d.lines(9, 5, fmt.Sprintf("Attention : le total des commissions listées (%s) diffère du montant facturé.", formatEUR(commission)))
+		d.pdf.SetTextColor(0, 0, 0)
+	}
+	if discrepancy {
+		d.pdf.SetTextColor(180, 90, 0)
+		d.lines(9, 5, "Certains versements présentent un écart non rapproché par Stripe : voir leur relevé.")
+		d.pdf.SetTextColor(0, 0, 0)
+	}
+
+	d.pdf.Ln(6)
+	d.text("I", 8, "R", 5, fmt.Sprintf("Document généré le %s", formatDate(time.Now())))
 	return d.bytes()
 }

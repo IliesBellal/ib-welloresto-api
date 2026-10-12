@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Votre facture de commission</title>
+</head>
+<body style="font-family: 'UberMoveText', 'Open Sans', Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #ffffff;">
+
+<table width="100%" style="max-width: 712px; margin: auto;">
+    <tbody>
+    <tr>
+        <td align="left" style="padding: 40px 20px;">
+            {{ if .TestNotice }}
+            <p style="font-size:12px; color:#8a5a00; background-color:#fff4d6; border-radius:6px; padding:10px 12px; line-height:18px;">{{ .TestNotice }}</p>
+            {{ end }}
+            <h1 style="font-size:24px; color:#000; margin:0 0 16px 0;">Votre facture de commission — {{ .Month }}</h1>
+            <p style="font-size:14px; color:#333; line-height:22px;">
+                Bonjour l'équipe {{ .MerchantName }},<br>
+                La commission Wello Resto prélevée sur vos encaissements de {{ .Month }} s'élève à
+                <strong>{{ .Amount }} TTC</strong>, sur {{ .PayoutCount }} virement{{ if gt .PayoutCount 1 }}s{{ end }}.
+            </p>
+            <p style="font-size:14px; color:#333; line-height:22px;">
+                Vous trouverez en pièces jointes :
+            </p>
+            <ul style="font-size:14px; color:#333; line-height:22px;">
+                <li>la <strong>facture {{ .InvoiceNumber }}</strong> ;</li>
+                <li>le <strong>récapitulatif du mois</strong>, qui liste chaque virement et la commission correspondante.</li>
+            </ul>
+            <p style="font-size:14px; color:#333; line-height:22px;">
+                La commission est déjà déduite de vos virements : cette facture est acquittée, il n'y a rien à payer.
+            </p>
+            {{ if .BackOfficeURL }}
+            <div style="padding: 10px 0 25px 0;">
+                <a href="{{ .BackOfficeURL }}" target="_blank" style="background-color:#000000; color:#ffffff; display:inline-block; padding: 13px 16px; border-radius: 10px; text-decoration:none; font-weight:bold; font-size:14px;">
+                    Consulter mes factures
+                </a>
+            </div>
+            {{ end }}
+            <p style="font-size:12px; color:#666; padding-top: 30px;">
+                Besoin d'aide ? Contactez-nous à <a href="mailto:{{ .SupportEmail }}" style="color:#000;">{{ .SupportEmail }}</a>
+            </p>
+        </td>
+    </tr>
+    </tbody>
+</table>
+</body>
+</html>

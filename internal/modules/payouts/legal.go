@@ -3,6 +3,7 @@ package payouts
 import (
 	"strings"
 
+	"welloresto-api/internal/docsmode"
 	"welloresto-api/internal/infrastructure/mailer"
 )
 
@@ -17,11 +18,12 @@ const (
 	// chez les restaurateurs mais à testRecipient, et les factures portent la
 	// série d'essai (TEST-…), qui ne consomme pas la numérotation légale. Le
 	// passage en réel (false) est décrit dans docs/payouts-justificatifs.md.
-	documentsTestMode = true
+	// L'interrupteur est partagé avec les factures d'abonnement : internal/docsmode.
+	documentsTestMode = docsmode.TestMode
 
 	// testRecipient reçoit tous les justificatifs en phase de test, et ceux
 	// d'un restaurateur sans adresse e-mail une fois en réel.
-	testRecipient = "iliesbellal@gmail.com"
+	testRecipient = docsmode.TestRecipient
 
 	// vatRatePercent : TVA appliquée à la commission de la plateforme.
 	vatRatePercent = 20

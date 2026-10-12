@@ -90,6 +90,11 @@ func SetupTasks(
 	// instance à la fois, rattrapage des mois passés compris
 	// (docs/attestation-conformite-05-lot-D-brief.md).
 	add("@hourly", taskManager.RunFiscalArchives)
+	// Synchronisation comptable : envoie au logiciel de comptabilité de chaque
+	// établissement connecté (Pennylane…) l'écriture de ventes de chaque
+	// clôture fiscale journalière (docs/accounting-sync.md). Placée après
+	// RunFiscalClosures : elle lit les clôtures qu'elle vient d'écrire.
+	add("@hourly", taskManager.RunAccountingSync)
 
 	// ── Justificatifs de versement ───────────────────────────────────────────
 	// Relevé de versement + facture de commission de chaque payout Stripe payé
@@ -97,6 +102,12 @@ func SetupTasks(
 	// file ; cette tâche le traite, et retente toutes les heures tant que Stripe
 	// n'a pas fini de rapprocher les lignes du payout.
 	add("@hourly", taskManager.RunPayoutDocuments)
+	// Facture de commission et récapitulatif de chaque mois, émis à partir du 3 :
+	// indépendants du rythme des virements.
+	add("@hourly", taskManager.RunCommissionInvoices)
+	// Facture Stripe de chaque paiement d'abonnement, envoyée au restaurateur
+	// (le webhook invoice.paid met la facture en file).
+	add("@hourly", taskManager.RunSubscriptionInvoiceDocuments)
 
 	// ── RBAC ─────────────────────────────────────────────────────────────────
 	// Réconcilie le rôle admin de chaque établissement avec le catalogue de

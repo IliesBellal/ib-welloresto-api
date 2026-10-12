@@ -1,4 +1,4 @@
-# Justificatifs de versement
+# Justificatifs de versement et factures d'abonnement
 
 Chaque payout Stripe versé à un restaurateur est accompagné de deux documents,
 envoyés dans un seul mail :
@@ -70,16 +70,21 @@ plutôt que de faire échouer le relevé.
 | Commission | TTC, TVA 20 % : HT = TTC / 1,2, arrondi au centime ; `HT + TVA = TTC` toujours. |
 | Commission négative | `log.Error`, aucune facture, le relevé part seul. Commission nulle : pas de facture, sans bruit. |
 | Numérotation | `<série>-<année>-<n°6 chiffres>`, compteur `invoice_counters` incrémenté dans la transaction de l'insertion de la facture : jamais de trou. |
-| Mentions légales, destinataire, série | En dur dans [legal.go](../internal/modules/payouts/legal.go), sans variable d'environnement. |
+| Mentions légales, série | En dur dans [legal.go](../internal/modules/payouts/legal.go), sans variable d'environnement. |
+| Phase de test, destinataire | En dur, interrupteur unique [internal/docsmode](../internal/docsmode/docsmode.go). |
 | Émetteur | Wello Resto, exploité par BINYA SAS (capital 1 000 €, SIREN 103020558, 13 rue Principale, 57450 Theding). RCS et n° de TVA inconnus : lignes omises de la facture. |
 | Mail | Un seul mail, deux pièces jointes (une seule si pas de facture). |
 
 ## Back-office
 
-Page **Comptabilité → Versements** (`/accounting/payouts` dans wello-back-office,
-droit `reports.financial.read`, comme les archives fiscales) : historique des
-versements dont les justificatifs ont été envoyés, avec boutons « Relevé » et
-« Facture ». API, dans le groupe `/accounting` :
+Page **Paramètres → Abonnement & facturation** (`/settings/subscription` dans
+wello-back-office), en trois onglets (`?tab=factures`, `?tab=virements`) :
+
+- **Abonnement** : composition et modules (existant) ;
+- **Factures** : factures d'abonnement (voir plus bas), droit `settings.manage` ;
+- **Virements** : justificatifs de versement, avec boutons « Relevé » et
+  « Facture ». Onglet visible avec le droit `reports.financial.read`
+  (l'API de ces documents est dans le groupe `/accounting`) :
 
 | Route | Rôle |
 |---|---|
@@ -91,25 +96,63 @@ Les liens passent par l'archive R2 privé : un PDF dont l'archivage a échoué
 téléchargeable. Un payout dont le restaurateur est inconnu n'apparaît dans
 aucun back-office.
 
+## Factures d'abonnement
+
+Même principe pour l'abonnement Wello Resto que paie le restaurateur (Stripe
+Billing, compte plateforme) : à chaque paiement, la **facture Stripe** est
+envoyée par mail et consultable dans l'onglet « Factures ».
+
+```
+Stripe ── invoice.paid ──► webhook ──► subscription_invoice_documents (pending)
+                                            │
+        cron @hourly RunSubscriptionInvoiceDocuments (une instance à la fois)
+                                            ▼
+      GET invoice (URL du PDF) ─► téléchargement du PDF ─► archive R2 ─► mail
+```
+
+- Le PDF envoyé est celui que **Stripe a émis** (numérotation et mentions légales
+  de Stripe Billing), transmis tel quel : aucune facture n'est regénérée.
+- Le webhook `invoice.paid` ([HandleInvoicePaid](../internal/webhook/stripe/service.go))
+  met la facture en file **après** avoir traité le paiement ; un échec de mise en
+  file est loggué et ne bloque jamais le traitement du paiement (le rattrapage
+  récupère la facture manquante). Les factures à zéro (essai gratuit) et celles
+  d'un abonnement inconnu sont ignorées.
+- La tâche relit la facture chez Stripe (l'URL du PDF y est renouvelée), la période
+  de service est lue sur les lignes de la facture (celle de la facture vaut sa date
+  d'émission pour un abonnement). Mail ou PDF en échec : retenté chaque heure, 72
+  fois, puis `failed` + log d'erreur.
+- API (groupe `/billing`, droit `settings.manage`) : `GET /billing/invoices` et
+  `GET /billing/invoices/{invoice_id}/download` (lien signé R2 d'une heure).
+- Code : [internal/modules/subscriptioninvoices/](../internal/modules/subscriptioninvoices/),
+  table `subscription_invoice_documents` (migration 179).
+- Rattrapage : `cmd/backfill_subscription_invoices --since-days=N [--apply]`.
+
+Vérifié en mode test sur une vraie facture d'abonnement (79 €) : lecture de la
+facture, période, téléchargement du PDF (39 Ko) et rattachement à l'établissement.
+
 ## Phase de test (état actuel)
 
-`documentsTestMode = true` dans `legal.go` :
+`docsmode.TestMode = true` ([internal/docsmode](../internal/docsmode/docsmode.go),
+interrupteur **commun** aux justificatifs de versement et aux factures
+d'abonnement) :
 
-- **tous** les justificatifs partent à `iliesbellal@gmail.com` (objet préfixé
+- **tous** les documents partent à `iliesbellal@gmail.com` (objet préfixé
   `[TEST] <restaurateur>`, bandeau « phase de test » dans le corps) ;
-- les factures sont numérotées `TEST-2026-000001…`, bandeau « SPÉCIMEN » sur le
-  PDF, compteur séparé : la série légale `WR-` n'est pas consommée ;
+- les factures de commission sont numérotées `TEST-2026-000001…`, bandeau
+  « SPÉCIMEN » sur le PDF, compteur séparé : la série légale `WR-` n'est pas
+  consommée (les factures d'abonnement sont celles de Stripe, non concernées) ;
 - le mail « Virement en cours » existant continue de partir aux restaurateurs.
 
 ## Passage en production
 
-1. Appliquer la migration `migrations/todo/178_payout_documents.up.sql` (avant le
-   déploiement : le webhook écrit dans `payout_documents`).
+1. Appliquer les migrations `migrations/todo/178_payout_documents.up.sql` et
+   `179_subscription_invoice_documents.up.sql` (avant le déploiement : les webhooks
+   écrivent dans ces tables).
 2. Compléter l'émetteur dans `legal.go` (`issuer.RCS` et `issuer.VATNumber`, vides
    aujourd'hui : une facture avec ligne de TVA doit porter le n° de TVA de
    l'émetteur). Rien ne bloque s'ils restent vides, mais les factures réelles
    seraient alors incomplètes.
-3. Passer `documentsTestMode` à `false` : destinataire = `merchant.email`, série `WR-`.
+3. Passer `docsmode.TestMode` à `false` : destinataire = `merchant.email`, série `WR-`.
 4. Décider du sort de l'ancien mail « Virement en cours » (`SendPayoutPaidNotification`) :
    il fait doublon avec le nouveau mail ; à retirer de `HandlePayoutPaid`.
 5. Régénérer les documents des payouts passés avec la commande de rattrapage
@@ -128,6 +171,11 @@ DB_DIALECT=postgres POSTGRES_URL=... STRIPE_API_KEY=... BREVO_API_KEY=... \
 ... go run ./cmd/backfill_payout_documents --payout=po_xxx --apply
 ... go run ./cmd/backfill_payout_documents --since-days=60 --apply
 ```
+
+Les deux commandes de rattrapage sont autonomes : elles ne lisent que
+`POSTGRES_URL`, `STRIPE_API_KEY`, `BREVO_API_KEY` et, pour l'archivage R2
+(facultatif), `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT`,
+`R2_PRIVATE_BUCKET`.
 
 La clé Stripe et la base doivent être celles de l'environnement visé : un payout
 live n'existe pas avec une clé `sk_test_`.

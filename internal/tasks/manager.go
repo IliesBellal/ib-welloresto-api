@@ -12,6 +12,8 @@ import (
 	dunningModule "welloresto-api/internal/modules/dunning"
 	"welloresto-api/internal/modules/order_life_cycle"
 	payoutsModule "welloresto-api/internal/modules/payouts"
+	accountingSyncModule "welloresto-api/internal/modules/accountingsync"
+	subscriptionInvoicesModule "welloresto-api/internal/modules/subscriptioninvoices"
 	subscriptionsModule "welloresto-api/internal/modules/subscriptions"
 	upsellModule "welloresto-api/internal/modules/upsell"
 
@@ -37,6 +39,12 @@ type TasksManager struct {
 	// PayoutService — justificatifs de versement (RunPayoutDocuments). Nil
 	// tant que SetupRoutes ne l'a pas branché.
 	PayoutService *payoutsModule.Service
+	// SubscriptionInvoiceService — envoi des factures d'abonnement
+	// (RunSubscriptionInvoiceDocuments). Nil tant que SetupRoutes ne l'a pas branché.
+	SubscriptionInvoiceService *subscriptionInvoicesModule.Service
+	// AccountingSyncService — envoi des écritures de ventes aux logiciels de
+	// comptabilité (RunAccountingSync). Nil tant que SetupRoutes ne l'a pas branché.
+	AccountingSyncService *accountingSyncModule.Service
 	Logger        *zap.Logger
 }
 

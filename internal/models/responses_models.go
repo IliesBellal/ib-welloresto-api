@@ -327,6 +327,12 @@ var (
 	ErrAttestationBusy          = errors.New("attestation_busy")
 	ErrAttestationEmailInvalid  = errors.New("attestation_email_invalid")
 
+	// Export PDF des registres de caisse (unitaire et par lot).
+	ErrRegisterNotEnclosed        = errors.New("register_not_enclosed")
+	ErrRegisterExportEmpty        = errors.New("register_export_empty")
+	ErrRegisterExportTooMany      = errors.New("register_export_too_many")
+	ErrRegisterExportNoneEligible = errors.New("register_export_none_eligible")
+
 	ErrOrderOpen = errors.New("order_open")
 
 	ErrMFARequired = errors.New("mfa_required")
@@ -1293,6 +1299,30 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		errorMsg = "invalid email address"
 		userMessage = UserMessage(err)
 
+	case errors.Is(err, ErrRegisterNotEnclosed):
+		status = http.StatusConflict
+		errorStatus = "register_not_enclosed"
+		errorMsg = "the cash register must be validated before it can be exported"
+		userMessage = UserMessage(err)
+
+	case errors.Is(err, ErrRegisterExportEmpty):
+		status = http.StatusBadRequest
+		errorStatus = "register_export_empty"
+		errorMsg = "no cash register selected"
+		userMessage = UserMessage(err)
+
+	case errors.Is(err, ErrRegisterExportTooMany):
+		status = http.StatusBadRequest
+		errorStatus = "register_export_too_many"
+		errorMsg = "too many cash registers for a single export"
+		userMessage = UserMessage(err)
+
+	case errors.Is(err, ErrRegisterExportNoneEligible):
+		status = http.StatusConflict
+		errorStatus = "register_export_none_eligible"
+		errorMsg = "none of the requested cash registers can be exported"
+		userMessage = UserMessage(err)
+
 	case errors.Is(err, ErrFiscalArchiveStorage):
 		status = http.StatusServiceUnavailable
 		errorStatus = "fiscal_archive_storage_unavailable"
@@ -2051,11 +2081,22 @@ var attestationMessages = map[error]string{
 	ErrAttestationEmailInvalid:  "Adresse e-mail invalide.",
 }
 
+// registerExportMessages : messages en français des refus de l'export PDF des
+// registres de caisse (le plafond est RegisterExportMax, côté accounting).
+var registerExportMessages = map[error]string{
+	ErrRegisterNotEnclosed:        "Ce registre doit être clôturé et validé avant de pouvoir être exporté.",
+	ErrRegisterExportEmpty:        "Sélectionnez au moins un registre à exporter.",
+	ErrRegisterExportTooMany:      "Trop de registres pour un seul export (100 au maximum) : réduisez la période ou la sélection.",
+	ErrRegisterExportNoneEligible: "Aucun des registres demandés ne peut être exporté : un registre doit être clôturé et validé.",
+}
+
 // UserMessage renvoie le message en français d'un refus connu, vide sinon.
 func UserMessage(err error) string {
-	for e, msg := range attestationMessages {
-		if errors.Is(err, e) {
-			return msg
+	for _, messages := range []map[error]string{attestationMessages, registerExportMessages} {
+		for e, msg := range messages {
+			if errors.Is(err, e) {
+				return msg
+			}
 		}
 	}
 	return ""

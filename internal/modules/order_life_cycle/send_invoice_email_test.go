@@ -462,3 +462,11 @@ func TestSendInvoiceByEmail_RefundedOrder_SendsSaleReceiptNotCreditNote(t *testi
 func (m *fakeMailerService) SendPayoutDocuments(to string, data mailer.PayoutDocumentsData, attachments []mailer.Attachment) error {
 	return nil
 }
+
+func (m *fakeMailerService) SendSubscriptionInvoice(to string, data mailer.SubscriptionInvoiceData, attachment mailer.Attachment) error {
+	return nil
+}
+
+func (m *fakeMailerService) SendCommissionInvoice(to string, data mailer.CommissionInvoiceData, attachments []mailer.Attachment) error {
+	return nil
+}

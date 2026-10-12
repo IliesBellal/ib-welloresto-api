@@ -52,6 +52,14 @@ type Service interface {
 	// le mail parti.
 	SendPayoutDocuments(to string, data PayoutDocumentsData, attachments []Attachment) error
 
+	// SendCommissionInvoice envoie au restaurateur la facture de commission du
+	// mois et son récapitulatif, en pièces jointes. SYNCHRONE.
+	SendCommissionInvoice(to string, data CommissionInvoiceData, attachments []Attachment) error
+
+	// SendSubscriptionInvoice envoie au restaurateur la facture Stripe d'un
+	// paiement d'abonnement, en pièce jointe. SYNCHRONE, comme SendPayoutDocuments.
+	SendSubscriptionInvoice(to string, data SubscriptionInvoiceData, attachment Attachment) error
+
 	TriggerTestEmail(writer http.ResponseWriter, request *http.Request)
 }
 

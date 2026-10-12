@@ -23,6 +23,7 @@ import (
 	"welloresto-api/internal/modules/notification"
 	"welloresto-api/internal/modules/order_life_cycle"
 	"welloresto-api/internal/modules/payouts"
+	"welloresto-api/internal/modules/subscriptioninvoices"
 	"welloresto-api/internal/utils/dbutils"
 
 	"github.com/stripe/stripe-go/v78"
@@ -63,6 +64,18 @@ type StripeWebhookService struct {
 	// payoutDocs met les payouts payés en file pour leurs justificatifs
 	// (cf. SetPayoutDocuments). Nil : aucun justificatif.
 	payoutDocs payoutDocumentRecorder
+	// subscriptionInvoices met les factures d'abonnement payées en file pour
+	// leur envoi (cf. SetSubscriptionInvoices). Nil : aucun envoi.
+	subscriptionInvoices subscriptionInvoiceRecorder
+}
+
+type subscriptionInvoiceRecorder interface {
+	RecordPaidInvoice(ctx context.Context, ref subscriptioninvoices.Ref) error
+}
+
+// SetSubscriptionInvoices branche la file des factures d'abonnement à envoyer.
+func (s *StripeWebhookService) SetSubscriptionInvoices(recorder subscriptionInvoiceRecorder) {
+	s.subscriptionInvoices = recorder
 }
 
 type payoutDocumentRecorder interface {
@@ -1176,7 +1189,42 @@ func (s *StripeWebhookService) HandleInvoicePaid(ctx context.Context, data json.
 	if err := s.dunning.ClearDunning(ctx, merchantID); err != nil {
 		return err
 	}
-	return s.repo.UpdateSubscriptionBillingPeriod(ctx, merchantID, invoice.PeriodEnd)
+	if err := s.repo.UpdateSubscriptionBillingPeriod(ctx, merchantID, invoice.PeriodEnd); err != nil {
+		return err
+	}
+
+	// Envoi de la facture au restaurateur : jamais bloquant pour le traitement du
+	// paiement ci-dessus. Un échec ici est loggué, et le rattrapage
+	// (cmd/backfill_subscription_invoices) récupère la facture manquante.
+	if s.subscriptionInvoices != nil {
+		ref := subscriptioninvoices.Ref{
+			InvoiceID:   invoice.ID,
+			MerchantID:  merchantID,
+			Number:      invoice.Number,
+			AmountPaid:  invoice.AmountPaid,
+			Currency:    string(invoice.Currency),
+			PeriodStart: time.Unix(invoice.PeriodStart, 0),
+			PeriodEnd:   time.Unix(invoice.PeriodEnd, 0),
+			PaidAt:      time.Now(),
+		}
+		if invoice.StatusTransitions != nil && invoice.StatusTransitions.PaidAt > 0 {
+			ref.PaidAt = time.Unix(invoice.StatusTransitions.PaidAt, 0)
+		}
+		// La période de service est sur les lignes (celle de la facture vaut sa
+		// date d'émission pour un abonnement) ; ProcessPending la relit de toute façon.
+		if invoice.Lines != nil {
+			for _, line := range invoice.Lines.Data {
+				if line != nil && line.Period != nil && line.Period.End > line.Period.Start {
+					ref.PeriodStart, ref.PeriodEnd = time.Unix(line.Period.Start, 0), time.Unix(line.Period.End, 0)
+					break
+				}
+			}
+		}
+		if err := s.subscriptionInvoices.RecordPaidInvoice(ctx, ref); err != nil {
+			logger.FromContext(ctx).Error("[stripe webhook] subscription invoice " + invoice.ID + " not queued for sending: " + err.Error())
+		}
+	}
+	return nil
 }
 
 // HandleInvoicePaymentFailed — LOT B B2b-1 : point d'entrée de la cascade

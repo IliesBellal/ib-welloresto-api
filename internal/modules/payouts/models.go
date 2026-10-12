@@ -77,52 +77,87 @@ type Summary struct {
 	PeriodEnd   time.Time
 }
 
+// Reconciled dit si les lignes du payout expliquent entièrement son montant.
+func (s *Summary) Reconciled() bool { return s.Discrepancy == 0 }
+
+// channelAmount renvoie le total des ventes d'un canal.
+func (s *Summary) channelAmount(c Channel) int64 {
+	for _, t := range s.Channels {
+		if t.Channel == c {
+			return t.Amount
+		}
+	}
+	return 0
+}
+
+// Line est un virement traité, tel que stocké dans payout_documents : de quoi
+// construire le récapitulatif mensuel sans relire Stripe.
+type Line struct {
+	PayoutID    string
+	ArrivalDate time.Time
+	ScanNOrder  int64
+	Kiosk       int64
+	Other       int64
+	Refunds     int64
+	Adjustments int64
+	Commission  int64 // TTC
+	StripeFees  int64
+	Discrepancy int64
+	Net         int64 // montant versé
+}
+
+// Sales renvoie le total des encaissements du virement.
+func (l Line) Sales() int64 { return l.ScanNOrder + l.Kiosk + l.Other }
+
 // Types de document téléchargeable.
 const (
-	KindStatement = "statement"
-	KindInvoice   = "invoice"
+	KindStatement = "statement" // relevé d'un virement
+	KindInvoice   = "invoice"   // facture de commission mensuelle
+	KindRecap     = "recap"     // récapitulatif mensuel des commissions
 )
 
-// Listed est un payout dont les justificatifs ont été envoyés, vu du back-office.
+// Listed est un virement dont le relevé a été envoyé, vu du back-office.
 type Listed struct {
 	PayoutID      string    `json:"payout_id"`
 	Amount        int64     `json:"amount"`
 	Currency      string    `json:"currency"`
 	ArrivalDate   time.Time `json:"arrival_date"`
 	SentAt        time.Time `json:"sent_at"`
-	InvoiceNumber string    `json:"invoice_number,omitempty"`
-	CommissionTTC int64     `json:"commission_ttc,omitempty"`
+	CommissionTTC int64     `json:"commission_ttc"`
 	HasStatement  bool      `json:"has_statement"`
-	HasInvoice    bool      `json:"has_invoice"`
 
 	StatementKey string `json:"-"`
-	InvoiceKey   string `json:"-"`
+}
+
+// Invoice est une facture de commission mensuelle (table commission_invoices).
+type Invoice struct {
+	ID          int64     `json:"-"`
+	Number      string    `json:"number"`
+	Series      string    `json:"series"`
+	MerchantID  string    `json:"-"`
+	PeriodMonth time.Time `json:"period_month"` // 1er jour du mois facturé
+	AmountTTC   int64     `json:"amount_ttc"`
+	AmountHT    int64     `json:"amount_ht"`
+	AmountVAT   int64     `json:"amount_vat"`
+	PayoutCount int       `json:"payout_count"`
+	PeriodStart time.Time `json:"period_start"`
+	PeriodEnd   time.Time `json:"period_end"`
+	IssuedAt    time.Time `json:"issued_at"`
+	SentAt      time.Time `json:"sent_at"`
+	Attempts    int       `json:"-"`
+	HasInvoice  bool      `json:"has_invoice"`
+	HasRecap    bool      `json:"has_recap"`
+
+	InvoiceKey string `json:"-"`
+	RecapKey   string `json:"-"`
 }
 
 // DownloadLink est le lien signé d'un document.
 type DownloadLink struct {
-	PayoutID    string `json:"payout_id"`
+	Ref         string `json:"ref"` // payout_id ou numéro de facture
 	Kind        string `json:"kind"`
 	Filename    string `json:"filename"`
 	DownloadURL string `json:"download_url"`
-}
-
-// Reconciled dit si les lignes du payout expliquent entièrement son montant.
-func (s *Summary) Reconciled() bool { return s.Discrepancy == 0 }
-
-// Invoice est une facture de commission émise (table commission_invoices).
-type Invoice struct {
-	ID          int64
-	Number      string
-	Series      string
-	MerchantID  string
-	PayoutID    string
-	AmountTTC   int64
-	AmountHT    int64
-	AmountVAT   int64
-	PeriodStart time.Time
-	PeriodEnd   time.Time
-	IssuedAt    time.Time
 }
 
 // splitVAT sépare un montant TTC en HT et TVA au taux vatRatePercent.

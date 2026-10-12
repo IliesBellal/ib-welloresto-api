@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Votre facture Wello Resto</title>
+</head>
+<body style="font-family: 'UberMoveText', 'Open Sans', Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #ffffff;">
+
+<table width="100%" style="max-width: 712px; margin: auto;">
+    <tbody>
+    <tr>
+        <td align="left" style="padding: 40px 20px;">
+            {{ if .TestNotice }}
+            <p style="font-size:12px; color:#8a5a00; background-color:#fff4d6; border-radius:6px; padding:10px 12px; line-height:18px;">{{ .TestNotice }}</p>
+            {{ end }}
+            <h1 style="font-size:24px; color:#000; margin:0 0 16px 0;">Votre facture {{ .InvoiceNumber }}</h1>
+            <p style="font-size:14px; color:#333; line-height:22px;">
+                Bonjour l'équipe {{ .MerchantName }},<br>
+                Nous avons bien reçu le paiement de votre abonnement Wello Resto : <strong>{{ .Amount }}</strong>{{ if .Period }} ({{ .Period }}){{ end }}.
+            </p>
+            <p style="font-size:14px; color:#333; line-height:22px;">
+                Votre facture est jointe à ce mail, au format PDF. Vous pouvez la transmettre à votre comptable.
+            </p>
+            {{ if .HostedURL }}
+            <p style="font-size:14px; color:#333; line-height:22px;">
+                Elle est aussi consultable en ligne : <a href="{{ .HostedURL }}" style="color:#000;">voir la facture</a>.
+            </p>
+            {{ end }}
+            <p style="font-size:12px; color:#666; padding-top: 30px;">
+                Besoin d'aide ? Contactez-nous à <a href="mailto:{{ .SupportEmail }}" style="color:#000;">{{ .SupportEmail }}</a>
+            </p>
+        </td>
+    </tr>
+    </tbody>
+</table>
+</body>
+</html>

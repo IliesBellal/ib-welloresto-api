@@ -20,15 +20,21 @@
                 (arrivée le {{ .ArrivalDate }}, référence {{ .PayoutID }}).
             </p>
             <p style="font-size:14px; color:#333; line-height:22px;">
-                Vous trouverez en pièces jointes :
+                Le <strong>relevé de versement</strong> est joint à ce mail (PDF) : il détaille ce que contient ce virement
+                (commandes en ligne, borne, remboursements, commission, frais de paiement). Vous pouvez le transmettre à
+                votre comptable pour justifier le virement.
             </p>
-            <ul style="font-size:14px; color:#333; line-height:22px;">
-                <li>le <strong>relevé de versement</strong>, qui détaille ce que contient ce virement ;</li>
-                {{ if .InvoiceNumber }}<li>la <strong>facture {{ .InvoiceNumber }}</strong> de la commission Wello Resto prélevée sur ces encaissements.</li>{{ end }}
-            </ul>
             <p style="font-size:14px; color:#333; line-height:22px;">
-                Ces documents peuvent être transmis à votre comptable pour justifier le virement.
+                La commission est facturée une fois par mois : vous recevrez la facture et le récapitulatif de toutes les
+                commissions du mois en début de mois suivant.
             </p>
+            {{ if .BackOfficeURL }}
+            <div style="padding: 10px 0 25px 0;">
+                <a href="{{ .BackOfficeURL }}" target="_blank" style="background-color:#000000; color:#ffffff; display:inline-block; padding: 13px 16px; border-radius: 10px; text-decoration:none; font-weight:bold; font-size:14px;">
+                    Consulter mes virements
+                </a>
+            </div>
+            {{ end }}
             <p style="font-size:12px; color:#666; padding-top: 30px;">
                 Besoin d'aide ? Contactez-nous à <a href="mailto:{{ .SupportEmail }}" style="color:#000;">{{ .SupportEmail }}</a>
             </p>

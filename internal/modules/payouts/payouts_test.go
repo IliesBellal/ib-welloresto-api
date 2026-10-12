@@ -3,6 +3,7 @@ package payouts
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"welloresto-api/internal/docsmode"
 	"welloresto-api/internal/infrastructure/mailer"
 	stripeclient "welloresto-api/internal/infrastructure/stripe"
 )
@@ -125,6 +127,16 @@ func TestFormatEUR(t *testing.T) {
 	}
 }
 
+func TestMonthLabel(t *testing.T) {
+	// le 1er octobre à minuit à Paris est le 30 septembre 22h UTC : le mois affiché reste octobre
+	if got := monthLabel(time.Date(2026, 10, 1, 0, 0, 0, 0, parisLocation)); got != "octobre 2026" {
+		t.Errorf("monthLabel = %q", got)
+	}
+	if got := monthLabel(time.Date(2026, 2, 15, 12, 0, 0, 0, time.UTC)); got != "février 2026" {
+		t.Errorf("monthLabel = %q", got)
+	}
+}
+
 func TestChannelOf(t *testing.T) {
 	for _, tc := range []struct {
 		source   string
@@ -165,17 +177,26 @@ func TestRecipientFor(t *testing.T) {
 	}
 }
 
-// ---- Flux complet avec des faux ----
+// ---- Faux ----
 
 type fakeRepo struct {
 	pending  []Pending
 	merchant *Merchant
 	channels map[string]Channel
-	invoice  *Invoice
-	created  int
 	done     map[string]Done
 	failures map[string]string
 	listed   map[string][]Listed
+
+	// facturation mensuelle
+	candidates   []string
+	lines        map[string][]Line // virements à facturer, par établissement
+	skipped      []string
+	issued       []NewInvoice
+	monthTaken   bool
+	invoices     []*Invoice
+	invoiceSent  map[int64]InvoiceSent
+	invoiceFails map[int64]string
+	invoiceLines []Line
 }
 
 func (r *fakeRepo) InsertPending(_ context.Context, ref Ref) error {
@@ -194,7 +215,8 @@ func (r *fakeRepo) ChannelsByPaymentIntent(context.Context, []string) (map[strin
 func (r *fakeRepo) MerchantByStripeAccount(context.Context, string) (*Merchant, error) {
 	return r.merchant, nil
 }
-func (r *fakeRepo) ConnectedAccounts(context.Context) ([]string, error) { return nil, nil }
+func (r *fakeRepo) MerchantByID(context.Context, string) (*Merchant, error) { return r.merchant, nil }
+func (r *fakeRepo) ConnectedAccounts(context.Context) ([]string, error)     { return nil, nil }
 func (r *fakeRepo) ListForMerchant(_ context.Context, merchantID string, _ int) ([]Listed, error) {
 	return r.listed[merchantID], nil
 }
@@ -206,20 +228,61 @@ func (r *fakeRepo) GetForMerchant(_ context.Context, merchantID, payoutID string
 	}
 	return nil, nil
 }
-func (r *fakeRepo) InvoiceForPayout(context.Context, string) (*Invoice, error) {
-	return r.invoice, nil
+func (r *fakeRepo) InvoiceCandidates(context.Context, time.Time, time.Time) ([]string, error) {
+	return r.candidates, nil
 }
-func (r *fakeRepo) CreateInvoice(_ context.Context, in NewInvoice) (*Invoice, error) {
-	r.created++
+func (r *fakeRepo) PayoutsToInvoice(_ context.Context, merchantID string, _ time.Time) ([]Line, error) {
+	return r.lines[merchantID], nil
+}
+func (r *fakeRepo) SkipInvoicing(_ context.Context, ids []string) error {
+	r.skipped = append(r.skipped, ids...)
+	return nil
+}
+func (r *fakeRepo) IssueInvoice(_ context.Context, in NewInvoice) (*Invoice, error) {
+	if r.monthTaken {
+		return nil, nil
+	}
+	r.issued = append(r.issued, in)
 	ht, vat := splitVAT(in.AmountTTC)
-	r.invoice = &Invoice{Number: "TEST-2026-000001", Series: in.Series, MerchantID: in.MerchantID, PayoutID: in.PayoutID,
-		AmountTTC: in.AmountTTC, AmountHT: ht, AmountVAT: vat, PeriodStart: in.PeriodStart, PeriodEnd: in.PeriodEnd, IssuedAt: in.IssuedAt}
-	return r.invoice, nil
+	inv := &Invoice{
+		ID: int64(len(r.invoices) + 1), Number: fmt.Sprintf("TEST-2026-%06d", len(r.invoices)+1), Series: in.Series,
+		MerchantID: in.MerchantID, PeriodMonth: in.PeriodMonth, AmountTTC: in.AmountTTC, AmountHT: ht, AmountVAT: vat,
+		PayoutCount: len(in.PayoutIDs), PeriodStart: in.PeriodStart, PeriodEnd: in.PeriodEnd, IssuedAt: in.IssuedAt,
+	}
+	r.invoices = append(r.invoices, inv)
+	return inv, nil
+}
+func (r *fakeRepo) InvoiceLines(context.Context, int64) ([]Line, error) { return r.invoiceLines, nil }
+func (r *fakeRepo) UnsentInvoices(context.Context, int) ([]Invoice, error) {
+	var out []Invoice
+	for _, inv := range r.invoices {
+		if _, sent := r.invoiceSent[inv.ID]; !sent {
+			out = append(out, *inv)
+		}
+	}
+	return out, nil
+}
+func (r *fakeRepo) RecordInvoiceFailure(_ context.Context, id int64, reason string, _ bool) error {
+	r.invoiceFails[id] = reason
+	return nil
+}
+func (r *fakeRepo) MarkInvoiceSent(_ context.Context, id int64, sent InvoiceSent) error {
+	r.invoiceSent[id] = sent
+	return nil
+}
+func (r *fakeRepo) ListInvoicesForMerchant(context.Context, string, int) ([]Invoice, error) {
+	return nil, nil
+}
+func (r *fakeRepo) GetInvoiceForMerchant(_ context.Context, merchantID, number string) (*Invoice, error) {
+	for _, inv := range r.invoices {
+		if inv.MerchantID == merchantID && inv.Number == number {
+			return inv, nil
+		}
+	}
+	return nil, nil
 }
 
-type fakeStripe struct {
-	txs []stripeclient.PayoutTransaction
-}
+type fakeStripe struct{ txs []stripeclient.PayoutTransaction }
 
 func (f fakeStripe) GetPayout(context.Context, string, string) (*stripeclient.PayoutInfo, error) {
 	return nil, errors.New("non utilisé")
@@ -232,11 +295,18 @@ func (f fakeStripe) ListPayoutTransactions(context.Context, string, string) ([]s
 }
 
 type fakeMail struct {
+	// relevés de virement
 	to          string
 	data        mailer.PayoutDocumentsData
 	attachments []mailer.Attachment
 	calls       int
 	err         error
+	// factures mensuelles
+	invoiceTo          string
+	invoiceData        mailer.CommissionInvoiceData
+	invoiceAttachments []mailer.Attachment
+	invoiceCalls       int
+	invoiceErr         error
 }
 
 func (m *fakeMail) SendPayoutDocuments(to string, data mailer.PayoutDocumentsData, att []mailer.Attachment) error {
@@ -244,22 +314,46 @@ func (m *fakeMail) SendPayoutDocuments(to string, data mailer.PayoutDocumentsDat
 	m.to, m.data, m.attachments = to, data, att
 	return m.err
 }
+func (m *fakeMail) SendCommissionInvoice(to string, data mailer.CommissionInvoiceData, att []mailer.Attachment) error {
+	m.invoiceCalls++
+	m.invoiceTo, m.invoiceData, m.invoiceAttachments = to, data, att
+	return m.invoiceErr
+}
+
+type fakeStore struct {
+	uploaded []string
+	signed   []string
+	err      error
+}
+
+func (f *fakeStore) UploadPrivateFile(_ context.Context, key string, _ io.Reader, _ string) (string, error) {
+	f.uploaded = append(f.uploaded, key)
+	return key, f.err
+}
+func (f *fakeStore) GenerateSignedURL(_ context.Context, key string, _ time.Duration) (string, error) {
+	f.signed = append(f.signed, key)
+	return "https://r2.example/" + key + "?sig=1", nil
+}
 
 func newFixture(txs []stripeclient.PayoutTransaction, amount int64) (*Service, *fakeRepo, *fakeMail, Pending) {
 	repo := &fakeRepo{
 		merchant: &Merchant{ID: "212", Name: "Chez Camille", Address: "1 rue de la Gare, 57000 Metz", SIRET: "12345678900012", Email: "camille@example.com"},
 		channels: map[string]Channel{"pi_online": ChannelScanNOrder, "pi_kiosk": ChannelKiosk},
 		done:     map[string]Done{}, failures: map[string]string{},
+		listed: map[string][]Listed{}, lines: map[string][]Line{},
+		invoiceSent: map[int64]InvoiceSent{}, invoiceFails: map[int64]string{},
 	}
 	mail := &fakeMail{}
 	svc := NewService(repo, fakeStripe{txs: txs}, nil, mail, nil)
-	svc.now = func() time.Time { return day }
+	svc.now = func() time.Time { return time.Date(2026, 11, 5, 10, 0, 0, 0, parisLocation) }
 	p := Pending{Ref: Ref{PayoutID: "po_1", AccountID: "acct_1", Amount: amount, Currency: "eur", ArrivalDate: day}}
 	repo.pending = []Pending{p}
 	return svc, repo, mail, p
 }
 
-func TestProcess_SendsStatementAndInvoiceToTestRecipient(t *testing.T) {
+// ---- Relevé par virement ----
+
+func TestProcess_SendsStatementWithBackOfficeLink(t *testing.T) {
 	txs := []stripeclient.PayoutTransaction{sale("txn_1", "pi_online", day), sale("txn_2", "pi_kiosk", day)}
 	svc, repo, mail, _ := newFixture(txs, 2*949)
 
@@ -270,45 +364,24 @@ func TestProcess_SendsStatementAndInvoiceToTestRecipient(t *testing.T) {
 	if mail.to != testRecipient {
 		t.Errorf("destinataire = %q, want %q (phase de test)", mail.to, testRecipient)
 	}
-	if len(mail.attachments) != 2 || !strings.HasPrefix(mail.attachments[0].Name, "releve-versement-2026-10-07") || !strings.HasPrefix(mail.attachments[1].Name, "facture-TEST-2026-000001") {
-		t.Errorf("pièces jointes = %v", mail.attachments)
+	if len(mail.attachments) != 1 || !strings.HasPrefix(mail.attachments[0].Name, "releve-versement-2026-10-07") || !strings.HasPrefix(string(mail.attachments[0].Content), "%PDF") {
+		t.Errorf("pièces jointes = %v : un seul PDF, le relevé", mail.attachments)
 	}
-	for _, a := range mail.attachments {
-		if !strings.HasPrefix(string(a.Content), "%PDF") {
-			t.Errorf("%s n'est pas un PDF", a.Name)
-		}
+	if want := docsmode.BackOfficeURL + docsmode.TabVirementsPath; mail.data.BackOfficeURL != want {
+		t.Errorf("lien = %q, want %q", mail.data.BackOfficeURL, want)
 	}
-	if repo.invoice == nil || repo.invoice.AmountTTC != 40 || repo.invoice.Series != seriesTest {
-		t.Errorf("facture = %+v, want 40 centimes TTC en série TEST", repo.invoice)
+	if mail.data.TestNotice == "" {
+		t.Error("bandeau de test absent")
 	}
-	if mail.data.InvoiceNumber != "TEST-2026-000001" || mail.data.TestNotice == "" {
-		t.Errorf("mail = %+v", mail.data)
-	}
-	if d, ok := repo.done["po_1"]; !ok || d.MerchantID != "212" || d.Recipient != testRecipient {
+
+	// les totaux du virement sont gardés : c'est de quoi construire le récapitulatif mensuel
+	d := repo.done["po_1"]
+	if d.MerchantID != "212" || d.Recipient != testRecipient {
 		t.Errorf("done = %+v", d)
 	}
-}
-
-func TestProcess_SecondRunReusesInvoice(t *testing.T) {
-	txs := []stripeclient.PayoutTransaction{sale("txn_1", "pi_online", day)}
-	svc, repo, mail, _ := newFixture(txs, 949)
-
-	// premier passage : le mail échoue, la facture est quand même émise
-	mail.err = errors.New("brevo indisponible")
-	if _, err := svc.ProcessPending(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if _, done := repo.done["po_1"]; done || repo.failures["po_1"] == "" {
-		t.Fatalf("le payout ne doit pas être clos après un échec d'envoi (done=%v, failures=%v)", repo.done, repo.failures)
-	}
-
-	// second passage : mail OK, la facture n'est pas réémise
-	mail.err = nil
-	if res, _ := svc.ProcessPending(context.Background()); res.Done != 1 {
-		t.Fatalf("second passage = %+v", res)
-	}
-	if repo.created != 1 {
-		t.Errorf("factures émises = %d, want 1", repo.created)
+	want := Line{ScanNOrder: 1000, Kiosk: 1000, Commission: 40, StripeFees: 62}
+	if d.Totals != want {
+		t.Errorf("totaux = %+v, want %+v", d.Totals, want)
 	}
 }
 
@@ -317,11 +390,8 @@ func TestProcess_NotReconciledRetriesThenSendsWithDiscrepancy(t *testing.T) {
 
 	// premiers passages : Stripe n'a peut-être pas fini de rapprocher, rien ne part
 	res, err := svc.ProcessPending(context.Background())
-	if err != nil || res.Retry != 1 || res.Done != 0 {
-		t.Fatalf("ProcessPending = %+v, %v", res, err)
-	}
-	if mail.calls != 0 || repo.created != 0 {
-		t.Errorf("rien ne doit partir tant qu'on espère le rapprochement (mails=%d, factures=%d)", mail.calls, repo.created)
+	if err != nil || res.Retry != 1 || res.Done != 0 || mail.calls != 0 {
+		t.Fatalf("ProcessPending = %+v, %v, mails = %d", res, err, mail.calls)
 	}
 
 	// passé reconcileRetries essais, le relevé part quand même, écart signalé
@@ -330,8 +400,21 @@ func TestProcess_NotReconciledRetriesThenSendsWithDiscrepancy(t *testing.T) {
 	if res, _ := svc.ProcessPending(context.Background()); res.Done != 1 {
 		t.Fatalf("après %d essais le payout doit partir : %+v", reconcileRetries, res)
 	}
-	if mail.calls != 1 || !strings.HasPrefix(string(mail.attachments[0].Content), "%PDF") {
-		t.Errorf("mails = %d, pièces jointes = %v", mail.calls, mail.attachments)
+	if repo.done["po_1"].Totals.Discrepancy != 5000-949 {
+		t.Errorf("écart gardé = %d", repo.done["po_1"].Totals.Discrepancy)
+	}
+}
+
+func TestProcess_MailFailureRetries(t *testing.T) {
+	svc, repo, mail, _ := newFixture([]stripeclient.PayoutTransaction{sale("txn_1", "pi_online", day)}, 949)
+	mail.err = errors.New("brevo indisponible")
+
+	res, _ := svc.ProcessPending(context.Background())
+	if res.Retry != 1 || repo.failures["po_1"] == "" {
+		t.Fatalf("res = %+v, failures = %v", res, repo.failures)
+	}
+	if _, done := repo.done["po_1"]; done {
+		t.Error("le payout ne doit pas être clos après un échec d'envoi")
 	}
 }
 
@@ -348,80 +431,181 @@ func TestProcess_UnknownMerchantStillSent(t *testing.T) {
 	}
 }
 
-type fakeStore struct {
-	signed []string
-	err    error
+// ---- Facture et récapitulatif mensuels ----
+
+func monthlyFixture() (*Service, *fakeRepo, *fakeMail) {
+	svc, repo, mail, _ := newFixture(nil, 0)
+	repo.candidates = []string{"212"}
+	repo.lines["212"] = []Line{
+		{PayoutID: "po_a", ArrivalDate: time.Date(2026, 10, 2, 0, 0, 0, 0, parisLocation), ScanNOrder: 10000, Commission: 200, StripeFees: 310, Net: 9490},
+		{PayoutID: "po_b", ArrivalDate: time.Date(2026, 10, 9, 0, 0, 0, 0, parisLocation), Kiosk: 5000, Commission: 100, StripeFees: 150, Net: 4750},
+		{PayoutID: "po_c", ArrivalDate: time.Date(2026, 10, 30, 0, 0, 0, 0, parisLocation), Kiosk: 2000, Refunds: -500, Commission: 30, StripeFees: 60, Net: 1410},
+	}
+	repo.invoiceLines = repo.lines["212"]
+	return svc, repo, mail
 }
 
-func (f *fakeStore) UploadPrivateFile(context.Context, string, io.Reader, string) (string, error) {
-	return "", nil
-}
-func (f *fakeStore) GenerateSignedURL(_ context.Context, key string, _ time.Duration) (string, error) {
-	f.signed = append(f.signed, key)
-	return "https://r2.example/" + key + "?sig=1", f.err
+func TestRunMonthlyInvoices_IssuesOneInvoiceForAllThePayoutsOfTheMonth(t *testing.T) {
+	svc, repo, mail := monthlyFixture()
+
+	res, err := svc.RunMonthlyInvoices(context.Background())
+	if err != nil || res.Issued != 1 || res.Sent != 1 {
+		t.Fatalf("RunMonthlyInvoices = %+v, %v", res, err)
+	}
+
+	in := repo.issued[0]
+	if in.AmountTTC != 330 || len(in.PayoutIDs) != 3 || in.Series != seriesTest || in.MerchantID != "212" {
+		t.Errorf("facture émise = %+v, want 330 centimes TTC pour 3 virements en série TEST", in)
+	}
+	// novembre → on facture octobre, virements arrivés avant le 1er novembre
+	if got := in.PeriodMonth.In(parisLocation); got.Month() != time.October || got.Day() != 1 {
+		t.Errorf("mois facturé = %v, want le 1er octobre", got)
+	}
+	if !in.PeriodStart.Equal(repo.lines["212"][0].ArrivalDate) || !in.PeriodEnd.Equal(repo.lines["212"][2].ArrivalDate) {
+		t.Errorf("période = %v → %v", in.PeriodStart, in.PeriodEnd)
+	}
+
+	if mail.invoiceTo != testRecipient || mail.invoiceData.Month != "octobre 2026" || mail.invoiceData.Amount != "3,30 €" || mail.invoiceData.PayoutCount != 3 {
+		t.Errorf("mail = to %q, %+v", mail.invoiceTo, mail.invoiceData)
+	}
+	if want := docsmode.BackOfficeURL + docsmode.TabFacturesPath; mail.invoiceData.BackOfficeURL != want {
+		t.Errorf("lien = %q, want %q", mail.invoiceData.BackOfficeURL, want)
+	}
+	if len(mail.invoiceAttachments) != 2 ||
+		mail.invoiceAttachments[0].Name != "facture-TEST-2026-000001.pdf" ||
+		mail.invoiceAttachments[1].Name != "recapitulatif-commissions-2026-10.pdf" {
+		t.Errorf("pièces jointes = %v : la facture puis le récapitulatif", mail.invoiceAttachments)
+	}
+	for _, a := range mail.invoiceAttachments {
+		if !strings.HasPrefix(string(a.Content), "%PDF") {
+			t.Errorf("%s n'est pas un PDF", a.Name)
+		}
+	}
+	if _, ok := repo.invoiceSent[1]; !ok {
+		t.Error("la facture doit être marquée envoyée")
+	}
 }
 
-func TestDownloadLink(t *testing.T) {
+func TestRunMonthlyInvoices_WaitsUntilTheThird(t *testing.T) {
+	svc, repo, mail := monthlyFixture()
+	svc.now = func() time.Time { return time.Date(2026, 11, 2, 10, 0, 0, 0, parisLocation) }
+
+	res, err := svc.RunMonthlyInvoices(context.Background())
+	if err != nil || res.Issued != 0 || len(repo.issued) != 0 || mail.invoiceCalls != 0 {
+		t.Fatalf("avant le 3 rien ne doit être émis : %+v, %v, mails = %d", res, err, mail.invoiceCalls)
+	}
+}
+
+func TestRunMonthlyInvoices_FailedMailIsRetriedWithoutIssuingAgain(t *testing.T) {
+	svc, repo, mail := monthlyFixture()
+	mail.invoiceErr = errors.New("brevo indisponible")
+
+	res, _ := svc.RunMonthlyInvoices(context.Background())
+	if res.Issued != 1 || res.Sent != 0 || res.Retry != 1 || repo.invoiceFails[1] == "" {
+		t.Fatalf("premier passage = %+v, échecs = %v", res, repo.invoiceFails)
+	}
+
+	// l'établissement n'est plus candidat (facture émise) ; la facture reste à envoyer
+	repo.candidates = nil
+	mail.invoiceErr = nil
+	res, _ = svc.RunMonthlyInvoices(context.Background())
+	if res.Issued != 0 || res.Sent != 1 || len(repo.issued) != 1 {
+		t.Fatalf("second passage = %+v, factures émises = %d : la même facture doit partir, sans être réémise", res, len(repo.issued))
+	}
+}
+
+func TestRunMonthlyInvoices_NothingToInvoice(t *testing.T) {
+	for name, commissions := range map[string][]int64{"nulle": {0, 0}, "négative": {-20, 10}} {
+		svc, repo, mail := monthlyFixture()
+		repo.lines["212"] = []Line{
+			{PayoutID: "po_a", ArrivalDate: day, Commission: commissions[0]},
+			{PayoutID: "po_b", ArrivalDate: day, Commission: commissions[1]},
+		}
+
+		res, err := svc.RunMonthlyInvoices(context.Background())
+		if err != nil || res.Issued != 0 || mail.invoiceCalls != 0 {
+			t.Errorf("commission %s : %+v, %v, mails = %d", name, res, err, mail.invoiceCalls)
+		}
+		if len(repo.skipped) != 2 {
+			t.Errorf("commission %s : virements sortis de la facturation = %v, want les 2", name, repo.skipped)
+		}
+	}
+}
+
+func TestRunMonthlyInvoices_MonthAlreadyInvoiced(t *testing.T) {
+	svc, repo, mail := monthlyFixture()
+	repo.monthTaken = true
+
+	res, err := svc.RunMonthlyInvoices(context.Background())
+	if err != nil || res.Issued != 0 || mail.invoiceCalls != 0 {
+		t.Errorf("%+v, %v, mails = %d : une facture existe déjà pour ce mois", res, err, mail.invoiceCalls)
+	}
+}
+
+// ---- Liens de téléchargement ----
+
+func TestDownloadLinks(t *testing.T) {
 	svc, repo, _, _ := newFixture(nil, 0)
 	store := &fakeStore{}
 	svc.store = store
-	repo.listed = map[string][]Listed{"212": {{PayoutID: "po_1", StatementKey: "payouts/212/po_1/releve-versement-2026-10-07.pdf"}}}
+	repo.listed = map[string][]Listed{"212": {{PayoutID: "po_1", StatementKey: "payouts/212/po_1/releve-versement-2026-10-07.pdf"}, {PayoutID: "po_nopdf"}}}
+	repo.invoices = []*Invoice{{ID: 1, Number: "TEST-2026-000001", MerchantID: "212",
+		InvoiceKey: "payouts/212/invoices/TEST-2026-000001/facture-TEST-2026-000001.pdf"}}
 
-	link, err := svc.DownloadLink(context.Background(), "212", "po_1", KindStatement)
-	if err != nil || link.Filename != "releve-versement-2026-10-07.pdf" || !strings.Contains(link.DownloadURL, "po_1") {
-		t.Fatalf("lien = %+v, %v", link, err)
+	link, err := svc.DownloadLink(context.Background(), "212", "po_1")
+	if err != nil || link.Filename != "releve-versement-2026-10-07.pdf" || link.Kind != KindStatement || !strings.Contains(link.DownloadURL, "po_1") {
+		t.Fatalf("lien du relevé = %+v, %v", link, err)
 	}
-
-	// pas de facture archivée pour ce payout
-	if _, err := svc.DownloadLink(context.Background(), "212", "po_1", KindInvoice); !errors.Is(err, ErrDocumentUnavailable) {
-		t.Errorf("facture absente : err = %v, want ErrDocumentUnavailable", err)
-	}
-	// un autre établissement ne voit pas ce payout
-	if _, err := svc.DownloadLink(context.Background(), "999", "po_1", KindStatement); !errors.Is(err, ErrDocumentUnavailable) {
-		t.Errorf("autre établissement : err = %v, want ErrDocumentUnavailable", err)
-	}
-	if len(store.signed) != 1 {
-		t.Errorf("liens signés = %v, want un seul (aucun lien pour un refus)", store.signed)
+	link, err = svc.InvoiceLink(context.Background(), "212", "TEST-2026-000001", KindInvoice)
+	if err != nil || link.Filename != "facture-TEST-2026-000001.pdf" {
+		t.Fatalf("lien de la facture = %+v, %v", link, err)
 	}
 
-	// sans archivage R2, aucun document n'est téléchargeable
+	for name, call := range map[string]func() error{
+		"relevé non archivé":    func() error { _, err := svc.DownloadLink(context.Background(), "212", "po_nopdf"); return err },
+		"relevé inconnu":        func() error { _, err := svc.DownloadLink(context.Background(), "212", "po_x"); return err },
+		"relevé d'un autre":     func() error { _, err := svc.DownloadLink(context.Background(), "999", "po_1"); return err },
+		"récapitulatif absent":  func() error { _, err := svc.InvoiceLink(context.Background(), "212", "TEST-2026-000001", KindRecap); return err },
+		"facture d'un autre":    func() error { _, err := svc.InvoiceLink(context.Background(), "999", "TEST-2026-000001", KindInvoice); return err },
+		"facture inconnue":      func() error { _, err := svc.InvoiceLink(context.Background(), "212", "TEST-2026-000099", KindInvoice); return err },
+	} {
+		if err := call(); !errors.Is(err, ErrDocumentUnavailable) {
+			t.Errorf("%s : err = %v, want ErrDocumentUnavailable", name, err)
+		}
+	}
+	if len(store.signed) != 2 {
+		t.Errorf("liens signés = %v, want 2 (aucun lien pour un refus)", store.signed)
+	}
+
 	svc.store = nil
-	if _, err := svc.DownloadLink(context.Background(), "212", "po_1", KindStatement); !errors.Is(err, ErrDocumentUnavailable) {
+	if _, err := svc.DownloadLink(context.Background(), "212", "po_1"); !errors.Is(err, ErrDocumentUnavailable) {
 		t.Errorf("sans R2 : err = %v, want ErrDocumentUnavailable", err)
 	}
 }
 
-func TestProcess_NegativeCommissionSendsStatementOnly(t *testing.T) {
-	refund := stripeclient.PayoutTransaction{ID: "txn_r", Type: "refund", ReportingCategory: "refund", Amount: -1000, CommissionFee: -20, StripeFee: 0, Net: -980, Created: day}
-	svc, repo, mail, _ := newFixture([]stripeclient.PayoutTransaction{refund}, -980)
-
-	res, _ := svc.ProcessPending(context.Background())
-	if res.Done != 1 {
-		t.Fatalf("ProcessPending = %+v", res)
-	}
-	if len(mail.attachments) != 1 || repo.created != 0 {
-		t.Errorf("relevé seul attendu (pièces jointes=%d, factures=%d)", len(mail.attachments), repo.created)
-	}
-}
-
-// TestWritePDFsForInspection écrit les deux PDF dans le dossier PAYOUT_PDF_DIR
-// pour les relire à l'œil ; ignoré sans cette variable.
+// TestWritePDFsForInspection écrit les PDF dans le dossier PAYOUT_PDF_DIR pour
+// les relire à l'œil ; ignoré sans cette variable.
 func TestWritePDFsForInspection(t *testing.T) {
 	dir := os.Getenv("PAYOUT_PDF_DIR")
 	if dir == "" {
 		t.Skip("PAYOUT_PDF_DIR non défini")
 	}
+
 	txs := []stripeclient.PayoutTransaction{
 		sale("txn_1", "pi_online", day.AddDate(0, 0, -25)), sale("txn_2", "pi_online", day.AddDate(0, 0, -12)),
 		sale("txn_3", "pi_kiosk", day.AddDate(0, 0, -4)),
 		{ID: "txn_r", Type: "refund", ReportingCategory: "refund", Amount: -300, CommissionFee: -6, Net: -294, Created: day.AddDate(0, 0, -2)},
 	}
-	svc, repo, mail, _ := newFixture(txs, 3*949-294)
+	svc, _, mail, _ := newFixture(txs, 3*949-294)
 	if res, err := svc.ProcessPending(context.Background()); err != nil || res.Done != 1 {
 		t.Fatalf("ProcessPending = %+v, %v", res, err)
 	}
-	_ = repo
-	for _, a := range mail.attachments {
+	svc2, _, mail2 := monthlyFixture()
+	if res, err := svc2.RunMonthlyInvoices(context.Background()); err != nil || res.Sent != 1 {
+		t.Fatalf("RunMonthlyInvoices = %+v, %v", res, err)
+	}
+
+	for _, a := range append(append([]mailer.Attachment{}, mail.attachments...), mail2.invoiceAttachments...) {
 		if err := os.WriteFile(filepath.Join(dir, a.Name), a.Content, 0o644); err != nil {
 			t.Fatal(err)
 		}

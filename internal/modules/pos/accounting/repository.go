@@ -229,9 +229,22 @@ type orderScope struct {
 	// majuscules : IN, TAKE_AWAY, DELIVERY) ; vide = tous. Utilisé par la
 	// déclaration de TVA, quel que soit le mode.
 	orderTypes []string
+	// registerID : restreint aux commandes d'un registre de caisse
+	// (orders.cash_register_id), pour le PDF d'un registre. Se combine avec
+	// manual / sources comme le périmètre du mode de clôture du registre ; la
+	// période est alors ouverte (registerScopeWindow), le registre fait foi.
+	registerID string
 }
 
 func manualOrderScope() orderScope { return orderScope{manual: true} }
+
+// registerScopeWindow est la fenêtre de dates passée à GetOrderVATLines /
+// GetOrderPayments quand le périmètre est un registre (orderScope.registerID) :
+// une commande créée avant l'ouverture du registre peut y être encaissée, donc
+// la date de création ne doit pas la filtrer.
+func registerScopeWindow() (time.Time, time.Time) {
+	return time.Unix(0, 0).UTC(), time.Now().UTC().AddDate(1, 0, 0)
+}
 
 // predicate renvoie le fragment `AND ...` du périmètre pour l'alias de orders
 // donné, et ses arguments.
@@ -247,6 +260,10 @@ func (s orderScope) predicate(alias string) (string, []interface{}) {
 	if len(s.orderTypes) > 0 {
 		b.WriteString(" AND " + alias + ".order_type = ANY(?)")
 		args = append(args, s.orderTypes)
+	}
+	if s.registerID != "" {
+		b.WriteString(" AND " + alias + ".cash_register_id = ?")
+		args = append(args, s.registerID)
 	}
 	return b.String(), args
 }
@@ -500,9 +517,31 @@ func (r *AccountingRepository) GetTrustedEnclosedRegisterIDs(ctx context.Context
 		log.Error(fmt.Sprintf("Error iterating candidate registers: %v", err))
 		return nil, err
 	}
+	return r.filterTrustedRegisterIDs(ctx, merchantID, candidateIDs)
+}
+
+// IsRegisterTrusted indique si l'instantané figé d'un registre enclosed
+// correspond toujours au recalcul live de ses paiements (même contrôle que
+// GetTrustedEnclosedRegisterIDs, pour un seul registre). Faux = dérive : le
+// rapport mensuel écarte ce registre, le PDF du registre le produit avec une
+// mention. Les paiements d'un registre fermé étant immuables depuis le lot C
+// de conformité caisse, une dérive ne peut venir que de données antérieures.
+func (r *AccountingRepository) IsRegisterTrusted(ctx context.Context, merchantID string, registerID int64) (bool, error) {
+	trusted, err := r.filterTrustedRegisterIDs(ctx, merchantID, []int64{registerID})
+	if err != nil {
+		return false, err
+	}
+	return len(trusted) == 1, nil
+}
+
+// filterTrustedRegisterIDs ne garde, parmi des registres enclosed, que ceux dont
+// l'instantané figé (cash_registers_items) correspond au recalcul live.
+func (r *AccountingRepository) filterTrustedRegisterIDs(ctx context.Context, merchantID string, candidateIDs []int64) ([]int64, error) {
 	if len(candidateIDs) == 0 {
 		return nil, nil
 	}
+	db := dbx.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
 
 	idPlaceholders := make([]string, len(candidateIDs))
 	frozenArgs := make([]interface{}, len(candidateIDs))

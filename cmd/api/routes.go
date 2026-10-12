@@ -35,6 +35,7 @@ import (
 	"go.uber.org/zap"
 
 	"welloresto-api/internal/config"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/permission"
@@ -69,7 +70,10 @@ import (
 	ordersLCModule "welloresto-api/internal/modules/order_life_cycle"
 	ordersModule "welloresto-api/internal/modules/orders"
 	outboundModule "welloresto-api/internal/modules/outbound"
+	accountingSyncModule "welloresto-api/internal/modules/accountingsync"
+	pennylaneProvider "welloresto-api/internal/modules/accountingsync/providers/pennylane"
 	payoutsModule "welloresto-api/internal/modules/payouts"
+	subscriptionInvoicesModule "welloresto-api/internal/modules/subscriptioninvoices"
 	planningModule "welloresto-api/internal/modules/planning"
 	planningcommModule "welloresto-api/internal/modules/planningcomm"
 	posModule "welloresto-api/internal/modules/pos"
@@ -735,6 +739,39 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	stripeWebhookService.SetPayoutDocuments(payoutService)
 	payoutsH := payoutsModule.NewHandler(payoutService)
 
+	// Factures d'abonnement : le webhook invoice.paid met la facture en file,
+	// RunSubscriptionInvoiceDocuments (cron) l'envoie.
+	var invoiceStore subscriptionInvoicesModule.Store
+	if r2PrivateClient != nil {
+		invoiceStore = r2PrivateClient
+	}
+	subscriptionInvoiceService := subscriptionInvoicesModule.NewService(subscriptionInvoicesModule.NewRepository(selectedDB), stripeManager, invoiceStore, mailService, log)
+	taskManager.SubscriptionInvoiceService = subscriptionInvoiceService
+	stripeWebhookService.SetSubscriptionInvoices(subscriptionInvoiceService)
+	subscriptionInvoicesH := subscriptionInvoicesModule.NewHandler(subscriptionInvoiceService)
+
+	// Synchronisation comptable : chaque établissement peut relier UN logiciel de
+	// comptabilité du catalogue ci-dessous ; RunAccountingSync (cron) lui envoie
+	// l'écriture de ventes de chaque clôture fiscale journalière
+	// (docs/accounting-sync.md). Ajouter un outil = écrire son connecteur et
+	// l'ajouter à ce registry, rien d'autre.
+	accountingRegistry := accountingSyncModule.NewRegistry(
+		pennylaneProvider.New(pennylaneProvider.Config{
+			BaseURL:      cfg.Accounting.Pennylane.BaseURL,
+			ClientID:     cfg.Accounting.Pennylane.ClientID,
+			ClientSecret: cfg.Accounting.Pennylane.ClientSecret,
+			RedirectURI:  cfg.Accounting.Pennylane.RedirectURI,
+		}),
+	)
+	accountingSyncService := accountingSyncModule.NewService(
+		accountingSyncModule.NewRepository(selectedDB),
+		accountingRegistry,
+		helpers.NewSecretBox(config.AccountingEncryptionKeyEnvVar),
+		log,
+	)
+	taskManager.AccountingSyncService = accountingSyncService
+	accountingSyncH := accountingSyncModule.NewHandler(accountingSyncService, cfg.Accounting.ReturnURL)
+
 	// Attestations individuelles de l'éditeur (conformité caisse lot F).
 	// Interfaces nulles (et non pointeurs nuls typés) si R2 privé manque.
 	var attestationStorage attestationsModule.Storage
@@ -1110,6 +1147,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 
 		r.Post("/vat/calculate", posAccountingHandler.CalculateVAT)
 		r.Post("/vat/export-csv", posAccountingHandler.ExportVATCSV)
+		r.Post("/registers/export-pdf", posAccountingHandler.ExportRegistersPDF)
 		r.Post("/registers/{register_id}/export-pdf", posAccountingHandler.ExportRegisterPDF)
 
 		// Archives fiscales (conformité caisse lot D) : liste, lien signé tracé
@@ -1129,7 +1167,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		// Justificatifs de versement (relevé + facture de commission de chaque
 		// payout) : liste et liens signés d'une heure.
 		r.Get("/payouts", payoutsH.List)
-		r.Get("/payouts/{payout_id}/{kind}/download", payoutsH.Download)
+		r.Get("/payouts/{payout_id}/download", payoutsH.Download)
+		// Facture de commission mensuelle et récapitulatif du mois.
+		r.Get("/commission-invoices", payoutsH.ListInvoices)
+		r.Get("/commission-invoices/{number}/{kind}/download", payoutsH.DownloadInvoice)
 	})
 
 	// --- STOCKS ---
@@ -1773,6 +1814,33 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		r.Post("/sepa/setup", billingHandler.CreateSepaSetup)
 		r.Post("/retry-now", dunningHandler.RetryNow)
 		r.Post("/portal", billingHandler.CreateBillingPortalSession)
+		// Factures d'abonnement envoyées à l'établissement : liste et liens signés d'une heure.
+		r.Get("/invoices", subscriptionInvoicesH.List)
+		r.Get("/invoices/{invoice_id}/download", subscriptionInvoicesH.Download)
+	})
+
+	// --- SYNCHRONISATION COMPTABLE (Pennylane…) ---
+	// platforms.manage : configuration d'une plateforme externe de
+	// l'établissement. Le retour OAuth est public (c'est le navigateur qui y
+	// revient depuis l'outil) : l'établissement est retrouvé dans le paramètre
+	// « state », chiffré et daté.
+	r.Route("/accounting-integrations", func(r chi.Router) {
+		r.Get("/oauth/callback", accountingSyncH.OAuthCallback)
+
+		r.Group(func(r chi.Router) {
+			r.Use(authMiddleware)
+			r.Use(notSuspendedMiddleware)
+			r.Use(middleware.RequirePermission(permission.PlatformsManage))
+
+			r.Get("/", accountingSyncH.Get)
+			r.Delete("/", accountingSyncH.Disconnect)
+			r.Put("/mapping", accountingSyncH.SaveMapping)
+			r.Get("/items", accountingSyncH.Items)
+			r.Post("/sync", accountingSyncH.SyncNow)
+			r.Post("/items/{date}/retry", accountingSyncH.RetryItem)
+			r.Post("/{provider}/connect/token", accountingSyncH.ConnectToken)
+			r.Get("/{provider}/connect/oauth", accountingSyncH.ConnectOAuth)
+		})
 	})
 
 	// --- DELIVERY SESSIONS ---

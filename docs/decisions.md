@@ -6167,3 +6167,16 @@ Tests : cas `DENIED` + `denied` (minuscules, avec frais de livraison) ajoutés �
 ### Rapports TVA — plus de ligne « frais de livraison » à 0 € (2026-10-05)
 
 Tranche le point laissé ouvert dans « Rapport comptable — section Encaissements sur le réel des caisses closes » (« soit filtrer `delivery_fees > 0` dans la branche frais de livraison de `GetTVAData` — à trancher dans un ticket dédié ») : la branche frais de l'export comptable (`pos/accounting.GetOrderVATLines`, via laquelle passe désormais `GetTVAData`) et celle du rapport TVA journalier (`pos/reports.GetTVAReportData`) ignorent les commandes sans frais (`delivery_fees <> 0`). Une commande sans frais produisait une ligne à 0 € dans la catégorie -1 quand elle existe en base ; aucun montant ne change. `TestPOSAccountingReports_Postgres`, en échec depuis sur ce point, est vert. Contexte : docs/EXPORT_COMPTABLE_MODES_CLOTURE.md. Statut : non commité, non déployé.
+
+
+### Registres de caisse — export PDF par lot et PDF aligné sur le rapport comptable (2026-10-12)
+
+Détail et contrat : [EXPORT_REGISTRES_PDF.md](EXPORT_REGISTRES_PDF.md).
+
+- **Contenu du PDF d'un registre = rapport mensuel restreint au registre** : TVA puis encaissements, **réel** (relevé de caisse) en MANUAL, **théorique** (paiements) en AUTO, sans colonne écart. Avant, le PDF affichait un tableau théorique/réel/écart quel que soit le mode : en AUTO (pas de relevé) le réel valait 0 et l'écart était égal au théorique en négatif. Tableau et fonctions associées supprimés.
+- **Endpoint `POST /accounting/registers/export-pdf`** : `register_ids` ou période, ZIP d'un PDF par registre, plafond 100, synchrone, registres écartés listés dans `ignores.txt`. La période réutilise la requête de l'historique pour que « tout sélectionner » corresponde exactement à la liste affichée (bornes `start_date` en UTC et visibilité utilisateur/admin), et non les jours de calendrier de l'établissement du rapport mensuel.
+- **Registre en dérive (MANUAL)** : PDF produit avec une mention, pas refusé (option A). Les verrous du lot C rendent le cas impossible pour les nouvelles données ; `IsRegisterTrusted` reste un filet de sécurité.
+- **Pas de trace d'audit**, comme l'export unitaire et l'export comptable.
+- **Front** : `exportPeriodRegisters` (route `export-period` jamais implémentée, jamais appelée) supprimée ; `ExpandableDataTable` gagne une sélection optionnelle.
+
+Aucune migration. Non vérifié : durée d'un lot de 100, rapprochement avec le mensuel sur données réelles, test d'intégration Postgres (compilé, non exécuté). Statut : non commité, non déployé.

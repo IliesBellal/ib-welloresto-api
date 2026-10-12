@@ -25,6 +25,7 @@ type EnvWarning struct {
 var optionalEnv = []EnvWarning{
 	{"REDIS_URL", "Redis indisponible : sessions et jetons d'authentification, cache IA, cache du menu"},
 	{"KIOSK_PIN_ENCRYPTION_KEY", "chiffrement du code PIN administrateur des bornes impossible"},
+	{"ACCOUNTING_ENCRYPTION_KEY", "connexion à un logiciel de comptabilité (Pennylane) impossible : identifiants non chiffrables"},
 	{"BREVO_API_KEY", "aucun e-mail ni SMS envoyé (MFA, réinitialisation de mot de passe, notifications)"},
 	{"BREVO_WEBHOOK_TOKEN", "webhooks Brevo non authentifiés"},
 	{"STRIPE_API_KEY", "paiements et abonnements Stripe indisponibles"},

@@ -135,6 +135,31 @@ func (h *AccountingHandler) ExportVATCSV(w http.ResponseWriter, r *http.Request)
 	_, _ = w.Write(csvData)
 }
 
+// ExportRegistersPDF POST /accounting/registers/export-pdf — ZIP d'un PDF par
+// registre validé. Corps : {"register_ids": [...]} ou {"date_from","date_to"}
+// (jamais les deux), 100 registres au plus. Les registres écartés sont listés
+// dans ignores.txt du ZIP ; leur nombre est aussi dans X-Registers-Ignored.
+func (h *AccountingHandler) ExportRegistersPDF(w http.ResponseWriter, r *http.Request) {
+	var req RegisterExportRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "accounting", "registers_export_pdf", models.ErrInvalidRequestBody)
+		return
+	}
+
+	export, err := h.service.ExportRegistersPDF(r.Context(), req)
+	if err != nil {
+		models.SendErrorJSON(w, "accounting", "registers_export_pdf", err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", export.Filename))
+	w.Header().Set("X-Registers-Exported", strconv.Itoa(export.Exported))
+	w.Header().Set("X-Registers-Ignored", strconv.Itoa(export.Ignored))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(export.Data)
+}
+
 // ExportRegisterPDF POST /accounting/registers/{register_id}/export-pdf
 func (h *AccountingHandler) ExportRegisterPDF(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)

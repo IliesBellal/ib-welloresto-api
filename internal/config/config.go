@@ -21,6 +21,7 @@ type AppConfig struct {
 	AI          ai.AIConfig
 	ImportAI    ImportAIConfig
 	Attestation AttestationConfig
+	Accounting  AccountingConfig
 	Kiosk       KioskConfig
 	CDS         CDSConfig
 	Planning    PlanningConfig
@@ -76,6 +77,7 @@ func Load() *AppConfig {
 		AI:          loadAIConfig(),
 		ImportAI:    loadImportAIConfig(),
 		Attestation: loadAttestationConfig(),
+		Accounting:  loadAccountingConfig(),
 		Kiosk:       loadKioskConfig(),
 		CDS:         loadCDSConfig(),
 		Planning:    loadPlanningConfig(),
