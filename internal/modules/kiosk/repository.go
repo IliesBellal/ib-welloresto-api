@@ -727,9 +727,10 @@ func (r *Repository) SetKioskReader(ctx context.Context, kioskID, readerID, labe
 // ClearKioskReader efface l'appairage reader d'une borne — appelé à
 // l'unpairage explicite (DELETE /kiosk/terminal/reader), quand un reader
 // appairé n'existe plus côté Stripe (GET /kiosk/terminal/reader), et
-// obligatoirement au reclaim/à la révocation d'une borne (sinon l'index
-// unique partiel bloquerait définitivement le ré-appairage de ce reader
-// physique à un autre kiosk — voir docs/KIOSK_DECISIONS.md).
+// obligatoirement à la révocation d'une borne (sinon l'index unique partiel
+// bloquerait définitivement le ré-appairage de ce reader physique à un autre
+// kiosk — voir docs/KIOSK_DECISIONS.md). Jamais au reclaim : l'appairage y
+// est conservé.
 func (r *Repository) ClearKioskReader(ctx context.Context, kioskID string) error {
 	db := dbx.GetDB(ctx, r.database)
 	_, err := db.ExecContext(ctx,

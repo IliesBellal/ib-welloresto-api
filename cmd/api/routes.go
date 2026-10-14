@@ -16,6 +16,7 @@ import (
 	"welloresto-api/internal/infrastructure/websocket"
 
 	"welloresto-api/internal/middleware/rbacobserve"
+	"welloresto-api/internal/diagnostics"
 	requestlogger "welloresto-api/internal/middleware/request_logger"
 	adminModule "welloresto-api/internal/modules/admin"
 	cdsModule "welloresto-api/internal/modules/cds"
@@ -125,6 +126,9 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// le pool Postgres (internal/database/postgres.go) en autorise 15. Le logger a aussi
 	// été corrigé pour passer par dbx.Rebind (placeholders ? -> $N, requis par Postgres).
 	r.Use(requestlogger.RequestLoggerMiddleware(requestlogger.NewLogger(selectedDB, log, 1000)))
+
+	// Journal de diagnostic (docs/DIAGNOSTIC_EVENTS.md) : écriture asynchrone, jamais bloquante.
+	diagnostics.Init(selectedDB, log)
 
 	// RBAC lot 2, phase d'observation : off par défaut, activable sans
 	// redéploiement de code (juste la variable d'env + un restart) via
@@ -1927,6 +1931,14 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		// au quotidien. Garde retirée (RBAC lot 8, audit lot 7 §4.2) ;
 		// customers.manage reste sur les 3 routes d'import en masse ci-dessus.
 		r.Post("/", customersH.CreateCustomer) // used by: back-office
+
+		// Blocage de clients pour la commande en ligne ScanNOrder
+		// (docs/CUSTOMER_BLOCKING.md) : décision de gestion, donc
+		// customers.manage comme l'import en masse.
+		r.With(middleware.RequirePermission(permission.CustomersManage)).
+			Post("/block", customersH.BlockCustomer) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CustomersManage)).
+			Patch("/{customer_id}/unblock", customersH.UnblockCustomer) // used by: back-office
 
 		r.Get("/search", customersH.SearchCustomers)                                             // used by: back-office | mobile-app
 		r.Get("/list", customersH.ListCustomers)                                                 // used by: back-office | mobile-app

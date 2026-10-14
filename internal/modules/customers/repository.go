@@ -1020,7 +1020,7 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 	fromClause := `
     FROM customer c
     WHERE c.merchant_id = ?
-      AND c.enabled = true
+      AND (c.enabled = true OR c.blocked_at IS NOT NULL)
       AND c.customer_brand NOT IN ('UBER_EATS', 'DELIVEROO')
 `
 	args := []interface{}{merchantID}
@@ -1064,7 +1064,10 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
         c.last_order_date,
         c.customer_code,
 		c.advertising_consent,
-		c.customer_brand
+		c.customer_brand,
+		c.blocked_at,
+		c.blocked_reason_id,
+		c.blocked_comment
 ` + fromClause + orderBy + `
 	LIMIT ? OFFSET ?
 `
@@ -1080,6 +1083,7 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 		var c CustomerSearchResult
 		var creationDate sql.NullTime
 		var lastOrderDate sql.NullTime
+		var blockedAt sql.NullTime
 		err := rows.Scan(
 			&c.CustomerID,
 			&c.CustomerName,
@@ -1095,10 +1099,15 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 			&c.CustomerCode,
 			&c.AdvertisingConsent,
 			&c.CustomerBrand,
+			&blockedAt,
+			&c.BlockedReasonID,
+			&c.BlockedComment,
 		)
 
 		c.CreationDate = nullTimeToUTCISOZ(creationDate)
 		c.LastOrderDate = nullTimeToUTCISOZ(lastOrderDate)
+		c.BlockedAt = nullTimeToUTCISOZ(blockedAt)
+		c.Blocked = blockedAt.Valid
 		if err != nil {
 			logger.FromContext(ctx).Info("Error while scanning customers " + err.Error())
 			continue
@@ -1219,7 +1228,7 @@ func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID, sor
 	fromClause := `
     FROM customer c
     WHERE c.merchant_id = ?
-      AND c.enabled = true
+      AND (c.enabled = true OR c.blocked_at IS NOT NULL)
       AND c.customer_brand NOT IN ('UBER_EATS', 'DELIVEROO')
 `
 
@@ -1245,7 +1254,10 @@ func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID, sor
         c.last_order_date,
         c.customer_code,
 		c.advertising_consent,
-		c.customer_brand
+		c.customer_brand,
+		c.blocked_at,
+		c.blocked_reason_id,
+		c.blocked_comment
 ` + fromClause + orderBy + `
 	LIMIT ? OFFSET ?
 `
@@ -1260,6 +1272,7 @@ func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID, sor
 		var c CustomerSearchResult
 		var creationDate sql.NullTime
 		var lastOrderDate sql.NullTime
+		var blockedAt sql.NullTime
 		err := rows.Scan(
 			&c.CustomerID,
 			&c.CustomerName,
@@ -1275,10 +1288,15 @@ func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID, sor
 			&c.CustomerCode,
 			&c.AdvertisingConsent,
 			&c.CustomerBrand,
+			&blockedAt,
+			&c.BlockedReasonID,
+			&c.BlockedComment,
 		)
 
 		c.CreationDate = nullTimeToUTCISOZ(creationDate)
 		c.LastOrderDate = nullTimeToUTCISOZ(lastOrderDate)
+		c.BlockedAt = nullTimeToUTCISOZ(blockedAt)
+		c.Blocked = blockedAt.Valid
 		if err != nil {
 			logger.FromContext(ctx).Info("Error while scanning customers " + err.Error())
 			continue

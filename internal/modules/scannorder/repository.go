@@ -814,6 +814,16 @@ func (r *Repository) GetCustomerFromQR(ctx context.Context, qrCode string) (*mod
 	}, nil
 }
 
+// IsCustomerBlocked dit si le client de la commande est bloqué par
+// l'établissement (voir customers.CustomersRepository.IsPhoneBlocked). Un
+// client sans téléphone n'est jamais bloqué : il n'a aucune identité à matcher.
+func (r *Repository) IsCustomerBlocked(ctx context.Context, merchantID string, customer *models.CustomerRequest) (bool, error) {
+	if customer == nil || customer.Tel == nil {
+		return false, nil
+	}
+	return r.customerRepo.IsPhoneBlocked(ctx, merchantID, *customer.Tel)
+}
+
 func (r *Repository) GetCustomerByPhone(ctx context.Context, customer models.CustomerRequest) (*models.CustomerRequest, error) {
 	db := dbx.GetDB(ctx, r.database)
 

@@ -199,9 +199,9 @@ func TestSearchCustomers_NormalizesPhoneSearchTerm(t *testing.T) {
 	mock.ExpectQuery(`SELECT\s+c\.customer_id`).
 		WithArgs("merchant_1", "06 12 34 56 78", "%+33612345678%", "%06 12 34 56 78%", "%06 12 34 56 78%", "%06 12 34 56 78%", 10, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"customer_id", "customer_name", "customer_last_name", "customer_first_name", "customer_tel", "customer_address", "customer_email", "customer_nb_orders", "customer_total_spent", "creation_date", "last_order_date", "customer_code", "advertising_consent", "customer_brand",
+			"customer_id", "customer_name", "customer_last_name", "customer_first_name", "customer_tel", "customer_address", "customer_email", "customer_nb_orders", "customer_total_spent", "creation_date", "last_order_date", "customer_code", "advertising_consent", "customer_brand", "blocked_at", "blocked_reason_id", "blocked_comment",
 		}).AddRow(
-			"cus_1", "Jean Dupont", "Dupont", "Jean", "+33612345678", "1 rue de Paris", "client@example.fr", 2, 1500, nil, nil, "C001", true, "WELLORESTO",
+			"cus_1", "Jean Dupont", "Dupont", "Jean", "+33612345678", "1 rue de Paris", "client@example.fr", 2, 1500, nil, nil, "C001", true, "WELLORESTO", nil, nil, nil,
 		))
 
 	results, total, err := repo.SearchCustomers(context.Background(), "merchant_1", "06 12 34 56 78", "", "", 1, 10)
@@ -213,6 +213,9 @@ func TestSearchCustomers_NormalizesPhoneSearchTerm(t *testing.T) {
 	}
 	if len(results) != 1 {
 		t.Fatalf("SearchCustomers() len = %d, want 1", len(results))
+	}
+	if results[0].Blocked || results[0].BlockedAt != nil {
+		t.Fatalf("un client sans blocked_at ne doit pas apparaître bloqué : %+v", results[0])
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {

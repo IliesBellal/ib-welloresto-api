@@ -135,7 +135,7 @@ func buildStatementPDF(m *Merchant, ref Ref, s *Summary) ([]byte, error) {
 
 	d.section("Versement")
 	d.lines(10, 5.5,
-		"Référence Stripe : "+ref.PayoutID,
+		"Référence de versement : "+ref.PayoutID,
 		"Date d'arrivée sur votre compte : "+formatDate(ref.ArrivalDate),
 		fmt.Sprintf("Période des ventes : du %s au %s", formatDate(s.PeriodStart), formatDate(s.PeriodEnd)),
 	)
@@ -154,9 +154,7 @@ func buildStatementPDF(m *Merchant, ref Ref, s *Summary) ([]byte, error) {
 	if s.Adjustments != 0 {
 		d.row(false, "Litiges et ajustements", formatEUR(s.Adjustments))
 	}
-	_, vat := splitVAT(s.Commission)
-	d.row(false, fmt.Sprintf("Commission Wello Resto TTC (dont TVA %s)", formatEUR(vat)), formatEUR(-s.Commission))
-	d.row(false, "Frais de traitement des paiements (Stripe)", formatEUR(-s.StripeFees))
+	d.row(false, "Frais de transactions", formatEUR(-(s.Commission + s.StripeFees)))
 	if !s.Reconciled() {
 		d.row(false, "Écart non rapproché par Stripe", formatEUR(s.Discrepancy))
 	}

@@ -116,6 +116,12 @@ func Auth(service AuthService) func(http.Handler) http.Handler {
 
 			// 4. Injecter le user (inchangé)
 			ctx := context.WithValue(r.Context(), userContextKey, user)
+			// Le journal des requêtes (situé avant ce middleware) ne voit pas ce
+			// contexte dérivé : il lit l'identité dans le pointeur qu'il a déposé.
+			if identity, ok := ctx.Value(models.ContextRequestIdentity).(*models.RequestIdentity); ok && identity != nil {
+				identity.UserID = user.UserID
+				identity.MerchantID = user.MerchantID
+			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

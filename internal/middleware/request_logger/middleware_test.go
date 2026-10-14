@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"welloresto-api/internal/models"
+
 	"go.uber.org/zap"
 )
 
@@ -71,5 +73,33 @@ func TestRequestLoggerMiddleware_EmptyResponseBodyDefaultsToEmptyObject(t *testi
 
 	if string(entry.ResponsePayload) != "{}" {
 		t.Fatalf("ResponsePayload = %q, want %q", entry.ResponsePayload, "{}")
+	}
+}
+
+// Régression : user_id et merchant_id restaient toujours NULL, le journal lisant
+// des clés de contexte que personne ne posait (et le contexte dérivé par
+// l'authentification est de toute façon invisible après coup). L'identité
+// remplie par l'authentification, via le pointeur déposé dans la requête, doit
+// remonter dans l'entrée.
+func TestRequestLoggerMiddleware_RecordsAuthenticatedIdentity(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		identity, ok := r.Context().Value(models.ContextRequestIdentity).(*models.RequestIdentity)
+		if !ok {
+			t.Fatal("aucun RequestIdentity dans le contexte de la requête")
+		}
+		identity.UserID, identity.MerchantID = "226", "212"
+	})
+
+	entry := captureLogEntry(t, handler, httptest.NewRequest(http.MethodPost, "/orders", nil))
+	if entry.UserID == nil || *entry.UserID != 226 || entry.MerchantID == nil || *entry.MerchantID != "212" {
+		t.Fatalf("entrée = (user %v, merchant %v), want (226, 212)", entry.UserID, entry.MerchantID)
+	}
+
+	// Requête non authentifiée, ou identifiant non numérique : NULL, jamais d'échec.
+	entry = captureLogEntry(t, func(w http.ResponseWriter, r *http.Request) {
+		r.Context().Value(models.ContextRequestIdentity).(*models.RequestIdentity).UserID = "abc"
+	}, httptest.NewRequest(http.MethodGet, "/x", nil))
+	if entry.UserID != nil || entry.MerchantID != nil {
+		t.Fatalf("entrée = (user %v, merchant %v), want (nil, nil)", entry.UserID, entry.MerchantID)
 	}
 }

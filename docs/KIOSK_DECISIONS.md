@@ -4266,8 +4266,9 @@ amendement — toujours la source de vérité en cas de divergence avec ce
 document). Décisions actées non rediscutées : appairage lié à l'enrollment de
 la borne (colonnes `kiosks.stripe_reader_id`/`stripe_reader_label`/
 `stripe_reader_serial`, migration `146_kiosks_terminal_reader`), pas au
-merchant — un nouvel enrollment/reclaim n'a jamais de TPE appairé, appairage
-manuel obligatoire ; un seul PaymentIntent actif par commande, réutilisé à
+merchant — un nouvel enrollment n'a jamais de TPE appairé, appairage
+manuel obligatoire (le reclaim, lui, conserve l'appairage depuis le
+2026-10-14 — voir « Reclaim : appairage TPE conservé ») ; un seul PaymentIntent actif par commande, réutilisé à
 chaque tentative (déjà en place, chantier précédent — voir plus haut,
 « Sécurisation du webhook Terminal… ») ; webhooks = source de vérité.
 
@@ -4437,6 +4438,10 @@ révocation — la ligne révoquée garderait `stripe_reader_id` non `NULL`
 indéfiniment. Testé (`revoke_test.go`, nouveau ; `reclaim_test.go` étendu) via
 `sqlmock`, assertion sur l'`ExpectExec` du `UPDATE kiosks SET stripe_reader_id
 = NULL...` à la bonne position dans la séquence transactionnelle.
+
+> **Révisé le 2026-10-14** : le reclaim n'efface plus l'appairage — voir
+> « Reclaim : appairage TPE conservé ». La révocation, elle, l'efface
+> toujours (seul cas où l'index unique l'exige).
 
 ### 7. Endpoint dev — `POST /kiosk/terminal/test/present-payment-method`
 
@@ -4992,3 +4997,36 @@ paramètres Kiosk dans le back-office).
 Tests : `kiosk/card_payment_toggle_test.go` (fermé aujourd'hui, rouvert à
 minuit, sans droit, payer en caisse désactivé, changement d'heure).
 Déploiement : migration 167 **avant** l'API.
+
+## Reclaim : appairage TPE conservé (2026-10-14)
+
+Incident : après un déploiement de l'API, toutes les bornes redémarrées ont
+perdu leur TPE. Les bornes étaient passées par un reclaim (`POST
+/kiosk/auth/reclaim`), que l'app déclenche au démarrage quand elle n'a plus de
+refresh token, ou quand l'API refuse le sien. Ce reclaim effaçait
+volontairement l'appairage (`ClearKioskReader` dans la transaction de
+`ReclaimDevice`).
+
+Cet effacement reposait sur une ligne de cadrage du chantier server-driven
+(« un nouvel enrollment/reclaim n'a jamais de TPE appairé ») qui n'avait pas
+de justification propre. La raison technique invoquée au §6 (index unique
+partiel `uq_kiosks_stripe_reader_id`, migration 146) ne vaut que pour la
+**révocation** : la ligne révoquée garderait le reader indéfiniment. Un
+reclaim réutilise la même ligne `kiosks` pour le même `device_id` (candidat
+unique, statut `active`/`inactive`) : garder son reader ne bloque aucun autre
+kiosk.
+
+Décision : `ReclaimDevice` conserve l'appairage, en reclaim silencieux comme
+avec PIN admin. Restent inchangés :
+- la **révocation** (`RevokeKiosk`) efface toujours l'appairage ;
+- un **nouvel enrollment** crée une nouvelle ligne, donc sans TPE ;
+- un reader supprimé côté Stripe est toujours effacé à la lecture suivante
+  (`GetPairedTerminalReader`, `resource_missing`).
+
+Tests : `reclaim_test.go`. Les deux scénarios de reclaim réussi
+(silencieux, avec PIN) n'attendent plus l'`UPDATE kiosks SET stripe_reader_id
+= NULL` : sqlmock échoue sur toute requête non attendue, ce qui verrouille la
+non-régression.
+
+Les bornes déjà désappairées par l'incident doivent être réappairées une
+fois à la main (Admin → TPE) : rien ne permet de retrouver l'ancien reader.

@@ -564,6 +564,26 @@ func (s *Service) GetPricingSNO(ctx context.Context, req *models.PricingRequest)
 		}, nil
 	}
 
+	// 🔹 1ter. Client bloqué par le marchand : refus générique, sans rien
+	// révéler. CreateOrderSNO passe toujours par ici avant de créer la commande
+	// (et avant tout paiement Stripe), ce contrôle couvre donc les deux routes.
+	// Un lookup en échec n'est jamais traité comme "non bloqué".
+	if orderTypeChecksBlockedCustomer(req.Order.OrderType) {
+		blocked, err := s.repo.IsCustomerBlocked(ctx, merchant.MerchantID, req.Order.Customer)
+		if err != nil {
+			logger.FromContext(ctx).Error("GetPricingSNO: blocked customer lookup failed", zap.Error(err))
+			return nil, fmt.Errorf("customer_block_lookup_failed: %w", err)
+		}
+		if blocked {
+			// Journal interne uniquement (jamais renvoyé au client).
+			logger.FromContext(ctx).Warn("SNO order refused: customer blocked by merchant",
+				zap.String("merchant_id", merchant.MerchantID),
+				zap.String("order_type", req.Order.OrderType),
+			)
+			return &models.PricingResponse{Status: StatusOrderUnavailable}, nil
+		}
+	}
+
 	// 🔹 2. Delivery zone check
 	if req.Order.OrderType == "DELIVERY" &&
 		req.Order.Customer != nil {

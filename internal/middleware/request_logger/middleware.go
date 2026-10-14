@@ -2,10 +2,12 @@ package requestlogger
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 	"welloresto-api/internal/models"
 
@@ -50,6 +52,9 @@ func RequestLoggerMiddleware(logger *Logger) func(http.Handler) http.Handler {
 			// La mesure encadre au plus près l'exécution du handler : la lecture
 			// du body ci-dessus est du coût de log, pas du coût de traitement, et
 			// la fausser gonflerait artificiellement les endpoints à gros payload.
+			identity := &models.RequestIdentity{}
+			r = r.WithContext(context.WithValue(r.Context(), models.ContextRequestIdentity, identity))
+
 			startedAt := time.Now()
 			next.ServeHTTP(ww, r)
 			durationMs := time.Since(startedAt).Milliseconds()
@@ -59,12 +64,14 @@ func RequestLoggerMiddleware(logger *Logger) func(http.Handler) http.Handler {
 			var userID *int64
 			var merchantID *string
 
-			if id, ok := r.Context().Value(models.ContextUserID).(int64); ok {
+			// api_request_logs.user_id est un bigint : un identifiant non numérique
+			// (aucun cas connu pour le personnel) reste NULL plutôt que de faire
+			// échouer le lot d'insertion.
+			if id, err := strconv.ParseInt(identity.UserID, 10, 64); err == nil {
 				userID = &id
 			}
-
-			if id, ok := r.Context().Value(models.ContextMerchantID).(string); ok {
-				merchantID = &id
+			if identity.MerchantID != "" {
+				merchantID = &identity.MerchantID
 			}
 
 			logger.Log(LogEntry{

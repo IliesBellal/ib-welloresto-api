@@ -173,6 +173,14 @@ type CustomerSearchResult struct {
 	MatchScore         int     `json:"match_score"`
 	AdvertisingConsent *bool   `json:"advertising_consent"`
 	CustomerBrand      *string `json:"customer_brand"`
+
+	// Blocage pour la commande en ligne (blocking.go). blocked_reason_id est un
+	// deletion_reasons.deletion_reason_id (object 'customer'), à résoudre en
+	// libellé avec GET /pos/deletion_reasons/customer.
+	Blocked         bool    `json:"blocked"`
+	BlockedAt       *string `json:"blocked_at"`
+	BlockedReasonID *string `json:"blocked_reason_id"`
+	BlockedComment  *string `json:"blocked_comment"`
 }
 
 type Customer struct {

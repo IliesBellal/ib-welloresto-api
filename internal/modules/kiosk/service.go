@@ -518,13 +518,12 @@ func (s *Service) ReclaimDevice(ctx context.Context, req ReclaimDeviceRequest, i
 		if err := s.repo.CreateDeviceToken(txCtx, newTokenID, kiosk.ID, newRefreshTokenHash, newRefreshExpiresAt); err != nil {
 			return err
 		}
-		// Un reclaim repart sans TPE appairé — appairage manuel obligatoire
-		// (décision actée, docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md). Cette ligne
-		// kiosks est réutilisée telle quelle (jamais recréée), donc son
-		// appairage précédent doit être explicitement effacé ici.
-		if err := s.repo.ClearKioskReader(txCtx, kiosk.ID); err != nil {
-			return err
-		}
+		// L'appairage TPE est conservé : même ligne kiosks, même appareil. Un
+		// reclaim survient après une perte de tokens (stockage effacé, tokens
+		// invalidés côté serveur) — il ne doit pas désappairer le lecteur de
+		// toutes les bornes concernées. Seule la révocation efface l'appairage
+		// (RevokeKiosk) — voir docs/KIOSK_DECISIONS.md, "Reclaim : appairage
+		// TPE conservé".
 		return s.repo.UpdateKioskLastSeenOnReclaim(txCtx, kiosk.ID, ip)
 	})
 	if err != nil {

@@ -516,19 +516,30 @@ func (s *OrdersLifeCycleService) CreatePaymentAndReturnID(ctx context.Context, p
 		paymentID, err = s.ordersLifeCycleRepo.AddPaymentAndReturnID(txCtx, payment)
 		return err
 	})
+	if err == nil {
+		s.checkOrderConsistency(ctx, payment.MerchantID, payment.UserID, payment.OrderID, consistencyStagePayment)
+	}
 	return paymentID, err
 }
 
 func (s *OrdersLifeCycleService) CreatePayment(ctx context.Context, payment models.Payment) error {
-	return s.ExecuteOrderMutation(ctx, payment.MerchantID, payment.UserID, payment.OrderID, models.ActionPaymentAdded, models.ResourcePayment, true, func(txCtx context.Context) error {
+	err := s.ExecuteOrderMutation(ctx, payment.MerchantID, payment.UserID, payment.OrderID, models.ActionPaymentAdded, models.ResourcePayment, true, func(txCtx context.Context) error {
 		return s.ordersLifeCycleRepo.AddPayment(txCtx, payment)
 	})
+	if err == nil {
+		s.checkOrderConsistency(ctx, payment.MerchantID, payment.UserID, payment.OrderID, consistencyStagePayment)
+	}
+	return err
 }
 
 func (s *OrdersLifeCycleService) CreatePaymentNoNotification(ctx context.Context, payment models.Payment) error {
-	return s.ExecuteOrderMutation(ctx, payment.MerchantID, payment.UserID, payment.OrderID, models.ActionPaymentAdded, models.ResourcePayment, false, func(txCtx context.Context) error {
+	err := s.ExecuteOrderMutation(ctx, payment.MerchantID, payment.UserID, payment.OrderID, models.ActionPaymentAdded, models.ResourcePayment, false, func(txCtx context.Context) error {
 		return s.ordersLifeCycleRepo.AddPayment(txCtx, payment)
 	})
+	if err == nil {
+		s.checkOrderConsistency(ctx, payment.MerchantID, payment.UserID, payment.OrderID, consistencyStagePayment)
+	}
+	return err
 }
 
 func (s *OrdersLifeCycleService) GetPayments(ctx context.Context, orderID string) ([]models.Payment, error) {
@@ -1128,6 +1139,12 @@ func (s *OrdersLifeCycleService) CreateOrder(ctx context.Context, req *models.Re
 		log.Info("🆕 New order created for merchant " + req.MerchantID + " : " + result.OrderID)
 		s.notificationsService.SendNotificationAsync(req.MerchantID, result.OrderID, notification.NotificationTypeOrderUpdate)
 
+		createdBy := ""
+		if req.Order.CreatedBy != nil {
+			createdBy = *req.Order.CreatedBy
+		}
+		s.checkOrderConsistency(ctx, req.MerchantID, createdBy, result.OrderID, consistencyStageCreate)
+
 		// Pont automatique confirmed -> seated : fire-and-forget, ne doit jamais
 		// affecter le flux de création de commande (cf. bookingAutoTransitioner).
 		if s.bookingsSvc != nil && len(req.Order.Locations) > 0 {
@@ -1308,6 +1325,7 @@ func (s *OrdersLifeCycleService) UpdateOrder(ctx context.Context, req *models.Re
 
 	// 5. Actions asynchrones / hors base de données (se font UNIQUEMENT si le commit a réussi)
 	s.notificationsService.SendNotificationAsync(req.MerchantID, *req.Order.OrderID, notification.NotificationTypeOrderUpdate)
+	s.checkOrderConsistency(ctx, req.MerchantID, user.UserID, *req.Order.OrderID, consistencyStageUpdate)
 
 	return nil
 }

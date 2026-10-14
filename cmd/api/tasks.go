@@ -137,6 +137,7 @@ func SetupTasks(
 	// l'ancien MySQL Hostinger) : les deux DELETE peuvent tourner en parallèle
 	// sans se disputer une connexion unique.
 	add("0 5 1 * *", taskManager.CleanupOldRequestLogs)
+	add("30 5 * * *", taskManager.CleanupOldDiagnosticEvents)
 
 	// Démarrage du Cron en arrière-plan
 	c.Start()
