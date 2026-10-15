@@ -340,3 +340,20 @@ Retour d'Ilies : à la relecture photo, impossible de donner une catégorie à u
 | Vérification | Résultat |
 |---|---|
 | `ai_decisions_test.go` | OK. Couvre : catégorie ajoutée rattachée par nom à une catégorie de la caisse ; catégorie ajoutée créée ; catégorie lue vidée non créée ; canonique d'origine intact ; nom identique à une catégorie lue réutilisé ; 3 décisions invalides ; décision refusée hors porte IA |
+
+## 11. Produits vendus par quantités (2026-10-15)
+
+Demande d'Ilies : un produit proposé par 4, 6 ou 9 pièces (nuggets, ailes, huîtres) ne doit pas devenir un groupe de produits, mais un produit avec un attribut de configuration qui choisit la quantité, +0 € sur la plus petite et un supplément sur les autres.
+
+### D20 — Quantités = un produit + un groupe d'options « Quantité »
+- **Aucun changement de contrat ni de schéma** : c'est un produit et un groupe d'options ordinaires (min 1, max 1, donc attribut obligatoire à choix unique, comme D14). Seule la consigne change (`menuOCRSystemPrompt`, section « Quantités »).
+- **Règle de prix** : le prix du produit est celui de la plus petite quantité (option à +0) ; chaque autre option porte la différence. Nuggets 4,50 / 6,00 / 8,50 € → produit à 450, options x4 +0, x6 +150, x9 +400.
+- **Périmètre** : quantités de pièces uniquement. Tailles et contenances (pizza 26/33 cm, bière 25/50 cl) et variétés restent des groupes de déclinaisons (D1).
+- **Prix illisible** : option omise avec un problème sur le produit ; plus petite quantité illisible : `price_cents` null (donc « prix absent ou illisible » à la relecture).
+- **Correctif de fusion** (`aiMerger.attribute`) : la clé d'identité d'un groupe d'options était nom + titres, sans les suppléments. Deux produits avec chacun « Quantité : x4, x6, x9 » mais des suppléments différents auraient partagé le premier jeu de prix. La clé inclut désormais le supplément de chaque option. Effet de bord : les identifiants externes générés des groupes d'options changent (ils dérivent de la clé) ; sans conséquence pour les brouillons en cours, qui rejouent la fusion à chaque lecture.
+
+| Vérification | Résultat |
+|---|---|
+| `go build`, `go vet`, `go test ./internal/modules/menu/...` | OK |
+| `TestBuildAIMenuImport_QuantityOptionGroups` | Choix unique obligatoire, x4 à +0, produit simple au prix de x4 ; suppléments différents = groupes distincts ; mêmes quantités et suppléments = groupe partagé |
+| Consigne sur de vraies photos | **Non testée** : à faire au prochain test staging avec une carte contenant des produits par quantités |

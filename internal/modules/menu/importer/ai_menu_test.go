@@ -230,6 +230,62 @@ func TestBuildAIMenuImport_OptionGroups(t *testing.T) {
 	}
 }
 
+// Un produit vendu par 4, 6 ou 9 est un seul produit avec un groupe
+// « Quantité » obligatoire à choix unique, pas un groupe de produits. Deux
+// produits aux mêmes quantités mais à suppléments différents ne partagent pas
+// leur groupe ; le même groupe relu sur une autre photo reste fusionné.
+func TestBuildAIMenuImport_QuantityOptionGroups(t *testing.T) {
+	quantity := func(ref string, x6, x9 int) AIOptionGroup {
+		return AIOptionGroup{Ref: ref, Name: "Quantité", Min: 1, Max: 1, Options: []AIOption{
+			{Title: "x4", ExtraPriceCents: 0}, {Title: "x6", ExtraPriceCents: x6}, {Title: "x9", ExtraPriceCents: x9},
+		}}
+	}
+	pages := []AIMenuPage{
+		{
+			Categories: []AICategory{{Ref: "c1", Name: "Snacks"}},
+			Products: []AIProduct{
+				{Ref: "p1", CategoryRef: strPtr("c1"), Name: "Nuggets", PriceCents: intPtr(450), OptionGroupRefs: []string{"o1"}, Kind: "food", Confidence: "high"},
+				{Ref: "p2", CategoryRef: strPtr("c1"), Name: "Ailes", PriceCents: intPtr(500), OptionGroupRefs: []string{"o2"}, Kind: "food", Confidence: "high"},
+			},
+			OptionGroups: []AIOptionGroup{quantity("o1", 150, 400), quantity("o2", 250, 600)},
+		},
+		{
+			Categories: []AICategory{{Ref: "c1", Name: "Snacks"}},
+			Products: []AIProduct{
+				{Ref: "p3", CategoryRef: strPtr("c1"), Name: "Tenders", PriceCents: intPtr(500), OptionGroupRefs: []string{"o3"}, Kind: "food", Confidence: "high"},
+			},
+			OptionGroups: []AIOptionGroup{quantity("o3", 250, 600)},
+		},
+	}
+	imp, err := BuildAIMenuImport(pages, nil)
+	if err != nil {
+		t.Fatalf("BuildAIMenuImport: %v", err)
+	}
+
+	if len(imp.Attributes) != 2 {
+		t.Fatalf("groupes d'options = %d, want 2 (suppléments différents, même groupe pour Ailes et Tenders)", len(imp.Attributes))
+	}
+	for _, a := range imp.Attributes {
+		if a.MinOptions != 1 || a.MaxOptions != 1 || !a.IsRequired || len(a.Options) != 3 {
+			t.Errorf("groupe Quantité = %+v, want choix unique obligatoire à 3 options", a)
+		}
+		if a.Options[0].Title != "x4" || a.Options[0].ExtraPrice != 0 {
+			t.Errorf("première option = %+v, want x4 à +0", a.Options[0])
+		}
+	}
+
+	nuggets, ailes, tenders := productByName(t, imp, "Nuggets"), productByName(t, imp, "Ailes"), productByName(t, imp, "Tenders")
+	if nuggets.IsGroup || nuggets.ParentExternalID != "" || nuggets.PriceIn != 450 {
+		t.Errorf("Nuggets = %+v, want un produit simple au prix de x4", nuggets)
+	}
+	if reflect.DeepEqual(nuggets.AttributeExternalIDs, ailes.AttributeExternalIDs) {
+		t.Errorf("Nuggets et Ailes partagent le même groupe malgré des suppléments différents")
+	}
+	if !reflect.DeepEqual(ailes.AttributeExternalIDs, tenders.AttributeExternalIDs) {
+		t.Errorf("Ailes et Tenders (mêmes quantités, mêmes suppléments) doivent partager le groupe")
+	}
+}
+
 func TestBuildAIMenuImport_FormulasAndPhotoWarnings(t *testing.T) {
 	imp := buildAITestImport(t)
 

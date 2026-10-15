@@ -32,7 +32,7 @@ func (f *BookingFetcher) FetchAndBuildBookings(ctx context.Context, req *Booking
             b.booking_date_from, b.booking_date_to, b.creation_date,
             c.customer_nb_orders, c.customer_nb_bookings, bs.code,
             m.fullName AS business_name, m.address, m.timezone,
-            bs.default_booking_duration, m.logo_url,
+            bs.default_booking_duration, COALESCE(m.logo_url, ''),
             CASE
                 WHEN u.user_id IS NOT NULL THEN u.name
                 ELSE b.created_by

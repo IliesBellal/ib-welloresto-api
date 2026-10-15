@@ -589,6 +589,12 @@ func (s *reservationService) toBookingPublic(merchant *Merchant, booking *Bookin
 		remainingUpdates = 0
 	}
 
+	// logo_url is NULL until the merchant uploads a logo.
+	logoURL := ""
+	if merchant.LogoURL != nil {
+		logoURL = *merchant.LogoURL
+	}
+
 	return &BookingPublic{
 		BookingNumber:    booking.BookingNumber,
 		Status:           booking.Status,
@@ -603,7 +609,7 @@ func (s *reservationService) toBookingPublic(merchant *Merchant, booking *Bookin
 			BusinessName: merchant.BusinessName,
 			Phone:        merchant.Phone,
 			Address:      merchant.Address,
-			LogoURL:      *merchant.LogoURL,
+			LogoURL:      logoURL,
 			Design:       merchant.Design,
 			Timezone:     merchant.Timezone,
 		},

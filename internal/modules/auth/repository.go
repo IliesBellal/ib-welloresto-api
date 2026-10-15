@@ -84,9 +84,9 @@ SELECT
 
     m.fullName,
     m.merchantTel,
-    m.lat,
-    m.lng,
-    m.timezone,
+    COALESCE(m.lat, 0),
+    COALESCE(m.lng, 0),
+    COALESCE(m.timezone, ''),
     CONCAT(m.street_number,' ',m.street,', ',m.zip_code,' ',m.city,', ',m.country),
     m.logo,
     m.web_site,
@@ -261,9 +261,9 @@ SELECT
 
     m.fullName,
     m.merchantTel,
-    m.lat,
-    m.lng,
-    m.timezone,
+    COALESCE(m.lat, 0),
+    COALESCE(m.lng, 0),
+    COALESCE(m.timezone, ''),
     CONCAT(m.street_number,' ',m.street,', ',m.zip_code,' ',m.city,', ',m.country),
     m.logo,
     m.web_site,
@@ -748,9 +748,9 @@ SELECT
 
     m.fullName,
     m.merchantTel,
-    m.lat,
-    m.lng,
-    m.timezone,
+    COALESCE(m.lat, 0),
+    COALESCE(m.lng, 0),
+    COALESCE(m.timezone, ''),
     CONCAT(m.street_number,' ',m.street,', ',m.zip_code,' ',m.city,', ',m.country),
     m.logo,
     m.web_site,
@@ -876,8 +876,8 @@ func (r *AuthRepository) GetMerchants(ctx context.Context, userID string) ([]Mer
 SELECT
     m.id,
     m.fullName,
-    m.lat,
-    m.lng,
+    COALESCE(m.lat, 0),
+    COALESCE(m.lng, 0),
     CONCAT(m.street_number,' ',m.street,', ',m.zip_code,' ',m.city,', ',m.country),
     m.city,
     m.country,
@@ -898,10 +898,16 @@ WHERE ur.user_id IS NOT NULL AND ur.user_id = ?
 	var list []MerchantRow
 	for rows.Next() {
 		var m MerchantRow
-		rows.Scan(&m.MerchantID, &m.BusinessName, &m.Lat, &m.Lng, &m.Address, &m.City, &m.Country, &m.ZipCode, &m.LogoURL, &m.Token)
+		// A failed Scan used to be ignored: the row was appended half-filled
+		// (empty token), so the back-office merchant switcher offered an
+		// establishment it could not log into. Skip the row instead.
+		if err := rows.Scan(&m.MerchantID, &m.BusinessName, &m.Lat, &m.Lng, &m.Address, &m.City, &m.Country, &m.ZipCode, &m.LogoURL, &m.Token); err != nil {
+			logger.FromContext(ctx).Error("GetMerchants: failed to scan merchant row: " + err.Error())
+			continue
+		}
 		list = append(list, m)
 	}
-	return list, nil
+	return list, rows.Err()
 }
 
 func (r *AuthRepository) CheckAppVersion(ctx context.Context, currentVersion int, app, merchantID string) (map[string]interface{}, error) {

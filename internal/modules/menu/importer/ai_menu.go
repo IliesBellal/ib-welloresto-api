@@ -209,8 +209,9 @@ type aiMerger struct {
 //
 // Fusion entre photos, par identité de nom :
 //   - catégories : même nom → même catégorie ;
-//   - groupes d'options : même nom ET mêmes options → même groupe ; deux
-//     « Suppléments » différents (burgers, pizzas) restent distincts ;
+//   - groupes d'options : même nom ET mêmes options (titres et suppléments) →
+//     même groupe ; deux « Suppléments » différents (burgers, pizzas) ou deux
+//     « Quantité » aux prix différents restent distincts ;
 //   - produits : même catégorie et même nom → doublon (photos qui se
 //     chevauchent), le premier est gardé et un avertissement donne les deux prix.
 //
@@ -342,6 +343,9 @@ func (m *aiMerger) attribute(og AIOptionGroup) string {
 	}
 
 	options := make([]CanonicalOption, 0, len(og.Options))
+	// Un titre et son supplément : deux groupes « Quantité » de mêmes titres
+	// (x4, x6, x9) mais de suppléments différents (nuggets, ailes) sont deux
+	// groupes distincts.
 	titles := make([]string, 0, len(og.Options))
 	seen := make(map[string]struct{}, len(og.Options))
 	for _, o := range og.Options {
@@ -359,7 +363,7 @@ func (m *aiMerger) attribute(og AIOptionGroup) string {
 			extra = 0
 		}
 		options = append(options, CanonicalOption{Title: title, ExtraPrice: extra})
-		titles = append(titles, key)
+		titles = append(titles, fmt.Sprintf("%s=%d", key, extra))
 	}
 	if len(options) == 0 {
 		return ""
