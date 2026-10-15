@@ -218,7 +218,10 @@ func (f *fakeAIPhotoStore) DeleteFile(_ context.Context, key string) error {
 type fakeOCRProvider struct {
 	mu      sync.Mutex
 	replies map[int]fakeOCRReply
-	calls   []ai.CompletionRequest
+	// promoReplies répond à la requête des promotions (schéma
+	// importer.AIPromotionsSchema), séparée de la lecture principale.
+	promoReplies map[int]fakeOCRReply
+	calls        []ai.CompletionRequest
 }
 
 type fakeOCRReply struct {
@@ -234,7 +237,11 @@ func (p *fakeOCRProvider) Complete(_ context.Context, req ai.CompletionRequest) 
 	_, _ = fmt.Sscanf(req.UserPrompt, "Photo %d sur %d", &photo, &total)
 	p.mu.Lock()
 	p.calls = append(p.calls, req)
-	reply, ok := p.replies[photo]
+	replies := p.replies
+	if string(req.JSONSchema) == string(importer.AIPromotionsSchema) {
+		replies = p.promoReplies
+	}
+	reply, ok := replies[photo]
 	p.mu.Unlock()
 	if !ok {
 		return nil, errors.New("photo inattendue")
@@ -247,6 +254,15 @@ func (p *fakeOCRProvider) Complete(_ context.Context, req ai.CompletionRequest) 
 		stop = "end_turn"
 	}
 	return &ai.CompletionResponse{Content: reply.content, StopReason: stop, Model: "claude-opus-5-5", InputTokens: 5000, OutputTokens: 800}, nil
+}
+
+func (p *fakeOCRProvider) setPromo(photo int, reply fakeOCRReply) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.promoReplies == nil {
+		p.promoReplies = map[int]fakeOCRReply{}
+	}
+	p.promoReplies[photo] = reply
 }
 
 func (p *fakeOCRProvider) set(photo int, reply fakeOCRReply) {
@@ -626,5 +642,116 @@ func TestAIImport_IngredientsNotRequestedByDefault(t *testing.T) {
 	env.service.Wait()
 	if call := env.provider.calls[0]; !strings.Contains(call.UserPrompt, "Ingrédients non demandés") {
 		t.Errorf("consigne = %q, want les ingrédients non demandés", call.UserPrompt)
+	}
+}
+
+// ---- promotions : requête séparée ----
+
+const (
+	aiOfferText = "Tous les lundis, 9 € sur nos pizzas 31 cm"
+
+	aiPageWithOffer = `{"categories":[{"ref":"c1","name":"Pizzas"}],"product_groups":[],"products":[{"ref":"p1","category_ref":"c1","group_ref":null,
+		"name":"Reine 31 cm","description":"","price_cents":1200,"option_group_refs":[],"kind":"food","confidence":"high","issues":[],"ingredients":[]}],
+		"option_groups":[],"formulas":[],"warnings":[],"offers":["` + aiOfferText + `"]}`
+
+	aiPromotionsReply = `{"promotions":[{"name":"Lundi 9 €","kind":"new_price","value":900,"max_units":0,"order_types":[],"days":[1],
+		"from_time":"","to_time":"","valid_until":"","min_order_cents":0,"product_refs":["p1"],"all_products":false,"source_text":"` + aiOfferText + `"}],
+		"promotions_not_created":[]}`
+)
+
+// Une photo qui montre une offre déclenche une seconde requête, à part : la
+// lecture principale n'en porte que le texte, ce qui garde son schéma sous la
+// limite de grammaire de l'API.
+func TestAIImport_OffersAreStructuredInASecondRequest(t *testing.T) {
+	env := newAITestEnv(t, true)
+	env.provider.set(1, fakeOCRReply{content: aiPageWithOffer})
+	env.provider.setPromo(1, fakeOCRReply{content: aiPromotionsReply})
+	ctx := aiTestContext()
+
+	started, err := env.service.StartExtraction(ctx, [][]byte{aiTestJPEG}, false)
+	if err != nil {
+		t.Fatalf("StartExtraction: %v", err)
+	}
+	env.service.Wait()
+
+	if len(env.provider.calls) != 2 {
+		t.Fatalf("appels IA = %d, want 2 (lecture, puis promotions)", len(env.provider.calls))
+	}
+	main, promo := env.provider.calls[0], env.provider.calls[1]
+	if string(main.JSONSchema) != string(importer.AIMenuPageSchema) || main.SystemPrompt != menuOCRSystemPrompt {
+		t.Error("la première requête doit être la lecture principale")
+	}
+	if string(promo.JSONSchema) != string(importer.AIPromotionsSchema) || promo.SystemPrompt != menuOCRPromotionsSystemPrompt {
+		t.Error("la seconde requête doit être celle des promotions")
+	}
+	if len(promo.Images) != 1 {
+		t.Errorf("la requête des promotions doit rejoindre la photo, images = %d", len(promo.Images))
+	}
+	for _, want := range []string{"p1 — Reine 31 cm (Pizzas) — 12.00 €", aiOfferText} {
+		if !strings.Contains(promo.UserPrompt, want) {
+			t.Errorf("consigne utilisateur des promotions sans %q : %q", want, promo.UserPrompt)
+		}
+	}
+
+	got, err := env.service.GetDraft(ctx, started.ID)
+	if err != nil {
+		t.Fatalf("GetDraft: %v", err)
+	}
+	if got.Preview == nil || len(got.Preview.Promotions) != 1 || got.Preview.Promotions[0].Name != "Lundi 9 €" {
+		t.Fatalf("aperçu = %+v, want la promotion lue", got.Preview)
+	}
+	if got.Photos[0].Status != AIPageDone {
+		t.Errorf("photo = %+v, want lue", got.Photos[0])
+	}
+}
+
+// Si la requête des promotions échoue, la photo reste lue : chaque offre est
+// signalée comme non créée, avec son texte, pour que le restaurateur la fasse à
+// la main.
+func TestAIImport_PromotionsRequestFailureKeepsThePhoto(t *testing.T) {
+	env := newAITestEnv(t, true)
+	env.provider.set(1, fakeOCRReply{content: aiPageWithOffer})
+	env.provider.setPromo(1, fakeOCRReply{err: errors.New("anthropic: unexpected status 400")})
+	ctx := aiTestContext()
+
+	started, err := env.service.StartExtraction(ctx, [][]byte{aiTestJPEG}, false)
+	if err != nil {
+		t.Fatalf("StartExtraction: %v", err)
+	}
+	env.service.Wait()
+
+	got, err := env.service.GetDraft(ctx, started.ID)
+	if err != nil {
+		t.Fatalf("GetDraft: %v", err)
+	}
+	if got.Status != AIDraftReady || got.Preview == nil || len(got.Preview.Products) == 0 {
+		t.Fatalf("brouillon = %+v, want prêt avec ses produits", got)
+	}
+	if len(got.Preview.Promotions) != 0 {
+		t.Errorf("promotions = %+v, want aucune", got.Preview.Promotions)
+	}
+	found := false
+	for _, w := range got.Preview.Warnings {
+		if w.Code == importer.WarningAIPromotionNotCreated && strings.Contains(w.Message, aiOfferText) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("avertissements = %+v, want la promotion non créée avec son texte", got.Preview.Warnings)
+	}
+}
+
+// Sans offre sur la photo, aucune requête supplémentaire.
+func TestAIImport_NoOfferNoSecondRequest(t *testing.T) {
+	env := newAITestEnv(t, true)
+	env.provider.set(1, fakeOCRReply{content: strings.Replace(aiPageWithOffer, `"offers":["`+aiOfferText+`"]`, `"offers":[]`, 1)})
+	ctx := aiTestContext()
+
+	if _, err := env.service.StartExtraction(ctx, [][]byte{aiTestJPEG}, false); err != nil {
+		t.Fatalf("StartExtraction: %v", err)
+	}
+	env.service.Wait()
+	if len(env.provider.calls) != 1 {
+		t.Fatalf("appels IA = %d, want 1", len(env.provider.calls))
 	}
 }

@@ -187,16 +187,35 @@ func TestDecodeAIMenuPage_Promotions(t *testing.T) {
 	}
 }
 
-// Le schéma des promotions ne doit contenir aucun champ facultatif (anyOf) :
-// c'est ce qui a fait dépasser la taille de grammaire acceptée par l'API.
-func TestAIMenuPageSchema_PromotionsHaveNoOptionalFields(t *testing.T) {
-	schema := string(AIMenuPageSchema)
-	start := strings.Index(schema, `"promotions": {`)
-	if start < 0 {
-		t.Fatal("schéma sans promotions")
+// Les promotions sont lues par une requête à part : le schéma de la lecture
+// principale n'en porte que le texte (offers). Réunis, les deux schémas
+// dépassaient la taille de grammaire acceptée par l'API Anthropic. Le schéma
+// des promotions ne doit en outre contenir aucun champ facultatif (anyOf).
+func TestSchemas_PromotionsAreReadSeparately(t *testing.T) {
+	main := string(AIMenuPageSchema)
+	if strings.Contains(main, `"promotions`) {
+		t.Error("le schéma de la lecture principale ne doit plus porter les promotions")
 	}
-	if n := strings.Count(schema[start:], "anyOf"); n != 0 {
+	if !strings.Contains(main, `"offers": {"type": "array", "items": {"type": "string"}}`) {
+		t.Error("le schéma de la lecture principale doit porter les offres recopiées (offers)")
+	}
+	if n := strings.Count(string(AIPromotionsSchema), "anyOf"); n != 0 {
 		t.Errorf("le schéma des promotions contient %d anyOf, want 0", n)
+	}
+}
+
+func TestDecodeAIPromotions(t *testing.T) {
+	read, err := DecodeAIPromotions(`{"promotions":[{"name":"N","kind":"nth_free","value":3,"max_units":0,"order_types":["IN"],"days":[],
+		"from_time":"","to_time":"","valid_until":"","min_order_cents":0,"product_refs":[],"all_products":true,"source_text":"x"}],
+		"promotions_not_created":[]}`)
+	if err != nil {
+		t.Fatalf("DecodeAIPromotions: %v", err)
+	}
+	if len(read.Promotions) != 1 || read.Promotions[0].Value != 3 {
+		t.Errorf("lecture = %+v", read)
+	}
+	if _, err := DecodeAIPromotions("pas du json"); err == nil {
+		t.Error("une réponse illisible doit être refusée")
 	}
 }
 

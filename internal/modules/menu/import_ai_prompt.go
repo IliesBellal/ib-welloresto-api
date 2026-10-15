@@ -1,6 +1,9 @@
 package menu
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // menuOCRTask est la tâche IA de la lecture de carte par photo (config/ai.go).
 const menuOCRTask = "menu_ocr"
@@ -54,24 +57,9 @@ Formules et menus composés : deux cas.
 - Formule composée de produits de la carte (« Menu midi : entrée + plat + dessert 15,90 € », « plat du jour + café ») : elle va dans formulas, jamais dans products. Ne crée pas de produit pour elle.
 - En cas de doute entre les deux, utilise formulas.
 
-Promotions (promotions, promotions_not_created) :
-- Une promotion est une offre écrite sur la carte (« Tous les lundis, 9 € sur nos pizzas 31 cm », « Sur place, 3 pizzas achetées, la 4ᵉ offerte », « -20 % le midi en semaine »). Elle diffère d'une formule : une formule vend un ensemble de produits à un prix, une promotion baisse le prix de produits vendus par ailleurs.
-- Mets une offre dans promotions SEULEMENT si tu la comprends parfaitement : son effet, les produits concernés, les modes de commande, les jours et les heures. Au moindre doute, ou si l'offre ne rentre pas dans les types ci-dessous, mets-la dans promotions_not_created avec source_text (le texte de la carte, recopié) et reason (ce qui t'empêche de la créer, en une phrase). N'invente aucun élément absent de la carte et n'arrondis pas une offre pour la faire rentrer dans un type. Un restaurateur relira tout : une offre non créée vaut mieux qu'une offre fausse.
-- kind, et value, dont le sens dépend de kind :
-  - new_price : les produits concernés sont vendus à un prix fixe ; value est ce prix en centimes (9 € → 900) ;
-  - percent_off : remise en pourcentage ; value vaut 20 pour 20 % ;
-  - amount_off : remise en euros ; value est le montant en centimes ;
-  - nth_free : « N achetés, le suivant offert » ; value vaut N (« 3 pizzas achetées, la 4ᵉ offerte » → 3).
-- Aucun champ n'est facultatif : ce qui ne s'applique pas vaut 0 (max_units, min_order_cents), une liste vide (order_types, days, product_refs) ou une chaîne vide (from_time, to_time, valid_until).
-- max_units : nombre de produits remisés par commande quand la carte le précise (« une pizza à 9 € par commande » → 1). 0 quand l'offre vaut pour chaque produit concerné, ce qui est le cas sauf mention contraire. Toujours 0 pour nth_free.
-- order_types : « sur place » → ["IN"], « à emporter » → ["TAKE_AWAY"], « livraison » → ["DELIVERY"], plusieurs possibles ; liste vide quand la carte ne limite pas le mode de commande.
-- days : 1 = lundi … 7 = dimanche (« tous les lundis » → [1], « en semaine » → [1,2,3,4,5]) ; liste vide si l'offre vaut tous les jours. from_time et to_time : « HH:MM » (« de 11h30 à 14h » → "11:30" et "14:00") ; chaînes vides sans plage horaire.
-- valid_until : date de fin « AAAA-MM-JJ » quand la carte en donne une ; chaîne vide sinon.
-- min_order_cents : montant minimum d'achat en centimes (« dès 20 € » → 2000) ; 0 sinon. Toujours 0 avec nth_free.
-- product_refs : les ref des produits (products) concernés, tels que tu les as lus sur cette photo ; pour « pizzas 31 cm », tous les produits « pizza 31 cm » de la carte. Jamais de ref de product_groups. all_products vaut true seulement si l'offre vise toute la carte (product_refs est alors vide).
-- Si les produits concernés ne sont pas des produits de la carte (une taille proposée comme option d'un produit, une catégorie que tu n'as pas lue en entier), mets l'offre dans promotions_not_created.
-- name : nom court de l'offre (50 caractères au plus) ; source_text : le texte de la carte, recopié.
-- Quand la carte ne montre aucune offre, promotions et promotions_not_created sont des listes vides.
+Offres (offers) :
+- Recopie, une chaîne par offre, le texte de chaque promotion ou offre écrite sur la carte (« Tous les lundis, 9 € sur nos pizzas 31 cm », « Sur place, 3 pizzas achetées, la 4ᵉ offerte », « -20 % le midi en semaine »). Ne les mets ni dans products ni dans formulas : une lecture séparée les traite.
+- Une promotion baisse le prix de produits vendus par ailleurs ; une formule vend un ensemble de produits à un prix. Liste vide quand la carte ne montre aucune offre.
 
 Nature du produit (kind), qui sert à proposer la TVA :
 - food : plats, sandwichs, desserts, tout ce qui se mange ;
@@ -105,4 +93,39 @@ func menuOCRUserPrompt(photo, total int, withIngredients bool) string {
 		ingredients = "Ingrédients demandés : liste ceux de chaque description selon les règles."
 	}
 	return fmt.Sprintf("Photo %d sur %d de la carte. Transcris ce qu'elle montre selon les règles. %s", photo, total, ingredients)
+}
+
+// menuOCRPromotionsSystemPrompt est la consigne de la seconde requête d'une
+// photo : structurer les offres que la lecture principale a recopiées. Séparée
+// de menuOCRSystemPrompt pour garder petit le schéma de la lecture principale
+// (importer.AIPromotionsSchema). Comme elle, elle est identique pour toutes les
+// photos, donc cachable. Toute modification change ce qui est créé : la
+// retester sur des photos réelles (docs/import-carte-ia-03-porte-ia.md).
+const menuOCRPromotionsSystemPrompt = `Tu structures les promotions d'une carte de restaurant pour un logiciel de caisse. On te donne la photo de la carte, la liste des produits déjà lus sur cette photo (ref, nom, catégorie, prix) et le texte des offres repérées. Un restaurateur relira tout avant l'import : ton rôle est de transcrire fidèlement, pas d'inventer.
+
+Promotions (promotions, promotions_not_created) :
+- Une promotion est une offre écrite sur la carte (« Tous les lundis, 9 € sur nos pizzas 31 cm », « Sur place, 3 pizzas achetées, la 4ᵉ offerte », « -20 % le midi en semaine »). Elle diffère d'une formule : une formule vend un ensemble de produits à un prix, une promotion baisse le prix de produits vendus par ailleurs.
+- Mets une offre dans promotions SEULEMENT si tu la comprends parfaitement : son effet, les produits concernés, les modes de commande, les jours et les heures. Au moindre doute, ou si l'offre ne rentre pas dans les types ci-dessous, mets-la dans promotions_not_created avec source_text (le texte de la carte, recopié) et reason (ce qui t'empêche de la créer, en une phrase). N'invente aucun élément absent de la carte et n'arrondis pas une offre pour la faire rentrer dans un type. Un restaurateur relira tout : une offre non créée vaut mieux qu'une offre fausse.
+- kind, et value, dont le sens dépend de kind :
+  - new_price : les produits concernés sont vendus à un prix fixe ; value est ce prix en centimes (9 € → 900) ;
+  - percent_off : remise en pourcentage ; value vaut 20 pour 20 % ;
+  - amount_off : remise en euros ; value est le montant en centimes ;
+  - nth_free : « N achetés, le suivant offert » ; value vaut N (« 3 pizzas achetées, la 4ᵉ offerte » → 3).
+- Aucun champ n'est facultatif : ce qui ne s'applique pas vaut 0 (max_units, min_order_cents), une liste vide (order_types, days, product_refs) ou une chaîne vide (from_time, to_time, valid_until).
+- max_units : nombre de produits remisés par commande quand la carte le précise (« une pizza à 9 € par commande » → 1). 0 quand l'offre vaut pour chaque produit concerné, ce qui est le cas sauf mention contraire. Toujours 0 pour nth_free.
+- order_types : « sur place » → ["IN"], « à emporter » → ["TAKE_AWAY"], « livraison » → ["DELIVERY"], plusieurs possibles ; liste vide quand la carte ne limite pas le mode de commande.
+- days : 1 = lundi … 7 = dimanche (« tous les lundis » → [1], « en semaine » → [1,2,3,4,5]) ; liste vide si l'offre vaut tous les jours. from_time et to_time : « HH:MM » (« de 11h30 à 14h » → "11:30" et "14:00") ; chaînes vides sans plage horaire.
+- valid_until : date de fin « AAAA-MM-JJ » quand la carte en donne une ; chaîne vide sinon.
+- min_order_cents : montant minimum d'achat en centimes (« dès 20 € » → 2000) ; 0 sinon. Toujours 0 avec nth_free.
+- product_refs : les ref des produits (products) concernés, tels que tu les as lus sur cette photo ; pour « pizzas 31 cm », tous les produits « pizza 31 cm » de la carte. Jamais de ref de product_groups. all_products vaut true seulement si l'offre vise toute la carte (product_refs est alors vide).
+- Si les produits concernés ne sont pas des produits de la carte (une taille proposée comme option d'un produit, une catégorie que tu n'as pas lue en entier), mets l'offre dans promotions_not_created.
+- name : nom court de l'offre (50 caractères au plus) ; source_text : le texte de la carte, recopié.
+- Quand aucune des offres transmises n'est une promotion, promotions et promotions_not_created sont des listes vides.
+`
+
+// menuOCRPromotionsUserPrompt accompagne la photo dans la requête des
+// promotions : produits lus (les seules refs citables) et offres à structurer.
+func menuOCRPromotionsUserPrompt(photo, total int, products []string, offers []string) string {
+	return fmt.Sprintf("Photo %d sur %d de la carte. Structure ces offres.\n\nProduits lus sur cette photo :\n%s\n\nOffres repérées :\n%s",
+		photo, total, strings.Join(products, "\n"), strings.Join(offers, "\n"))
 }

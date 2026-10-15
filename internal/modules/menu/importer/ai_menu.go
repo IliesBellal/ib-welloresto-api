@@ -53,7 +53,14 @@ type AIMenuPage struct {
 	Formulas      []AIFormula      `json:"formulas"`
 	Warnings      []string         `json:"warnings"`
 
-	// Promotions : lues sur la carte et restituables exactement ;
+	// Offers : le texte de chaque offre ou promotion vue sur la photo, recopié.
+	// C'est tout ce que la lecture principale en dit : la structurer demande un
+	// schéma trop gros pour cette même requête (la grammaire compilée par l'API
+	// est limitée). Une seconde requête, par photo qui en montre, les lit à part
+	// (AIPromotionsSchema) ; ses résultats sont rangés dans les deux champs
+	// suivants avant le stockage de la page.
+	Offers []string `json:"offers"`
+	// Promotions : lues par la seconde requête et restituables exactement ;
 	// PromotionsNotCreated : vues, mais hors de la structure (ai_promotions.go).
 	Promotions           []AIPromotion           `json:"promotions"`
 	PromotionsNotCreated []AIPromotionNotCreated `json:"promotions_not_created"`
@@ -166,30 +173,9 @@ var AIMenuPageSchema = json.RawMessage(`{
         "description": {"type": "string"}},
       "required": ["name", "price_cents", "description"], "additionalProperties": false}},
     "warnings": {"type": "array", "items": {"type": "string"}},
-    "promotions": {"type": "array", "items": {
-      "type": "object",
-      "properties": {
-        "name": {"type": "string"},
-        "kind": {"type": "string", "enum": ["new_price", "percent_off", "amount_off", "nth_free"]},
-        "value": {"type": "integer"},
-        "max_units": {"type": "integer"},
-        "order_types": {"type": "array", "items": {"type": "string"}},
-        "days": {"type": "array", "items": {"type": "integer"}},
-        "from_time": {"type": "string"},
-        "to_time": {"type": "string"},
-        "valid_until": {"type": "string"},
-        "min_order_cents": {"type": "integer"},
-        "product_refs": {"type": "array", "items": {"type": "string"}},
-        "all_products": {"type": "boolean"},
-        "source_text": {"type": "string"}},
-      "required": ["name", "kind", "value", "max_units", "order_types", "days", "from_time", "to_time", "valid_until", "min_order_cents", "product_refs", "all_products", "source_text"],
-      "additionalProperties": false}},
-    "promotions_not_created": {"type": "array", "items": {
-      "type": "object",
-      "properties": {"source_text": {"type": "string"}, "reason": {"type": "string"}},
-      "required": ["source_text", "reason"], "additionalProperties": false}}
+    "offers": {"type": "array", "items": {"type": "string"}}
   },
-  "required": ["categories", "product_groups", "products", "option_groups", "formulas", "warnings", "promotions", "promotions_not_created"],
+  "required": ["categories", "product_groups", "products", "option_groups", "formulas", "warnings", "offers"],
   "additionalProperties": false
 }`)
 

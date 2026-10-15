@@ -1,6 +1,7 @@
 package importer
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -97,6 +98,56 @@ type AIPromotion struct {
 	ProductRefs []string `json:"product_refs"`
 	AllProducts bool     `json:"all_products"`
 	SourceText  string   `json:"source_text"`
+}
+
+// AIPromotionsRead est la sortie de la seconde requête de lecture d'une photo,
+// celle des offres (AIPromotionsSchema).
+type AIPromotionsRead struct {
+	Promotions           []AIPromotion           `json:"promotions"`
+	PromotionsNotCreated []AIPromotionNotCreated `json:"promotions_not_created"`
+}
+
+// AIPromotionsSchema est le schéma JSON de la requête des promotions, séparée
+// de la lecture principale : réunis, les deux schémas dépassaient la taille de
+// grammaire acceptée par l'API Anthropic (« The compiled grammar is too large »).
+// Aucun champ facultatif (anyOf) : une valeur absente est 0 ou une chaîne vide.
+var AIPromotionsSchema = json.RawMessage(`{
+"type": "object",
+"properties": {
+	"promotions": {"type": "array", "items": {
+	"type": "object",
+	"properties": {
+		"name": {"type": "string"},
+		"kind": {"type": "string", "enum": ["new_price", "percent_off", "amount_off", "nth_free"]},
+		"value": {"type": "integer"},
+		"max_units": {"type": "integer"},
+		"order_types": {"type": "array", "items": {"type": "string"}},
+		"days": {"type": "array", "items": {"type": "integer"}},
+		"from_time": {"type": "string"},
+		"to_time": {"type": "string"},
+		"valid_until": {"type": "string"},
+		"min_order_cents": {"type": "integer"},
+		"product_refs": {"type": "array", "items": {"type": "string"}},
+		"all_products": {"type": "boolean"},
+		"source_text": {"type": "string"}},
+	"required": ["name", "kind", "value", "max_units", "order_types", "days", "from_time", "to_time", "valid_until", "min_order_cents", "product_refs", "all_products", "source_text"],
+	"additionalProperties": false}},
+	"promotions_not_created": {"type": "array", "items": {
+	"type": "object",
+	"properties": {"source_text": {"type": "string"}, "reason": {"type": "string"}},
+	"required": ["source_text", "reason"], "additionalProperties": false}}
+},
+"required": ["promotions", "promotions_not_created"],
+"additionalProperties": false
+}`)
+
+// DecodeAIPromotions relit la réponse du modèle à la requête des promotions.
+func DecodeAIPromotions(raw string) (*AIPromotionsRead, error) {
+	var read AIPromotionsRead
+	if err := json.Unmarshal([]byte(raw), &read); err != nil {
+		return nil, fmt.Errorf("réponse IA illisible: %w", err)
+	}
+	return &read, nil
 }
 
 // AIPromotionNotCreated est une promotion que le modèle a vue sans pouvoir la

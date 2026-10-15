@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -365,15 +366,132 @@ func (s *AIImportService) readPhoto(ctx context.Context, provider ai.LLMProvider
 	case resp.StopReason == ai.StopReasonMaxTokens:
 		page.Error = "photo trop chargée, lecture incomplète : reprenez cette partie de la carte en deux photos"
 	default:
-		if _, decodeErr := importer.DecodeAIMenuPage(resp.Content); decodeErr != nil {
+		menuPage, decodeErr := importer.DecodeAIMenuPage(resp.Content)
+		if decodeErr != nil {
 			s.log.Warn("import photo : réponse IA illisible", append(logFields, zap.Error(decodeErr))...)
 			page.Error = "lecture illisible, relancez cette photo"
 			break
 		}
 		page.Status = AIPageDone
 		page.Output = json.RawMessage(resp.Content)
+		if offers := cleanOffers(menuPage.Offers); len(offers) > 0 {
+			page = s.readPromotions(ctx, provider, cfg, draftID, page, data, total, menuPage, offers)
+		}
 	}
 	return page
+}
+
+// aiPromotionsUnreadReason est la raison donnée au restaurateur quand la
+// requête des promotions échoue : la photo reste lue, ses offres sont
+// signalées une à une comme non créées.
+const aiPromotionsUnreadReason = "lecture des promotions impossible pour le moment"
+
+// readPromotions est la seconde requête d'une photo qui montre des offres :
+// elle les structure (importer.AIPromotionsSchema), à part de la lecture
+// principale dont le schéma deviendrait trop gros pour l'API. Elle ne fait
+// jamais échouer la photo : en cas d'erreur, chaque offre devient une
+// promotion « non créée » avec son texte, et le restaurateur la configure
+// à la main. Le résultat est rangé dans la page avant son stockage, pour
+// que la fusion se rejoue sans rappeler l'IA.
+func (s *AIImportService) readPromotions(ctx context.Context, provider ai.LLMProvider, cfg ai.TaskConfig, draftID string, page AIDraftPage, data []byte, total int, menuPage *importer.AIMenuPage, offers []string) AIDraftPage {
+	resp, err := provider.Complete(ctx, ai.CompletionRequest{
+		Task:         menuOCRTask,
+		SystemPrompt: menuOCRPromotionsSystemPrompt,
+		UserPrompt:   menuOCRPromotionsUserPrompt(page.Photo, total, promotionProductLines(menuPage), offers),
+		MaxTokens:    cfg.MaxTokens,
+		Images:       []ai.Image{{MediaType: aiPhotoContentType, Data: data}},
+		JSONSchema:   importer.AIPromotionsSchema,
+	})
+
+	log := s.log.With(zap.String("draft_id", draftID), zap.Int("photo", page.Photo))
+	const logTask = menuOCRTask + "_promotions"
+	if err != nil {
+		ai.LogLLMCall(log, logTask, provider.Name(), "", 0, 0, 0, false, err)
+	} else {
+		ai.LogLLMCall(log, logTask, provider.Name(), resp.Model, resp.InputTokens, resp.OutputTokens, resp.LatencyMs, false, nil)
+		if page.Usage != nil {
+			page.Usage.InputTokens += resp.InputTokens
+			page.Usage.OutputTokens += resp.OutputTokens
+			page.Usage.LatencyMs += resp.LatencyMs
+		}
+	}
+
+	read := &importer.AIPromotionsRead{}
+	switch {
+	case err != nil:
+		read = unreadPromotions(offers)
+	case resp.StopReason == ai.StopReasonMaxTokens:
+		read = unreadPromotions(offers)
+	default:
+		decoded, decodeErr := importer.DecodeAIPromotions(resp.Content)
+		if decodeErr != nil {
+			log.Warn("import photo : réponse IA des promotions illisible", zap.Error(decodeErr))
+			read = unreadPromotions(offers)
+		} else {
+			read = decoded
+		}
+	}
+
+	menuPage.Promotions, menuPage.PromotionsNotCreated = read.Promotions, read.PromotionsNotCreated
+	output, err := json.Marshal(menuPage)
+	if err != nil {
+		// Ne devrait pas arriver : la page vient d'être décodée. On garde la
+		// lecture principale telle quelle.
+		log.Error("import photo : sérialisation de la page avec ses promotions", zap.Error(err))
+		return page
+	}
+	page.Output = json.RawMessage(output)
+	return page
+}
+
+// unreadPromotions signale chaque offre comme non créée, avec son texte.
+func unreadPromotions(offers []string) *importer.AIPromotionsRead {
+	read := &importer.AIPromotionsRead{}
+	for _, offer := range offers {
+		read.PromotionsNotCreated = append(read.PromotionsNotCreated,
+			importer.AIPromotionNotCreated{SourceText: offer, Reason: aiPromotionsUnreadReason})
+	}
+	return read
+}
+
+// cleanOffers retire les offres vides.
+func cleanOffers(offers []string) []string {
+	var out []string
+	for _, offer := range offers {
+		if offer = strings.TrimSpace(offer); offer != "" {
+			out = append(out, offer)
+		}
+	}
+	return out
+}
+
+// promotionProductLines liste les produits lus sur la photo (ref, nom,
+// catégorie, prix) : les seules refs que la requête des promotions peut citer.
+func promotionProductLines(page *importer.AIMenuPage) []string {
+	categories := make(map[string]string, len(page.Categories))
+	for _, c := range page.Categories {
+		categories[c.Ref] = c.Name
+	}
+	lines := make([]string, 0, len(page.Products))
+	for _, p := range page.Products {
+		if p.Ref == "" {
+			continue
+		}
+		line := p.Ref + " — " + p.Name
+		if p.CategoryRef != nil && categories[*p.CategoryRef] != "" {
+			line += " (" + categories[*p.CategoryRef] + ")"
+		}
+		if p.PriceCents != nil && *p.PriceCents > 0 {
+			line += fmt.Sprintf(" — %.2f €", float64(*p.PriceCents)/100)
+		} else {
+			line += " — prix absent"
+		}
+		lines = append(lines, line)
+	}
+	if len(lines) == 0 {
+		return []string{"(aucun produit lu sur cette photo)"}
+	}
+	return lines
 }
 
 func (s *AIImportService) finish(id, status string, consumesCredit bool, errMsg string) {
