@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
+	"time"
 
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/discounts"
 	"welloresto-api/internal/modules/menu/importer"
 	tagsModule "welloresto-api/internal/modules/tags"
 	"welloresto-api/internal/utils/dbutils"
@@ -41,11 +44,21 @@ type importTagCreator interface {
 	CreateTag(ctx context.Context, merchantID string, req *tagsModule.CreateTagRequest) (*models.TagEntry, error)
 }
 
+// importPromotionCreator est la part du module des promotions utilisée ici.
+//
+// discounts.Repository.CreateDiscount est transaction-agnostique
+// (dbx.GetDB(ctx)) : il s'exécute dans la transaction du lot, comme CreateTag.
+type importPromotionCreator interface {
+	CreateDiscount(ctx context.Context, merchantID string, req *discounts.CreateDiscountRequest) (*discounts.Discount, error)
+}
+
 // ImportCommitEntity est le sort d'une entité du lot, rapporté à l'appelant.
 type ImportCommitEntity struct {
 	ExternalID string `json:"external_id"`
 	WelloID    string `json:"wello_id,omitempty"`
 	Action     string `json:"action"`
+	// Reason explique pourquoi une promotion n'a pas été créée.
+	Reason string `json:"reason,omitempty"`
 }
 
 // ImportCommitOutcome est le résultat de la matérialisation.
@@ -56,6 +69,7 @@ type ImportCommitOutcome struct {
 	Products            []ImportCommitEntity `json:"products"`
 	ComponentCategories []ImportCommitEntity `json:"component_categories,omitempty"`
 	Components          []ImportCommitEntity `json:"components,omitempty"`
+	Promotions          []ImportCommitEntity `json:"promotions,omitempty"`
 
 	OptionsCreated int `json:"-"`
 }
@@ -69,6 +83,9 @@ type importCommitState struct {
 	componentCategoryMerchantIDByExternal map[string]string
 	componentIDByExternal                 map[string]string
 	attributeIDByExternal                 map[string]string
+	// productIDByExternal : product_id de chaque produit créé par le lot,
+	// pour y rattacher les promotions.
+	productIDByExternal map[string]string
 }
 
 // MaterializeImportTx écrit un lot d'import dans une transaction unique.
@@ -80,7 +97,8 @@ type importCommitState struct {
 // L'ordre est imposé par les dépendances : catégories produit et tags
 // d'abord (les produits les référencent), puis catégories d'ingrédient et
 // ingrédients (une option d'attribut peut porter un lien vers un ingrédient),
-// puis attributs, produits enfin — seuls à référencer tout le reste.
+// puis attributs, produits — seuls à référencer tout le reste — et enfin les
+// promotions de la porte photo, qui ciblent les produits créés.
 //
 // Ne pose ni setMenuUpdated ni invalidation de cache : ils appartiennent à
 // l'appelant, qui les fait une seule fois en fin de lot.
@@ -97,6 +115,7 @@ func (r *MenuRepository) MaterializeImportTx(
 		componentCategoryMerchantIDByExternal: make(map[string]string, len(plan.ComponentCategories)),
 		componentIDByExternal:                 make(map[string]string, len(plan.Components)),
 		attributeIDByExternal:                 make(map[string]string, len(plan.Attributes)),
+		productIDByExternal:                   make(map[string]string, len(plan.Products)),
 	}
 
 	err := dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
@@ -115,7 +134,10 @@ func (r *MenuRepository) MaterializeImportTx(
 		if err := r.materializeAttributesTx(txCtx, merchantID, plan, state, outcome); err != nil {
 			return err
 		}
-		return r.materializeProductsTx(txCtx, merchantID, plan, state, outcome)
+		if err := r.materializeProductsTx(txCtx, merchantID, plan, state, outcome); err != nil {
+			return err
+		}
+		return r.materializePromotionsTx(txCtx, merchantID, plan, state, outcome)
 	})
 	if err != nil {
 		return nil, err
@@ -572,7 +594,7 @@ func (r *MenuRepository) materializeProductsTx(
 ) error {
 	// Porte IA : product_id des groupes créés, pour rattacher leurs
 	// déclinaisons. Le plan place chaque groupe avant ses enfants.
-	productIDByExternal := make(map[string]string)
+	productIDByExternal := state.productIDByExternal
 
 	for _, product := range plan.Products {
 		if !product.Materializable() {
@@ -693,6 +715,110 @@ func (r *MenuRepository) materializeProductsTx(
 		})
 	}
 
+	return nil
+}
+
+// materializePromotionsTx écrit les promotions lues sur la carte (porte photo),
+// toujours INACTIVES (available = false : le calcul de prix ne les applique
+// pas) pour que le restaurateur les active après vérification. Une promotion
+// dont plus aucun produit ciblé n'a été créé est rapportée comme ignorée.
+func (r *MenuRepository) materializePromotionsTx(
+	ctx context.Context,
+	merchantID string,
+	plan *importer.CommitPlan,
+	state *importCommitState,
+	outcome *ImportCommitOutcome,
+) error {
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+
+	for _, promo := range plan.Promotions {
+		entity := ImportCommitEntity{ExternalID: promo.ExternalID, Action: CommitActionSkipped, Reason: promo.SkipReason}
+		if !promo.Materializable() {
+			outcome.Promotions = append(outcome.Promotions, entity)
+			continue
+		}
+
+		var targets []discounts.CreateProductRequest
+		if !promo.AllProducts {
+			for _, externalID := range promo.ProductExternalIDs {
+				productID, ok := state.productIDByExternal[externalID]
+				if !ok || productID == "" {
+					continue
+				}
+				target := discounts.CreateProductRequest{ProductID: productID}
+				if promo.DiscountUnit == "NEWPRICE" {
+					price := int64(promo.NewPriceCents)
+					target.NewPrice = &price
+				}
+				targets = append(targets, target)
+			}
+			if len(targets) == 0 {
+				entity.Reason = "aucun des produits ciblés n'a été créé"
+				outcome.Promotions = append(outcome.Promotions, entity)
+				continue
+			}
+		}
+
+		if r.promotionCreator == nil {
+			return fmt.Errorf("import: création de la promotion %q impossible : module des promotions non branché", promo.Name)
+		}
+
+		req := &discounts.CreateDiscountRequest{
+			DiscountID:         helpers.GeneratePrefixedID(helpers.DiscountIDPrefix),
+			DiscountName:       promo.Name,
+			DiscountDesc:       promo.Description,
+			DiscountValue:      float64(promo.DiscountValue),
+			DiscountUnit:       discounts.DiscountUnit(promo.DiscountUnit),
+			DiscountedQuantity: promo.DiscountedQuantity,
+			ValidFrom:          today,
+			Available:          false,
+			DiscountScope:      discounts.DiscountScopeProduct,
+			Products:           targets,
+		}
+		if len(promo.OrderTypes) > 0 {
+			orderType := discounts.OrderType(strings.Join(promo.OrderTypes, " "))
+			req.OrderType = &orderType
+		}
+		if promo.ValidFrom != "" {
+			if t, err := time.Parse("2006-01-02", promo.ValidFrom); err == nil {
+				req.ValidFrom = t
+			}
+		}
+		if promo.ValidUntil != "" {
+			if t, err := time.Parse("2006-01-02", promo.ValidUntil); err == nil {
+				req.ValidTo = &t
+			}
+		}
+		if promo.MinOrderUnit != "" {
+			minValue := float64(promo.MinOrderValue)
+			unit := discounts.MinOrderUnit(promo.MinOrderUnit)
+			req.MinOrderValue, req.MinOrderUnit = &minValue, &unit
+		}
+		for _, slot := range promo.Schedules {
+			from, err := time.Parse("15:04", slot.From)
+			if err != nil {
+				return fmt.Errorf("import: promotion %q, heure de début %q: %w", promo.Name, slot.From, err)
+			}
+			to, err := time.Parse("15:04", slot.To)
+			if err != nil {
+				return fmt.Errorf("import: promotion %q, heure de fin %q: %w", promo.Name, slot.To, err)
+			}
+			req.Schedules = append(req.Schedules, discounts.CreateScheduleRequest{DayOfWeek: slot.DayOfWeek, AvailableFrom: from, AvailableTo: to})
+		}
+		req.IsTimeLimited = len(req.Schedules) > 0
+
+		if err := req.Validate(); err != nil {
+			return fmt.Errorf("import: promotion %q invalide: %w", promo.Name, err)
+		}
+		if _, err := r.promotionCreator.CreateDiscount(ctx, merchantID, req); err != nil {
+			return fmt.Errorf("import: création de la promotion %q: %w", promo.Name, err)
+		}
+
+		entity.WelloID = req.DiscountID
+		entity.Action = CommitActionCreated
+		entity.Reason = ""
+		outcome.Promotions = append(outcome.Promotions, entity)
+	}
 	return nil
 }
 

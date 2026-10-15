@@ -364,3 +364,69 @@ Même mécanisme que D20, consigne seule (section « Tailles »). Deux cas :
 - **Taille exprimée en choix avec supplément** (« Reine 10 € ; en 33 cm +3 € », « 33 cm : +3 € sur toutes les pizzas ») : un seul produit par pizza, au prix de la plus petite taille, et un groupe d'options « Taille » (min 1, max 1, plus petite taille à +0, les autres au supplément écrit). Un supplément commun à plusieurs pizzas donne un seul groupe rattaché à chacune ; la fusion le partage car titres et suppléments sont identiques (clé corrigée en D20).
 - Doute entre les deux : le prix complet affiché par taille l'emporte (déclinaisons).
 - Aucun changement de code ; consigne **non testée sur de vraies photos**.
+
+### D22 — Groupes d'options détaillés à la relecture (2026-10-15)
+Retour d'Ilies : l'écran de relecture n'affichait qu'un compte (« Groupes d'options : N, X options »), sans pouvoir vérifier les quantités, tailles et suppléments lus (D20, D21).
+- **API** (`importer/preview.go`, additif, aucun changement de commit) : `PreviewAttribute.options` (`title`, `extra_price` en centimes, ordre de la source) et `PreviewProduct.attribute_external_ids`. Alimentés pour toutes les portes.
+- **Back-office** (`wello-back-office`, `ImportPhotoProducts`) : sous chaque produit lu, ses groupes avec leur règle et leurs options, par exemple « Quantité (choix unique, obligatoire) : x4 · x6 +1,50 € · x9 +4,00 € ». Lecture seule : corriger un supplément en relecture reste à faire (même mécanique que `price_per_product`). Seule la relecture de la porte photo est concernée ; l'écran « autre établissement » garde sa liste de produits.
+- Le dossier `wello-back-office-import-photo` est un worktree de la branche `feature/import-carte-photo` (dernier commit le 2026-09-30) : non touché, `main` de `wello-back-office` porte déjà l'écran photo.
+
+| Vérification | Résultat |
+|---|---|
+| `TestBuildPreview_ExposesAttributeOptionsAndLinks`, `go test ./internal/modules/menu/...` | OK |
+| `importAttributes.test.ts` (vitest), `eslint`, `tsc` filtré sur les fichiers touchés | OK (le `tsc` global a des erreurs préexistantes sans rapport) |
+| Rendu à l'écran | **Non vérifié visuellement** |
+
+## 12. Promotions lues sur la carte (2026-10-15)
+
+Demande d'Ilies : créer aussi les promotions découvertes sur la carte (« Tous les lundis, 9 €, pizzas 31 cm », « Sur place, 3 pizzas achetées, la 4ᵉ offerte »), seulement si elles sont comprises parfaitement, sinon un message qui explique pourquoi elles n'ont pas été créées. **Le moteur de promotions n'est pas modifié** (session dédiée, [promotions-moteur-a-fiabiliser.md](promotions-moteur-a-fiabiliser.md)) ; ses limites sont signalées, pas contournées.
+
+### D23 — Structure fermée, validée par le code
+- Le modèle remplit `promotions` (structure `AIPromotion`) et, pour ce qu'il voit sans pouvoir l'exprimer, `promotions_not_created` (`source_text` + `reason`). Il n'écrit aucune ligne de promotion en texte libre ; les deux listes sont dans `AIMenuPageSchema` (le schéma change donc, une grammaire est recompilée côté API une fois).
+- Quatre types (`kind`) : `new_price` (prix fixe), `percent_off`, `amount_off`, `nth_free` (N achetés, le suivant offert). Filtres : modes de commande, jours, plage horaire, période, minimum d'achat en euros, produits ciblés ou toute la carte.
+- **Hors périmètre** : code promo, taille proposée comme option (une promotion « pizzas 31 cm » n'est créée que si chaque taille est un produit), formules (restent des `formulas`), produits cités d'une autre photo.
+
+### D24 — « Comprise parfaitement » ou rien
+`buildCanonicalPromotion` (`importer/ai_promotions.go`) refuse, avec une raison lisible, toute promotion dont un élément manque ou est incohérent : nom ou valeur illisible, type inconnu, mode de commande ou jour hors bornes, plage horaire incomplète ou à l'envers, période terminée, produit cité introuvable, aucun produit identifié, prix fixe « sur toute la carte », article offert combiné à un minimum en euros (le moteur n'a qu'une unité de minimum). Le refus devient l'avertissement `ai_promotion_not_created` : « promotion « X » (photo N) non créée : raison. Texte de la carte : « … ». À configurer manuellement dans les promotions. » Même message pour celles que le modèle déclare lui-même non exprimables. Le back-office l'affiche dans la section Promotions, pas replié avec les autres avertissements.
+
+### D25 — Toujours créées désactivées
+`discounts.available = false` : le calcul de prix ne charge que `available = TRUE`, donc une promotion importée ne s'applique à aucune commande tant que le restaurateur ne l'active pas. Une erreur de lecture sur une remise coûte de l'argent sans se voir, à la différence d'un prix. La relecture montre chaque promotion en une phrase (`DescribePromotion`) à côté du texte de la carte, avec une case pour l'écarter (décision `excluded_promotions`).
+
+### D26 — Traduction vers le moteur actuel
+| Promotion | Réglages créés |
+|---|---|
+| `new_price` | `NEWPRICE`, un `discounts_products.new_price` par produit ciblé, `discounted_quantity` = `max_units` ou 99 (« chaque article concerné ») |
+| `percent_off` / `amount_off` | `PERCENTAGE` / `CURRENCY` (centimes), même règle de quantité |
+| `nth_free` (N) | `PERCENTAGE` 100, `discounted_quantity` 1, minimum `QUANTITY` N+1 |
+| modes | `discount_order_type` = « IN », « TAKE_AWAY DELIVERY »…, NULL = tous (format lu par `strings.Contains` dans le pricing) |
+| jours / heures | `discounts_schedules`, `is_time_limited` ; des jours sans heures = 00:00 → 00:00 (« jusqu'à minuit ») ; des heures sans jour = les 7 jours |
+| minimum d'achat | `min_order_unit` `CURRENCY`, en centimes (comparé au panier entier) |
+| période | `valid_from` (date de l'import par défaut) / `valid_to` |
+| autres | non cumulable, `prefered_order` 0, pas de code, portée `PRODUCT` |
+
+### D27 — Limites du moteur, signalées et non contournées
+- **« N-ième offert »** : le moteur ne joue la promotion qu'**une fois par commande**, sur le **premier article éligible** du panier (pas forcément le moins cher). Note affichée sur la promotion à la relecture (`promotionEngineNthFreeNote`). À corriger dans la session moteur (M1, M6).
+- **Nouveau prix** : le moteur appliquerait le prix même s'il augmente le prix du produit (P2). L'import retire du ciblage les produits dont le prix n'est pas supérieur au prix fixe, sur chaque canal de la promotion (avertissement à la relecture, note au commit) ; une promotion sans produit restant n'est pas créée.
+- **Non cumulable** : une promotion appliquée à une commande bloque les suivantes (comportement du moteur).
+
+### D28 — Idempotence sans migration
+Pas de table de correspondance : une promotion dont le nom (casse et accents ignorés) existe déjà chez le marchand est signalée « existe déjà » (`already_exists`) et n'est pas recréée. Relire la même carte ne double donc rien. Limite : renommer une promotion importée la rend recréable.
+
+### D29 — Écriture
+- `materializePromotionsTx`, dernière étape de la transaction du lot (`MaterializeImportTx`), après les produits : les identifiants des produits créés (`importCommitState.productIDByExternal`) alimentent `discounts_products`. Création par `discounts.Repository.CreateDiscount` (un seul endroit écrit une promotion), branché par `MenuRepository.SetPromotionCreator` dans `cmd/api/routes.go`.
+- Un produit ciblé qui n'est pas créé par ce lot (écarté, déjà importé, homonyme ignoré) sort de la promotion ; sans produit restant, la promotion est ignorée avec sa raison. **Limite** : une promotion ne cible que des produits créés par le même lot.
+- Réponse du commit : `promotions` (entités `created` / `skipped` + `reason`) et `summary.promotions`.
+- Lecture de l'existant (`loadImportExistingPromotions`) uniquement pour la porte photo.
+
+### Fichiers
+`importer/ai_promotions.go` (types, validation, description, preview, plan), `importer/ai_menu.go` (schéma, fusion, refs de produits), `importer/{models,commit_plan,preview}.go`, `import_commit_repository.go`, `import_commit_models.go`, `import_repository.go`, `repository.go`, `import_ai_prompt.go` (section « Promotions »), `cmd/api/routes.go`. Back-office : `ImportPromotions.tsx`, `ImportReviewStep.tsx`, `ImportDoneStep.tsx`, `useProductImport.ts`, `types/import.ts`.
+
+| Vérification | Résultat |
+|---|---|
+| `go build ./...`, `go vet` (avec et sans tag `postgres_integration`), `go test ./internal/modules/menu/... ./internal/modules/discounts/...` | OK |
+| `importer/ai_promotions_test.go` | OK. Lecture des trois exemples d'Ilies ; 11 refus avec raison et texte de la carte ; refus des combinaisons ambiguës ; doublon entre photos ; bornes nom 50 / description 100 ; décodage du JSON du modèle ; description lisible ; aperçu (existe déjà, prix non inférieur) ; plan (nouveau prix, 4ᵉ/5ᵉ offerte, % avec plage horaire, écartée, existante, produits écartés, prix saisi en relecture) |
+| `TestImportCommit_Postgres_AIPhotoPromotions` | **Écrit, non exécuté** : il écrit sur la base (données de test nettoyées) ; il attend l'accord d'Ilies. Vérifie : 2 promotions créées inactives, réglages `PERCENTAGE` 100 × 1 sur place, produit à 9 €, créneau du lundi, relecture sans doublon |
+| Back-office : `tsc` filtré, `eslint`, rendu | `tsc` et `eslint` OK sur les fichiers touchés ; **rendu non vérifié visuellement** |
+| Consigne sur de vraies photos | **Non testée** : prochain test staging, avec une carte qui contient les trois promotions de l'exemple |
+
+Le test d'intégration existant `TestImportCommit_Postgres_AIPhotoGroups` ne compilait plus (`BuildAIMenuImport` prend les unités depuis l'étape des ingrédients) : corrigé au passage.

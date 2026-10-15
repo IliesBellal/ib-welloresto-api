@@ -304,6 +304,40 @@ func TestBuildAIMenuImport_NoProducts(t *testing.T) {
 	}
 }
 
+// La relecture montre, sous chaque produit, ses groupes d'options avec leurs
+// options et leurs suppléments, pas seulement un compte.
+func TestBuildPreview_ExposesAttributeOptionsAndLinks(t *testing.T) {
+	imp := buildAITestImport(t)
+	res, err := BuildPreview(imp, defaultLookups())
+	if err != nil {
+		t.Fatalf("BuildPreview: %v", err)
+	}
+
+	var supplements *PreviewAttribute
+	for i := range res.Attributes {
+		if res.Attributes[i].ExternalID == imp.Attributes[0].ExternalID {
+			supplements = &res.Attributes[i]
+		}
+	}
+	if supplements == nil {
+		t.Fatalf("groupe d'options absent de l'aperçu")
+	}
+	want := []PreviewAttributeOption{{Title: "Cheddar", ExtraPrice: 100}, {Title: "Bacon", ExtraPrice: 150}}
+	if !reflect.DeepEqual(supplements.Options, want) {
+		t.Errorf("options = %+v, want %+v", supplements.Options, want)
+	}
+
+	var classique PreviewProduct
+	for _, p := range res.Products {
+		if p.Name == "Classique" {
+			classique = p
+		}
+	}
+	if !reflect.DeepEqual(classique.AttributeExternalIDs, []string{supplements.ExternalID}) {
+		t.Errorf("groupes de Classique = %v, want [%s]", classique.AttributeExternalIDs, supplements.ExternalID)
+	}
+}
+
 func TestBuildPreview_AIDoorProposesKindsGroupsAndWarnings(t *testing.T) {
 	imp := buildAITestImport(t)
 	res, err := BuildPreview(imp, defaultLookups())

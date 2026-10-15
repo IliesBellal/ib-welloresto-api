@@ -62,6 +62,10 @@ type IntermediateImport struct {
 	// tels quels en avertissements de preview. Porte IA uniquement : formules
 	// détectées mais non créées, photo floue, doublon entre photos…
 	SourceWarnings []SourceWarning
+
+	// Promotions lues sur la carte (porte IA uniquement, ai_promotions.go).
+	// Vide pour toute autre source : la preview et le commit restent inchangés.
+	Promotions []CanonicalPromotion
 }
 
 // SourceWarning est un signalement émis par la source (porte IA), avant toute
@@ -448,6 +452,10 @@ type ImportDecisions struct {
 	// (applyAddedCategories), et buildCategories se rattache à une catégorie
 	// existante du même nom.
 	AddedCategories map[string]string `json:"added_categories,omitempty"`
+
+	// ExcludedPromotions écarte une promotion lue sur la carte (porte IA),
+	// par identifiant externe de promotion : case décochée en relecture.
+	ExcludedPromotions map[string]bool `json:"excluded_promotions,omitempty"`
 }
 
 // ChannelPrices porte les prix d'un produit par canal, en centimes.

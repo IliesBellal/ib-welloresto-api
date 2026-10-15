@@ -69,7 +69,44 @@ func (r *MenuRepository) LoadImportPreviewLookups(ctx context.Context, merchantI
 	}
 	lookups.Imported = imported
 
+	// Seule la porte photo lit des promotions : les autres portes n'en ont
+	// pas l'usage, autant leur épargner la requête.
+	if provider == importer.AIPhotoSlug {
+		promotions, err := r.loadImportExistingPromotions(ctx, merchantID)
+		if err != nil {
+			return lookups, err
+		}
+		lookups.ExistingPromotions = promotions
+	}
+
 	return lookups, nil
+}
+
+// loadImportExistingPromotions lit les promotions actives du marchand. Leur nom
+// sert à ne pas recréer une promotion déjà posée (porte photo : relire la même
+// carte deux fois ne doit pas doubler les promotions).
+func (r *MenuRepository) loadImportExistingPromotions(ctx context.Context, merchantID string) ([]importer.ExistingPromotion, error) {
+	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx,
+		`SELECT discount_name
+		 FROM discounts
+		 WHERE merchant_id = ? AND enabled = TRUE
+		 ORDER BY creation_date ASC`,
+		merchantID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load promotions for import preview: %w", err)
+	}
+	defer rows.Close()
+
+	var out []importer.ExistingPromotion
+	for rows.Next() {
+		var promotion importer.ExistingPromotion
+		if err := rows.Scan(&promotion.Name); err != nil {
+			return nil, fmt.Errorf("failed to scan promotion: %w", err)
+		}
+		out = append(out, promotion)
+	}
+	return out, rows.Err()
 }
 
 // loadImportTvaRates lit la table globale des taux. tva_categories n'a pas de

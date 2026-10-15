@@ -13,6 +13,7 @@ import (
 	"welloresto-api/internal/database/dbx/pgtest"
 	"welloresto-api/internal/middleware"
 	authpkg "welloresto-api/internal/modules/auth"
+	"welloresto-api/internal/modules/discounts"
 	"welloresto-api/internal/modules/menu/importer"
 	tagsModule "welloresto-api/internal/modules/tags"
 )
@@ -112,6 +113,7 @@ func itestImportMerchant(t *testing.T, db *sql.DB, suffix string) (merchantID st
 
 func itestImportService(db *sql.DB, store importPreviewStore) *ImportService {
 	repo := NewMenuRepository(db, nil)
+	repo.SetPromotionCreator(discounts.NewRepository(db))
 	authRepo := authpkg.NewAuthRepository(db)
 	return NewImportService(repo, repo, importer.DefaultRegistry(), store, tagsModule.NewRepository(db), NewMenuChangeNotifier(nil, nil), &authRepo, repo)
 }
@@ -493,7 +495,7 @@ func TestImportCommit_Postgres_AIPhotoGroups(t *testing.T) {
 			{Ref: "p3", CategoryRef: &cat, Name: "Limonade itest", PriceCents: price(400), OptionGroupRefs: []string{"o1"}, Kind: "soft_drink_served", Confidence: "high"},
 		},
 		OptionGroups: []importer.AIOptionGroup{{Ref: "o1", Name: "Glaçons itest", Max: 1, Options: []importer.AIOption{{Title: "Avec"}, {Title: "Sans"}}}},
-	}})
+	}}, nil)
 	if err != nil {
 		t.Fatalf("BuildAIMenuImport: %v", err)
 	}
@@ -564,5 +566,113 @@ func TestImportCommit_Postgres_AIPhotoGroups(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("GetMenu : groupe absent de la carte")
+	}
+}
+
+// Porte IA : promotions lues sur la carte. Créées dans la transaction du lot,
+// toujours inactives, avec leurs produits et créneaux ; relire la même carte ne
+// les recrée pas.
+func TestImportCommit_Postgres_AIPhotoPromotions(t *testing.T) {
+	db := pgtest.Open(t)
+	merchantID, _ := itestImportMerchant(t, db, "aipromo")
+	t.Cleanup(func() {
+		for _, q := range []string{
+			`DELETE FROM discounts_products WHERE discount_id IN (SELECT discount_id FROM discounts WHERE merchant_id = $1)`,
+			`DELETE FROM discounts_schedules WHERE discount_id IN (SELECT discount_id FROM discounts WHERE merchant_id = $1)`,
+			`DELETE FROM discounts WHERE merchant_id = $1`,
+		} {
+			_, _ = db.ExecContext(context.Background(), q, merchantID)
+		}
+	})
+
+	ctx := itestImportContext(merchantID)
+	service := itestImportService(db, newFakePreviewStore())
+
+	cat := "c1"
+	price := func(v int) *int { return &v }
+	buildImport := func() *importer.IntermediateImport {
+		imp, err := importer.BuildAIMenuImport([]importer.AIMenuPage{{
+			Categories: []importer.AICategory{{Ref: cat, Name: "Pizzas itest"}},
+			Products: []importer.AIProduct{
+				{Ref: "p1", CategoryRef: &cat, Name: "Reine 31 itest", PriceCents: price(1200), Kind: "food", Confidence: "high"},
+				{Ref: "p2", CategoryRef: &cat, Name: "Reine 26 itest", PriceCents: price(1000), Kind: "food", Confidence: "high"},
+			},
+			Promotions: []importer.AIPromotion{
+				{Name: "Lundi 9 euros itest", Description: "Pizza 31 cm à 9 € le lundi", Kind: "new_price", PriceCents: price(900),
+					Days: []int{1}, ProductRefs: []string{"p1"}, SourceText: "Tous les lundis, 9 €"},
+				{Name: "4e offerte itest", Description: "3 pizzas achetées, la 4e offerte", Kind: "nth_free", BuyQuantity: price(3),
+					OrderTypes: []string{"IN"}, AllProducts: true, SourceText: "Sur place, la 4e offerte"},
+			},
+		}}, nil)
+		if err != nil {
+			t.Fatalf("BuildAIMenuImport: %v", err)
+		}
+		return imp
+	}
+
+	preview, err := service.buildAndStore(ctx, buildImport())
+	if err != nil {
+		t.Fatalf("buildAndStore: %v", err)
+	}
+	if len(preview.Promotions) != 2 || preview.Summary.PromotionsToCreate != 2 {
+		t.Fatalf("aperçu : %d promotions dont %d à créer, want 2 / 2", len(preview.Promotions), preview.Summary.PromotionsToCreate)
+	}
+
+	decisions := preview.Decisions
+	decisions.TvaConfirmed = true
+	resp, err := service.CommitImport(ctx, &ImportCommitRequest{Token: preview.Token, Decisions: &decisions})
+	if err != nil {
+		t.Fatalf("CommitImport: %v", err)
+	}
+	if resp.Summary.Promotions.Created != 2 {
+		t.Fatalf("promotions créées = %+v, want 2", resp.Summary.Promotions)
+	}
+
+	// Inactives, et avec les bons réglages du moteur.
+	var unit, orderType string
+	var available, timeLimited bool
+	var value, quantity int
+	if err := db.QueryRowContext(context.Background(),
+		`SELECT discount_unit, COALESCE(discount_order_type, ''), available, is_time_limited, discount_value, discounted_quantity
+		 FROM discounts WHERE merchant_id = $1 AND discount_name = '4e offerte itest'`, merchantID).
+		Scan(&unit, &orderType, &available, &timeLimited, &value, &quantity); err != nil {
+		t.Fatalf("lecture de la 4e offerte: %v", err)
+	}
+	if unit != "PERCENTAGE" || value != 100 || quantity != 1 || orderType != "IN" || available || timeLimited {
+		t.Fatalf("4e offerte = %s %d%% ×%d mode %q actif %v horaires %v, want PERCENTAGE 100 ×1 IN inactive sans horaires",
+			unit, value, quantity, orderType, available, timeLimited)
+	}
+	if got := itestCount(t, db, `SELECT count(*) FROM discounts WHERE merchant_id = $1 AND available`, merchantID); got != 0 {
+		t.Fatalf("promotions actives = %d, want 0 : une promotion lue sur une photo ne doit jamais s'appliquer sans activation", got)
+	}
+	if got := itestCount(t, db, `SELECT count(*) FROM discounts_products dp JOIN discounts d ON d.discount_id = dp.discount_id
+		WHERE d.merchant_id = $1 AND d.discount_name = 'Lundi 9 euros itest' AND dp.new_price = 900`, merchantID); got != 1 {
+		t.Fatalf("produits ciblés à 9 € = %d, want 1", got)
+	}
+	if got := itestCount(t, db, `SELECT count(*) FROM discounts_schedules s JOIN discounts d ON d.discount_id = s.discount_id
+		WHERE d.merchant_id = $1 AND d.discount_name = 'Lundi 9 euros itest' AND s.day_of_week = 1
+		  AND s.available_from::text = '00:00:00' AND s.available_to::text = '00:00:00' AND s.enabled`, merchantID); got != 1 {
+		t.Fatalf("créneau du lundi (journée entière) = %d, want 1", got)
+	}
+
+	// Même carte relue : promotions déjà présentes, rien n'est recréé.
+	second, err := service.buildAndStore(ctx, buildImport())
+	if err != nil {
+		t.Fatalf("buildAndStore (relecture): %v", err)
+	}
+	if second.Summary.PromotionsToCreate != 0 {
+		t.Fatalf("relecture : %d promotions à créer, want 0", second.Summary.PromotionsToCreate)
+	}
+	decisions = second.Decisions
+	decisions.TvaConfirmed = true
+	resp, err = service.CommitImport(ctx, &ImportCommitRequest{Token: second.Token, Decisions: &decisions})
+	if err != nil {
+		t.Fatalf("CommitImport (relecture): %v", err)
+	}
+	if resp.Summary.Promotions.Created != 0 || resp.Summary.Promotions.Skipped != 2 {
+		t.Fatalf("relecture : promotions %+v, want 0 créée / 2 ignorées", resp.Summary.Promotions)
+	}
+	if got := itestCount(t, db, `SELECT count(*) FROM discounts WHERE merchant_id = $1`, merchantID); got != 2 {
+		t.Fatalf("promotions en base après relecture = %d, want 2", got)
 	}
 }

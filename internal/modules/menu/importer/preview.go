@@ -31,6 +31,8 @@ const (
 	// ActionAlreadyImported : un import précédent du même provider a déjà créé
 	// cette entité (import_*_mapping). Elle sera ignorée — c'est l'idempotence.
 	ActionAlreadyImported = "already_imported"
+	// ActionAlreadyExists : une promotion du marchand porte déjà ce nom (porte IA).
+	ActionAlreadyExists = "already_exists"
 )
 
 // Origine de la catégorie proposée pour un produit.
@@ -129,6 +131,7 @@ type PreviewLookups struct {
 	ExistingAttributes          []ExistingAttribute
 	ExistingComponentCategories []ExistingComponentCategory
 	ExistingComponents          []ExistingComponent
+	ExistingPromotions          []ExistingPromotion
 	Imported                    ImportedEntities
 }
 
@@ -236,6 +239,7 @@ type PreviewResult struct {
 	Attributes          []PreviewAttribute         `json:"attributes"`
 	ComponentCategories []PreviewComponentCategory `json:"component_categories,omitempty"`
 	Components          []PreviewComponent         `json:"components,omitempty"`
+	Promotions          []PreviewPromotion         `json:"promotions,omitempty"`
 	Warnings            []PreviewWarning           `json:"warnings"`
 
 	// Decisions est la forme compacte des propositions ci-dessus. Le wizard
@@ -276,6 +280,10 @@ type PreviewSummary struct {
 	ProductsExcluded int `json:"products_excluded"`
 
 	UnresolvedTvaRates int `json:"unresolved_tva_rates"`
+
+	// PromotionsToCreate : promotions lues sur la carte qui seront créées
+	// (inactives) — porte IA.
+	PromotionsToCreate int `json:"promotions_to_create"`
 }
 
 // PreviewTvaRate est un couple (taux, canal) à résoudre en tva_id.
@@ -368,6 +376,10 @@ type PreviewProduct struct {
 	// ComponentExternalIDs : ingrédients lus dans la description (entrées de
 	// PreviewResult.Components), si le restaurateur les a demandés.
 	ComponentExternalIDs []string `json:"component_external_ids,omitempty"`
+	// AttributeExternalIDs : groupes d'options rattachés au produit (entrées
+	// de PreviewResult.Attributes), pour les montrer sous chaque produit à la
+	// relecture.
+	AttributeExternalIDs []string `json:"attribute_external_ids,omitempty"`
 }
 
 type PreviewChannels struct {
@@ -401,8 +413,18 @@ type PreviewAttribute struct {
 	OptionCount int    `json:"option_count"`
 	MinOptions  int    `json:"min_options"`
 	MaxOptions  int    `json:"max_options"`
+	// Options : les valeurs du groupe, dans l'ordre de la source, pour que la
+	// relecture montre ce qui sera créé et non un simple compte.
+	Options []PreviewAttributeOption `json:"options,omitempty"`
 
 	MappingStale bool `json:"mapping_stale,omitempty"`
+}
+
+// PreviewAttributeOption est une option d'un groupe ; ExtraPrice est le
+// supplément en centimes.
+type PreviewAttributeOption struct {
+	Title      string `json:"title"`
+	ExtraPrice int    `json:"extra_price"`
 }
 
 type PreviewComponentCategory struct {
@@ -551,6 +573,7 @@ func BuildPreview(imp *IntermediateImport, lk PreviewLookups) (*PreviewResult, e
 	b.buildComponents()
 	b.buildProducts()
 	b.buildAttributes()
+	b.buildPromotions()
 	b.buildTvaRates()
 	b.buildSourceWarnings()
 
@@ -791,6 +814,8 @@ func (b *previewBuilder) buildProducts() {
 			Confidence:       p.Confidence,
 			Issues:           p.Issues,
 			SourcePhoto:      p.SourcePhoto,
+
+			AttributeExternalIDs: p.AttributeExternalIDs,
 		}
 		if p.AllPricesZero {
 			entry.Status = ProductStatusRemovedFromMenu
@@ -1056,6 +1081,9 @@ func (b *previewBuilder) buildAttributes() {
 			OptionCount: len(attribute.Options),
 			MinOptions:  attribute.MinOptions,
 			MaxOptions:  attribute.MaxOptions,
+		}
+		for _, option := range attribute.Options {
+			entry.Options = append(entry.Options, PreviewAttributeOption{Title: option.Title, ExtraPrice: option.ExtraPrice})
 		}
 
 		entry.MappingStale = b.live.stale(b.live.attributes, attribute.ExternalID)

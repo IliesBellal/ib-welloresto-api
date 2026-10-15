@@ -23,6 +23,17 @@ import (
 type MenuRepository struct {
 	database *sql.DB
 	redis    *redisclient.Client
+
+	// promotionCreator écrit les promotions lues par l'import photo
+	// (import_commit_repository.go). Posé par SetPromotionCreator ; nil tant
+	// qu'il ne l'est pas, ce que seul un lot sans promotion supporte.
+	promotionCreator importPromotionCreator
+}
+
+// SetPromotionCreator branche la création des promotions de l'import photo sur
+// le module des promotions, pour qu'un seul endroit écrive une promotion.
+func (r *MenuRepository) SetPromotionCreator(creator importPromotionCreator) {
+	r.promotionCreator = creator
 }
 
 func NewMenuRepository(db *sql.DB, redis *redisclient.Client) *MenuRepository {

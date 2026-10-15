@@ -52,6 +52,11 @@ type AIMenuPage struct {
 	OptionGroups  []AIOptionGroup  `json:"option_groups"`
 	Formulas      []AIFormula      `json:"formulas"`
 	Warnings      []string         `json:"warnings"`
+
+	// Promotions : lues sur la carte et restituables exactement ;
+	// PromotionsNotCreated : vues, mais hors de la structure (ai_promotions.go).
+	Promotions           []AIPromotion           `json:"promotions"`
+	PromotionsNotCreated []AIPromotionNotCreated `json:"promotions_not_created"`
 }
 
 type AICategory struct {
@@ -160,9 +165,36 @@ var AIMenuPageSchema = json.RawMessage(`{
         "price_cents": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
         "description": {"type": "string"}},
       "required": ["name", "price_cents", "description"], "additionalProperties": false}},
-    "warnings": {"type": "array", "items": {"type": "string"}}
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "promotions": {"type": "array", "items": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string"},
+        "description": {"type": "string"},
+        "kind": {"type": "string", "enum": ["new_price", "percent_off", "amount_off", "nth_free"]},
+        "price_cents": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+        "percent": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+        "amount_cents": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+        "buy_quantity": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+        "max_units": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+        "order_types": {"type": "array", "items": {"type": "string", "enum": ["IN", "TAKE_AWAY", "DELIVERY"]}},
+        "days": {"type": "array", "items": {"type": "integer"}},
+        "from_time": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "to_time": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "valid_from": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "valid_until": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "min_order_cents": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+        "product_refs": {"type": "array", "items": {"type": "string"}},
+        "all_products": {"type": "boolean"},
+        "source_text": {"type": "string"}},
+      "required": ["name", "description", "kind", "price_cents", "percent", "amount_cents", "buy_quantity", "max_units", "order_types", "days", "from_time", "to_time", "valid_from", "valid_until", "min_order_cents", "product_refs", "all_products", "source_text"],
+      "additionalProperties": false}},
+    "promotions_not_created": {"type": "array", "items": {
+      "type": "object",
+      "properties": {"source_text": {"type": "string"}, "reason": {"type": "string"}},
+      "required": ["source_text", "reason"], "additionalProperties": false}}
   },
-  "required": ["categories", "product_groups", "products", "option_groups", "formulas", "warnings"],
+  "required": ["categories", "product_groups", "products", "option_groups", "formulas", "warnings", "promotions", "promotions_not_created"],
   "additionalProperties": false
 }`)
 
@@ -196,6 +228,10 @@ type aiMerger struct {
 	groupByID   map[string]*aiGroup
 	products    []CanonicalProduct
 	productByID map[string]int
+
+	// Promotions (ai_promotions.go).
+	promotions     []CanonicalPromotion
+	promotionByKey map[string]int
 
 	// Ingrédients (ai_ingredients.go).
 	unitIDs              map[string]string // unit_of_measure.uom -> id
@@ -231,6 +267,7 @@ func BuildAIMenuImport(pages []AIMenuPage, unitIDs map[string]string) (*Intermed
 		attributeByKey:       make(map[string]string),
 		groupByID:            make(map[string]*aiGroup),
 		productByID:          make(map[string]int),
+		promotionByKey:       make(map[string]int),
 		unitIDs:              unitIDs,
 		componentByKey:       make(map[string]*CanonicalComponent),
 		ingredientCategories: make(map[string]struct{}),
@@ -241,6 +278,7 @@ func BuildAIMenuImport(pages []AIMenuPage, unitIDs map[string]string) (*Intermed
 	}
 
 	m.finishGroups()
+	m.out.Promotions = m.promotions
 	if m.ingredientsSkipped {
 		m.warn(WarningAIIngredientsSkipped, "", "des ingrédients n'ont pas pu être repris : aucune unité de mesure n'est configurée")
 	}
@@ -285,12 +323,26 @@ func (m *aiMerger) addPage(page *AIMenuPage, photo int) {
 		}
 	}
 
+	productIDByRef := make(map[string]string)
 	for _, p := range page.Products {
 		var grp *aiGroup
 		if p.GroupRef != nil {
 			grp = groupByRef[*p.GroupRef]
 		}
-		m.product(p, resolveCategory(p.CategoryRef), grp, attributeByRef, photo)
+		if id := m.product(p, resolveCategory(p.CategoryRef), grp, attributeByRef, photo); id != "" && p.Ref != "" {
+			productIDByRef[p.Ref] = id
+		}
+	}
+
+	for _, promo := range page.Promotions {
+		m.promotion(promo, productIDByRef, photo)
+	}
+	for _, skipped := range page.PromotionsNotCreated {
+		reason := strings.TrimSpace(skipped.Reason)
+		if reason == "" {
+			reason = "promotion non exprimable exactement"
+		}
+		m.promotionNotCreated(truncateRunes(strings.TrimSpace(skipped.SourceText), 40), skipped.SourceText, reason, photo)
 	}
 
 	for _, f := range page.Formulas {
@@ -422,10 +474,12 @@ func (m *aiMerger) group(g AIProductGroup, categoryID string, photo int) *aiGrou
 	return grp
 }
 
-func (m *aiMerger) product(p AIProduct, categoryID string, grp *aiGroup, attributeByRef map[string]string, photo int) {
+// product ajoute un produit et rend son identifiant externe (celui du premier
+// quand la ligne en double un autre), "" si la ligne est ignorée.
+func (m *aiMerger) product(p AIProduct, categoryID string, grp *aiGroup, attributeByRef map[string]string, photo int) string {
 	name := strings.TrimSpace(p.Name)
 	if name == "" {
-		return
+		return ""
 	}
 	// Une déclinaison vit dans la catégorie de son groupe.
 	if grp != nil && grp.categoryID != "" {
@@ -439,7 +493,7 @@ func (m *aiMerger) product(p AIProduct, categoryID string, grp *aiGroup, attribu
 			"« %s » apparaît sur les photos %d et %d : gardé une seule fois, au prix de la photo %d (%s ; photo %d : %s)",
 			name, first.SourcePhoto, photo, first.SourcePhoto,
 			describePrice(first.PriceIn, first.AllPricesZero), photo, describeAIPrice(p.PriceCents)))
-		return
+		return id
 	}
 
 	issues := make([]string, 0, len(p.Issues))
@@ -503,6 +557,7 @@ func (m *aiMerger) product(p AIProduct, categoryID string, grp *aiGroup, attribu
 	if grp != nil {
 		grp.children = append(grp.children, len(m.products)-1)
 	}
+	return id
 }
 
 // finishGroups crée les produits groupes qui gardent au moins deux

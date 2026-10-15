@@ -678,6 +678,9 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		menuRepoLegacy, menuRepoLegacy, importerModule.DefaultRegistry(), redisClient, tagsRepo, menuChanges,
 		&authRepo, menuRepoLegacy,
 	)
+	// Promotions lues sur les photos : écrites par le module des promotions,
+	// dans la transaction du lot.
+	menuRepoLegacy.SetPromotionCreator(discountsRepo)
 	menuImportH := menuModule.NewImportHandler(menuImportService)
 
 	// Import de carte par photo (porte IA) : photos dans le bucket R2 privé,

@@ -44,6 +44,10 @@ type CommitPlan struct {
 	Products            []PlannedProduct
 	ComponentCategories []PlannedComponentCategory
 	Components          []PlannedComponent
+
+	// Promotions : promotions de la porte IA, écrites après les produits dont
+	// elles ciblent les identifiants.
+	Promotions []PlannedPromotion
 }
 
 // PlannedCategory est une catégorie caisse à matérialiser.
@@ -279,6 +283,7 @@ func BuildCommitPlan(imp *IntermediateImport, decisions ImportDecisions, lk Prev
 	if imp.Provider == AIPhotoSlug {
 		b.pruneUnusedComponents()
 		b.pruneUnusedCategories()
+		b.buildPromotions()
 	}
 
 	if len(b.blockers) > 0 {

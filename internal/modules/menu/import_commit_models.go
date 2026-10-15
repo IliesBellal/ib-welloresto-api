@@ -27,6 +27,7 @@ type ImportCommitSummary struct {
 	Tags           ImportCommitCounts `json:"tags"`
 	Attributes     ImportCommitCounts `json:"attributes"`
 	Products       ImportCommitCounts `json:"products"`
+	Promotions     ImportCommitCounts `json:"promotions"`
 	OptionsCreated int                `json:"options_created"`
 }
 
@@ -39,6 +40,8 @@ type ImportCommitResponse struct {
 	Tags       []ImportCommitEntity `json:"tags"`
 	Attributes []ImportCommitEntity `json:"attributes"`
 	Products   []ImportCommitEntity `json:"products"`
+	// Promotions : promotions lues sur la carte (porte photo), créées inactives.
+	Promotions []ImportCommitEntity `json:"promotions,omitempty"`
 }
 
 // newImportCommitResponse ventile le résultat de la transaction.
@@ -49,12 +52,14 @@ func newImportCommitResponse(provider string, outcome *ImportCommitOutcome) *Imp
 		Tags:       outcome.Tags,
 		Attributes: outcome.Attributes,
 		Products:   outcome.Products,
+		Promotions: outcome.Promotions,
 	}
 	response.Summary.OptionsCreated = outcome.OptionsCreated
 	response.Summary.Categories = countImportActions(outcome.Categories)
 	response.Summary.Tags = countImportActions(outcome.Tags)
 	response.Summary.Attributes = countImportActions(outcome.Attributes)
 	response.Summary.Products = countImportActions(outcome.Products)
+	response.Summary.Promotions = countImportActions(outcome.Promotions)
 	return response
 }
 
