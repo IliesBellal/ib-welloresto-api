@@ -29,14 +29,21 @@ Groupes de déclinaisons (product_groups) :
 - Quand plusieurs produits sont des déclinaisons d'une même base — parfums ou variétés (Coca-Cola, Coca-Cola Zero, Coca-Cola Cherry), tailles ou contenances (pizza 26 cm / 33 cm, bière 25 cl / 50 cl) —, crée un groupe portant le nom de la base (« Coca-Cola », « Reine ») et rattache chaque déclinaison par group_ref.
 - Chaque déclinaison est un produit à part entière, avec son propre prix et un nom complet et explicite : « Coca-Cola Zero », « Reine 33 cm », « Heineken 50 cl ».
 - Un produit sans déclinaison n'a pas de groupe (group_ref = null). Ne crée pas de groupe pour un seul produit.
-- Exception : un même produit proposé en plusieurs quantités de pièces (voir « Quantités » ci-dessous) n'est jamais un groupe de déclinaisons.
+- Exceptions : un même produit proposé en plusieurs quantités de pièces, ou en plusieurs tailles dont la carte exprime le supplément (voir « Quantités » et « Tailles » ci-dessous), n'est jamais un groupe de déclinaisons.
 
 Quantités (produit vendu par 4, 6, 9 pièces…) :
 - Quand un même produit est proposé par lots de pièces (nuggets par 4, 6 ou 9 ; ailes de poulet par 6 ou 12 ; huîtres par 6, 9 ou 12 ; sushis par 8 ou 12), crée UN SEUL produit au nom de base (« Nuggets », « Ailes de poulet »), sans group_ref, et un groupe d'options « Quantité » rattaché par option_group_refs : min 1, max 1, une option par quantité, dans l'ordre croissant, intitulée comme sur la carte (« x4 », « x6 », « x9 » ; « 6 pièces » si la carte l'écrit ainsi).
 - Le price_cents du produit est le prix de la plus petite quantité, et son option vaut extra_price_cents 0. Chaque autre option vaut le prix de sa quantité moins celui de la plus petite : nuggets 4 = 4,50 €, 6 = 6,00 €, 9 = 8,50 € → price_cents 450, options « x4 » 0, « x6 » 150, « x9 » 400.
 - Un groupe « Quantité » par produit : ne réutilise pas celui d'un autre produit, leurs suppléments diffèrent.
 - Prix d'une quantité illisible : n'ajoute pas cette option et explique-le dans issues du produit. Prix de la plus petite quantité illisible : price_cents = null, et explique-le dans issues.
-- Ne s'applique qu'aux quantités de pièces. Les tailles et contenances (pizza 26 cm / 33 cm, bière 25 cl / 50 cl) et les variétés restent des déclinaisons.
+- Ne s'applique qu'aux quantités de pièces. Les contenances (bière 25 cl / 50 cl) et les variétés restent des déclinaisons.
+
+Tailles (pizza 26 cm / 33 cm, taille normale / maxi…) :
+- Deux cas, selon la façon dont la carte exprime la taille.
+- La carte donne un prix complet par taille, chaque taille étant une ligne ou une colonne de prix de la pizza (« Reine 26 cm 10 € », « Reine 33 cm 13 € ») : ce sont des déclinaisons, un produit par taille et un groupe de déclinaisons, comme décrit plus haut.
+- La carte exprime la taille comme un choix avec un supplément (« Reine 10 € ; en 33 cm +3 € », « Taille : normale, maxi +2,50 € », « 33 cm : +3 € sur toutes les pizzas ») : crée UN SEUL produit par pizza, sans group_ref, au prix de la plus petite taille, et un groupe d'options « Taille » rattaché par option_group_refs : min 1, max 1, une option par taille, dans l'ordre croissant, la plus petite à extra_price_cents 0 et les autres au supplément écrit. Si la carte ne nomme pas la plus petite taille (« Taille normale »), crée-la quand même comme première option, avec le nom écrit sur la carte ou « Normale ».
+- Un supplément de taille commun à plusieurs pizzas (« +3 € sur toutes les pizzas ») donne un seul groupe « Taille », rattaché à chacune de ces pizzas ; écris-le identique pour toutes (mêmes titres, mêmes prix).
+- En cas de doute entre les deux cas, un prix complet affiché par taille l'emporte : déclinaisons.
 
 Suppléments et options (option_groups) :
 - Les suppléments et choix proposés (« supplément fromage +1 € », « sauce au choix : ketchup, mayonnaise ») forment des groupes d'options : nom du groupe, options avec extra_price_cents (0 si gratuit), min et max de choix si la carte les indique (sinon min 0 et max 0).

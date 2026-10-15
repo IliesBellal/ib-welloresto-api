@@ -348,7 +348,7 @@ Demande d'Ilies : un produit proposé par 4, 6 ou 9 pièces (nuggets, ailes, hu�
 ### D20 — Quantités = un produit + un groupe d'options « Quantité »
 - **Aucun changement de contrat ni de schéma** : c'est un produit et un groupe d'options ordinaires (min 1, max 1, donc attribut obligatoire à choix unique, comme D14). Seule la consigne change (`menuOCRSystemPrompt`, section « Quantités »).
 - **Règle de prix** : le prix du produit est celui de la plus petite quantité (option à +0) ; chaque autre option porte la différence. Nuggets 4,50 / 6,00 / 8,50 € → produit à 450, options x4 +0, x6 +150, x9 +400.
-- **Périmètre** : quantités de pièces uniquement. Tailles et contenances (pizza 26/33 cm, bière 25/50 cl) et variétés restent des groupes de déclinaisons (D1).
+- **Périmètre** : quantités de pièces. Contenances (bière 25/50 cl) et variétés restent des groupes de déclinaisons (D1). Les tailles : voir D21.
 - **Prix illisible** : option omise avec un problème sur le produit ; plus petite quantité illisible : `price_cents` null (donc « prix absent ou illisible » à la relecture).
 - **Correctif de fusion** (`aiMerger.attribute`) : la clé d'identité d'un groupe d'options était nom + titres, sans les suppléments. Deux produits avec chacun « Quantité : x4, x6, x9 » mais des suppléments différents auraient partagé le premier jeu de prix. La clé inclut désormais le supplément de chaque option. Effet de bord : les identifiants externes générés des groupes d'options changent (ils dérivent de la clé) ; sans conséquence pour les brouillons en cours, qui rejouent la fusion à chaque lecture.
 
@@ -357,3 +357,10 @@ Demande d'Ilies : un produit proposé par 4, 6 ou 9 pièces (nuggets, ailes, hu�
 | `go build`, `go vet`, `go test ./internal/modules/menu/...` | OK |
 | `TestBuildAIMenuImport_QuantityOptionGroups` | Choix unique obligatoire, x4 à +0, produit simple au prix de x4 ; suppléments différents = groupes distincts ; mêmes quantités et suppléments = groupe partagé |
 | Consigne sur de vraies photos | **Non testée** : à faire au prochain test staging avec une carte contenant des produits par quantités |
+
+### D21 — Tailles : déclinaisons ou option, selon ce que la carte exprime
+Même mécanisme que D20, consigne seule (section « Tailles »). Deux cas :
+- **Prix complet par taille** (« Reine 26 cm 10 € », « Reine 33 cm 13 € ») : un produit par taille, regroupés en groupe de déclinaisons (D1), inchangé.
+- **Taille exprimée en choix avec supplément** (« Reine 10 € ; en 33 cm +3 € », « 33 cm : +3 € sur toutes les pizzas ») : un seul produit par pizza, au prix de la plus petite taille, et un groupe d'options « Taille » (min 1, max 1, plus petite taille à +0, les autres au supplément écrit). Un supplément commun à plusieurs pizzas donne un seul groupe rattaché à chacune ; la fusion le partage car titres et suppléments sont identiques (clé corrigée en D20).
+- Doute entre les deux : le prix complet affiché par taille l'emporte (déclinaisons).
+- Aucun changement de code ; consigne **non testée sur de vraies photos**.
