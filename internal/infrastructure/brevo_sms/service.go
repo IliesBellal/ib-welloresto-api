@@ -1,6 +1,7 @@
 package brevo_sms
 
 import (
+	requestlogger "welloresto-api/internal/middleware/request_logger"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -32,7 +33,7 @@ type sendSMSResponse struct {
 func NewBrevoSMS(cfg Config) sms.Service {
 	return &BrevoSMS{
 		apiKey:     cfg.APIKey,
-		httpClient: &http.Client{},
+		httpClient: &http.Client{Transport: requestlogger.Transport(nil)},
 	}
 }
 

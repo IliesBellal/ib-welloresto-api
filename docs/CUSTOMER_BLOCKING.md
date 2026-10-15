@@ -94,13 +94,16 @@ Ces deux listes incluent désormais les fiches supprimées **mais bloquées**.
 
 ## Contrôle à la commande
 
-`scannorder.Service.GetPricingSNO`, juste après la vérification du mode de
-commande : si le mode est `TAKE_AWAY`/`DELIVERY` et qu'un client bloqué de
-l'établissement porte le téléphone de la commande, la réponse est
-`{"status": "order_unavailable"}`. `CreateOrderSNO` appelle toujours
-`GetPricingSNO` avant de créer quoi que ce soit, le contrôle couvre donc les deux
-routes (`/pricing` et `/orders`), **avant tout paiement Stripe**, et ne laisse
-aucune commande ni aucun client créé.
+`scannorder.Service.CreateOrderSNO` (`POST /scannorder/{slug}/orders`), après la
+recherche du client par téléphone et **avant le pricing** : si le mode est
+`TAKE_AWAY`/`DELIVERY` et qu'un client bloqué de l'établissement porte le
+téléphone de la commande, la réponse est `{"status": "order_unavailable"}`. Le
+contrôle précède tout paiement Stripe et ne laisse aucune commande ni aucun
+client créé.
+
+**Seule la création de commande est concernée.** `POST /scannorder/{slug}/pricing`
+(`GetPricingSNO`, appelé en direct pendant la composition du panier) ne contrôle
+jamais le blocage et ne répond donc jamais en erreur à un client bloqué.
 
 - Le téléphone est normalisé comme `FindCustomerByPhone` (indicatif FR par défaut) : `06 12 34 56 78`, `0612345678` et `+33612345678` sont le même numéro.
 - Un lookup en échec renvoie une erreur (jamais « non bloqué »), comme le lookup client existant.
@@ -115,7 +118,7 @@ aucune commande ni aucun client créé.
 
 ## Fronts (autres dépôts, intégrés le 2026-10-14)
 
-- **wello-resto-scannorder** — `src/components/cart/CheckoutFlow.tsx` : le statut `order_unavailable` renvoyé par `POST /scannorder/{slug}/orders` affiche un toast neutre (« Impossible de passer commande » / « Votre commande n'a pas pu être enregistrée »), sans cause ni démarche suggérée, et le panier est conservé. Seule la création de commande est concernée : le pricing en direct du panier envoie un téléphone vide (`useCartPricing`) et ne déclenche donc jamais le refus.
+- **wello-resto-scannorder** — `src/components/cart/CheckoutFlow.tsx` : le statut `order_unavailable` renvoyé par `POST /scannorder/{slug}/orders` affiche un toast neutre (« Impossible de passer commande » / « Votre commande n'a pas pu être enregistrée »), sans cause ni démarche suggérée, et le panier est conservé. Seule la création de commande est concernée : le pricing n'est jamais refusé, côté API comme côté front.
 - **wello-back-office** (droit `customers.manage` requis pour toutes les actions) :
   - `components/customers/CustomerBlockDialog.tsx` : boîte « Bloquer » (motif via `GET /pos/deletion_reasons/customer`, précision obligatoire si le motif l'exige). Sans fiche, elle sert à **bloquer un numéro** (téléphone requis, nom/email facultatifs) : l'API crée la fiche au besoin.
   - Liste des clients : entrée « Bloquer un numéro » dans le menu du bouton « Créer un client », badge rouge « Bloqué » dans le tableau.

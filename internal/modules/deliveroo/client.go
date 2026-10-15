@@ -1,6 +1,7 @@
 package deliveroo
 
 import (
+	requestlogger "welloresto-api/internal/middleware/request_logger"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -41,7 +42,7 @@ type ErrorResponse struct {
 
 func NewDeliverooClient(httpClient *http.Client, config config.DeliverooConfig) *DeliverooClient {
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 30 * time.Second}
+		httpClient = &http.Client{Timeout: 30 * time.Second, Transport: requestlogger.Transport(nil)}
 	}
 	return &DeliverooClient{
 		httpClient: httpClient,

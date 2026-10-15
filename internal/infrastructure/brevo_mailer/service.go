@@ -1,6 +1,7 @@
 package brevo_mailer
 
 import (
+	requestlogger "welloresto-api/internal/middleware/request_logger"
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
@@ -34,7 +35,7 @@ type sendEmailResponse struct {
 func NewBrevoMailer(cfg Config) mailer.Service {
 	return &BrevoMailer{
 		apiKey:     cfg.APIKey,
-		httpClient: &http.Client{},
+		httpClient: &http.Client{Transport: requestlogger.Transport(nil)},
 	}
 }
 

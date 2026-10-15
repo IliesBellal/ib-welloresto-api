@@ -125,7 +125,13 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// (voir internal/database/mysql.go) saturé par les flush périodiques de ce logger ;
 	// le pool Postgres (internal/database/postgres.go) en autorise 15. Le logger a aussi
 	// été corrigé pour passer par dbx.Rebind (placeholders ? -> $N, requis par Postgres).
-	r.Use(requestlogger.RequestLoggerMiddleware(requestlogger.NewLogger(selectedDB, log, 1000)))
+	reqLogger := requestlogger.NewLogger(selectedDB, log, 1000)
+	r.Use(requestlogger.RequestLoggerMiddleware(reqLogger))
+	// Appels sortants (Uber Eats, Deliveroo, Brevo, Stripe...) dans la même table :
+	// docs/OUTBOUND_API_LOGS.md. OUTBOUND_REQUEST_LOG=false les coupe sans redéploiement.
+	if os.Getenv("OUTBOUND_REQUEST_LOG") != "false" {
+		requestlogger.SetDefault(reqLogger)
+	}
 
 	// Journal de diagnostic (docs/DIAGNOSTIC_EVENTS.md) : écriture asynchrone, jamais bloquante.
 	diagnostics.Init(selectedDB, log)

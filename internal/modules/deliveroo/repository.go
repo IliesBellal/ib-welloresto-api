@@ -1,6 +1,7 @@
 package deliveroo
 
 import (
+	requestlogger "welloresto-api/internal/middleware/request_logger"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -21,7 +22,7 @@ type DeliverooRepository struct {
 }
 
 func NewDeliverooRepo(db *sql.DB) *DeliverooRepository {
-	return &DeliverooRepository{database: db, httpClient: &http.Client{Timeout: 15 * time.Second}, basicAuth: os.Getenv("DELIVEROO_BASE64_BASIC_AUTH")}
+	return &DeliverooRepository{database: db, httpClient: &http.Client{Timeout: 15 * time.Second, Transport: requestlogger.Transport(nil)}, basicAuth: os.Getenv("DELIVEROO_BASE64_BASIC_AUTH")}
 }
 
 func (r *DeliverooRepository) GetBearerToken(ctx context.Context) (string, error) {

@@ -11,10 +11,15 @@ import (
 	"time"
 	"welloresto-api/internal/config"
 	"welloresto-api/internal/logger"
+	requestlogger "welloresto-api/internal/middleware/request_logger"
 	"welloresto-api/internal/models"
 
 	"go.uber.org/zap"
 )
+
+// collectedHTTPClient remplace http.DefaultClient (sans délai d'expiration, comme
+// lui) pour que l'appel soit journalisé dans api_request_logs.
+var collectedHTTPClient = &http.Client{Transport: requestlogger.Transport(nil)}
 
 type DeliverooService struct {
 	repo   *DeliverooRepository
@@ -91,8 +96,12 @@ func (s *DeliverooService) StartDeliverooDelivery(ctx context.Context, brandOrde
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	_, err = http.DefaultClient.Do(req)
-	return err
+	resp, err := collectedHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
 }
 
 func (s *DeliverooService) StartDelivery(ctx context.Context, brandOrderID string) (map[string]any, error) {

@@ -17,6 +17,7 @@
 package pennylane
 
 import (
+	requestlogger "welloresto-api/internal/middleware/request_logger"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -72,7 +73,7 @@ func New(cfg Config) *Provider {
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
 	c := cfg.HTTPClient
 	if c == nil {
-		c = &http.Client{Timeout: 30 * time.Second}
+		c = &http.Client{Timeout: 30 * time.Second, Transport: requestlogger.Transport(nil)}
 	}
 	now := cfg.Now
 	if now == nil {

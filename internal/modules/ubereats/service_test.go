@@ -34,8 +34,8 @@ func TestUberEatsBYOCStatusUpdate_UsesBrandOrderID(t *testing.T) {
 
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT o.brand_order_id, o.creation_date")).
 		WithArgs(internalOrderID).
-		WillReturnRows(sqlmock.NewRows([]string{"brand_order_id", "creation_date"}).
-			AddRow(brandOrderID, time.Now()))
+		WillReturnRows(sqlmock.NewRows([]string{"brand_order_id", "creation_date", "brand_store_id"}).
+			AddRow(brandOrderID, time.Now(), "uber-store-1"))
 
 	var gotPath string
 	var gotBody []byte

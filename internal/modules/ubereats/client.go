@@ -1,6 +1,7 @@
 package ubereats
 
 import (
+	requestlogger "welloresto-api/internal/middleware/request_logger"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -21,7 +22,7 @@ type UberClient struct {
 func NewUberClient(cfg ConfigUberEats) *UberClient {
 	return &UberClient{
 		config: cfg,
-		client: &http.Client{Timeout: 30 * time.Second},
+		client: &http.Client{Timeout: 30 * time.Second, Transport: requestlogger.Transport(nil)},
 	}
 }
 

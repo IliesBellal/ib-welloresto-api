@@ -12,7 +12,7 @@ import (
 // apiRequestLogRetentionDays est la durée de conservation des lignes
 // api_request_logs. Purement technique (débogage d'intégration), sans valeur
 // probante contrairement à audit_logs (chaînage de hash, non concerné par
-// cette tâche) : 30 jours suffisent.
+// cette tâche) : 90 jours (journal des entrants et des sortants).
 const apiRequestLogRetentionDays = 90
 
 // apiRequestLogPurgeBatchSize borne chaque DELETE pour ne pas tenir un verrou

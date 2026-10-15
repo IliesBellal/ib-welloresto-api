@@ -1,6 +1,7 @@
 package googlemaps
 
 import (
+	requestlogger "welloresto-api/internal/middleware/request_logger"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,7 +22,7 @@ type googleMapsClient struct {
 func NewGoogleMapsClient(cfg config.GoogleConfig) GoogleMapsClient {
 	return &googleMapsClient{
 		apiKey: cfg.APIKey,
-		client: &http.Client{},
+		client: &http.Client{Transport: requestlogger.Transport(nil)},
 	}
 }
 

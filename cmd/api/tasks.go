@@ -131,7 +131,7 @@ func SetupTasks(
 	add("45 4 * * *", taskManager.CleanupExpiredSignupSessions)
 
 	// ── Logs de requêtes API ─────────────────────────────────────────────────
-	// 1er du mois à 5h : purge des lignes api_request_logs de plus de 30 jours.
+	// 1er du mois à 5h : purge des lignes api_request_logs de plus de 90 jours.
 	// Coïncide avec CleanupExpiredPasswordResets ce jour-là, mais la connexion
 	// active est désormais Postgres sur Render (pool de 15, pas 1 comme sur
 	// l'ancien MySQL Hostinger) : les deux DELETE peuvent tourner en parallèle

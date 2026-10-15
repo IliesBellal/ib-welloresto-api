@@ -3,6 +3,7 @@
 package notification
 
 import (
+	requestlogger "welloresto-api/internal/middleware/request_logger"
 	"context"
 	"crypto"
 	"crypto/rand"
@@ -34,7 +35,7 @@ type GoogleFCMTokenManager struct {
 func NewGoogleFCMTokenManager(serviceAccountPath string) *GoogleFCMTokenManager {
 	return &GoogleFCMTokenManager{
 		ServiceAccountPath: serviceAccountPath,
-		HTTP:               &http.Client{},
+		HTTP:               &http.Client{Transport: requestlogger.Transport(nil)},
 	}
 }
 

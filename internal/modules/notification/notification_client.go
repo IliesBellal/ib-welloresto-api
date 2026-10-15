@@ -3,6 +3,7 @@
 package notification
 
 import (
+	requestlogger "welloresto-api/internal/middleware/request_logger"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -15,7 +16,7 @@ type FCMClient struct {
 
 func NewFCMClient() *FCMClient {
 	return &FCMClient{
-		HTTP: &http.Client{},
+		HTTP: &http.Client{Transport: requestlogger.Transport(nil)},
 	}
 }
 
