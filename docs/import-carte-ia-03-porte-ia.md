@@ -383,7 +383,7 @@ Demande d'Ilies : créer aussi les promotions découvertes sur la carte (« Tous
 
 ### D23 — Structure fermée, validée par le code
 - Le modèle remplit `promotions` (structure `AIPromotion`) et, pour ce qu'il voit sans pouvoir l'exprimer, `promotions_not_created` (`source_text` + `reason`). Il n'écrit aucune ligne de promotion en texte libre ; les deux listes sont dans `AIMenuPageSchema` (le schéma change donc, une grammaire est recompilée côté API une fois).
-- Quatre types (`kind`) : `new_price` (prix fixe), `percent_off`, `amount_off`, `nth_free` (N achetés, le suivant offert). Filtres : modes de commande, jours, plage horaire, période, minimum d'achat en euros, produits ciblés ou toute la carte.
+- Quatre types (`kind`) : `new_price` (prix fixe), `percent_off`, `amount_off`, `nth_free` (N achetés, le suivant offert). Filtres : modes de commande, jours, plage horaire, date de fin, minimum d'achat en euros, produits ciblés ou toute la carte.
 - **Hors périmètre** : code promo, taille proposée comme option (une promotion « pizzas 31 cm » n'est créée que si chaque taille est un produit), formules (restent des `formulas`), produits cités d'une autre photo.
 
 ### D24 — « Comprise parfaitement » ou rien
@@ -401,7 +401,7 @@ Demande d'Ilies : créer aussi les promotions découvertes sur la carte (« Tous
 | modes | `discount_order_type` = « IN », « TAKE_AWAY DELIVERY »…, NULL = tous (format lu par `strings.Contains` dans le pricing) |
 | jours / heures | `discounts_schedules`, `is_time_limited` ; des jours sans heures = 00:00 → 00:00 (« jusqu'à minuit ») ; des heures sans jour = les 7 jours |
 | minimum d'achat | `min_order_unit` `CURRENCY`, en centimes (comparé au panier entier) |
-| période | `valid_from` (date de l'import par défaut) / `valid_to` |
+| date de fin | `valid_from` = date de l'import, `valid_to` = date de fin lue |
 | autres | non cumulable, `prefered_order` 0, pas de code, portée `PRODUCT` |
 
 ### D27 — Limites du moteur, signalées et non contournées
@@ -424,9 +424,15 @@ Pas de table de correspondance : une promotion dont le nom (casse et accents ign
 | Vérification | Résultat |
 |---|---|
 | `go build ./...`, `go vet` (avec et sans tag `postgres_integration`), `go test ./internal/modules/menu/... ./internal/modules/discounts/...` | OK |
-| `importer/ai_promotions_test.go` | OK. Lecture des trois exemples d'Ilies ; 11 refus avec raison et texte de la carte ; refus des combinaisons ambiguës ; doublon entre photos ; bornes nom 50 / description 100 ; décodage du JSON du modèle ; description lisible ; aperçu (existe déjà, prix non inférieur) ; plan (nouveau prix, 4ᵉ/5ᵉ offerte, % avec plage horaire, écartée, existante, produits écartés, prix saisi en relecture) |
+| `importer/ai_promotions_test.go` | OK, y compris `TestAIMenuPageSchema_PromotionsHaveNoOptionalFields` (D30). Lecture des trois exemples d'Ilies ; 11 refus avec raison et texte de la carte ; refus des combinaisons ambiguës ; doublon entre photos ; bornes nom 50 / description 100 ; décodage du JSON du modèle ; description lisible ; aperçu (existe déjà, prix non inférieur) ; plan (nouveau prix, 4ᵉ/5ᵉ offerte, % avec plage horaire, écartée, existante, produits écartés, prix saisi en relecture) |
 | `TestImportCommit_Postgres_AIPhotoPromotions` | **Écrit, non exécuté** : il écrit sur la base (données de test nettoyées) ; il attend l'accord d'Ilies. Vérifie : 2 promotions créées inactives, réglages `PERCENTAGE` 100 × 1 sur place, produit à 9 €, créneau du lundi, relecture sans doublon |
 | Back-office : `tsc` filtré, `eslint`, rendu | `tsc` et `eslint` OK sur les fichiers touchés ; **rendu non vérifié visuellement** |
 | Consigne sur de vraies photos | **Non testée** : prochain test staging, avec une carte qui contient les trois promotions de l'exemple |
+
+### D30 — Schéma compact (incident du 2026-10-15)
+Premier essai sur staging : l'API Anthropic a refusé **toutes** les lectures (`400 invalid_request_error : The compiled grammar is too large`). La première version du schéma ajoutait 10 champs facultatifs (`anyOf` avec `null`) et des énumérations imbriquées à un schéma qui n'en avait que 5 : la grammaire compilée dépassait la limite, y compris pour les cartes sans promotion.
+- **Correctif** : le bloc `promotions` n'a plus aucun `anyOf`. Une valeur absente est 0 ou une chaîne vide ; une seule valeur `value` dont le sens dépend de `kind` remplace `price_cents` / `percent` / `amount_cents` / `buy_quantity` ; `description` (dérivée du texte de la carte) et `valid_from` (la validité commence à la date de l'import) sont supprimés ; les énumérations de `order_types` sont validées en Go. Bloc passé de ~2 070 à ~1 420 caractères et de 10 à 0 `anyOf`.
+- **Garde-fou** : `TestAIMenuPageSchema_PromotionsHaveNoOptionalFields` empêche de réintroduire un `anyOf` dans ce bloc. Il ne mesure pas la taille de la grammaire, que seule l'API connaît.
+- **Non vérifié** : que le schéma compacté passe la limite. À confirmer au prochain essai sur staging. Si l'API le refuse encore, plan B : lire les promotions dans un **second appel** par photo, avec son propre petit schéma (liste des produits lus transmise en contexte), pour ne plus toucher au schéma des produits ; coût : un appel de plus par photo.
 
 Le test d'intégration existant `TestImportCommit_Postgres_AIPhotoGroups` ne compilait plus (`BuildAIMenuImport` prend les unités depuis l'étape des ingrédients) : corrigé au passage.

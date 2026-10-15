@@ -598,9 +598,9 @@ func TestImportCommit_Postgres_AIPhotoPromotions(t *testing.T) {
 				{Ref: "p2", CategoryRef: &cat, Name: "Reine 26 itest", PriceCents: price(1000), Kind: "food", Confidence: "high"},
 			},
 			Promotions: []importer.AIPromotion{
-				{Name: "Lundi 9 euros itest", Description: "Pizza 31 cm à 9 € le lundi", Kind: "new_price", PriceCents: price(900),
+				{Name: "Lundi 9 euros itest", Kind: "new_price", Value: 900,
 					Days: []int{1}, ProductRefs: []string{"p1"}, SourceText: "Tous les lundis, 9 €"},
-				{Name: "4e offerte itest", Description: "3 pizzas achetées, la 4e offerte", Kind: "nth_free", BuyQuantity: price(3),
+				{Name: "4e offerte itest", Kind: "nth_free", Value: 3,
 					OrderTypes: []string{"IN"}, AllProducts: true, SourceText: "Sur place, la 4e offerte"},
 			},
 		}}, nil)

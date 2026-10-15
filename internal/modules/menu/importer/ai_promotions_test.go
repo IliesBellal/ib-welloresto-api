@@ -31,15 +31,15 @@ func buildAIPromoImport(t *testing.T, promos ...AIPromotion) *IntermediateImport
 
 func mondayNinePromo() AIPromotion {
 	return AIPromotion{
-		Name: "Lundi pizza 9 €", Description: "Pizzas 31 cm à 9 € le lundi", Kind: "new_price",
-		PriceCents: intPtr(900), Days: []int{1}, ProductRefs: []string{"p1", "p2"},
+		Name: "Lundi pizza 9 €", Kind: "new_price",
+		Value: 900, Days: []int{1}, ProductRefs: []string{"p1", "p2"},
 		SourceText: "Tous les lundis, 9 €, valable sur nos pizzas 31cm",
 	}
 }
 
 func fourthFreePromo(name string, orderType string, buy int) AIPromotion {
 	return AIPromotion{
-		Name: name, Description: "Une pizza offerte", Kind: "nth_free", BuyQuantity: intPtr(buy),
+		Name: name, Kind: "nth_free", Value: buy,
 		OrderTypes: []string{orderType}, AllProducts: true,
 		SourceText: name,
 	}
@@ -92,13 +92,13 @@ func TestBuildAIMenuImport_PromotionsNotCreated(t *testing.T) {
 	}{
 		{"produit inconnu", func(p *AIPromotion) { p.ProductRefs = []string{"p1", "p9"} }, "introuvable"},
 		{"aucun produit identifié", func(p *AIPromotion) { p.ProductRefs = nil }, "non identifiés"},
-		{"prix illisible", func(p *AIPromotion) { p.PriceCents = nil }, "prix promotionnel"},
+		{"prix illisible", func(p *AIPromotion) { p.Value = 0 }, "prix promotionnel"},
 		{"type inconnu", func(p *AIPromotion) { p.Kind = "deux_pour_un" }, "non pris en charge"},
 		{"mode inconnu", func(p *AIPromotion) { p.OrderTypes = []string{"DRIVE"} }, "mode de commande"},
 		{"jour hors bornes", func(p *AIPromotion) { p.Days = []int{8} }, "jour 8"},
-		{"plage horaire incomplète", func(p *AIPromotion) { p.FromTime = strPtr("11:00") }, "incomplète"},
-		{"plage horaire à l'envers", func(p *AIPromotion) { p.FromTime, p.ToTime = strPtr("14:00"), strPtr("11:00") }, "à l'envers"},
-		{"période terminée", func(p *AIPromotion) { p.ValidUntil = strPtr("2020-01-01") }, "déjà terminée"},
+		{"plage horaire incomplète", func(p *AIPromotion) { p.FromTime = "11:00" }, "incomplète"},
+		{"plage horaire à l'envers", func(p *AIPromotion) { p.FromTime, p.ToTime = "14:00", "11:00" }, "à l'envers"},
+		{"période terminée", func(p *AIPromotion) { p.ValidUntil = "2020-01-01" }, "déjà terminée"},
 		{"prix fixe sur toute la carte", func(p *AIPromotion) { p.AllProducts, p.ProductRefs = true, nil }, "toute la carte"},
 		{"nom illisible", func(p *AIPromotion) { p.Name = " " }, "nom"},
 	}
@@ -124,7 +124,7 @@ func TestBuildAIMenuImport_PromotionsNotCreated(t *testing.T) {
 
 func TestBuildAIMenuImport_PromotionNthFreeCannotCombineWithMinOrder(t *testing.T) {
 	promo := fourthFreePromo("4e offerte", "IN", 3)
-	promo.MinOrderCents = intPtr(2000)
+	promo.MinOrderCents = 2000
 	imp := buildAIPromoImport(t, promo)
 	if len(imp.Promotions) != 0 {
 		t.Fatalf("une promotion ambiguë ne doit pas être créée : %+v", imp.Promotions)
@@ -163,7 +163,7 @@ func TestBuildAIMenuImport_PromotionSeenOnTwoPhotosKeptOnce(t *testing.T) {
 func TestBuildAIMenuImport_PromotionTextsAreBounded(t *testing.T) {
 	promo := mondayNinePromo()
 	promo.Name = strings.Repeat("é", 80)
-	promo.Description = strings.Repeat("d", 300)
+	promo.SourceText = strings.Repeat("d", 300)
 	imp := buildAIPromoImport(t, promo)
 	got := imp.Promotions[0]
 	if n := len([]rune(got.Name)); n > aiPromotionNameMax {
@@ -176,15 +176,27 @@ func TestBuildAIMenuImport_PromotionTextsAreBounded(t *testing.T) {
 
 func TestDecodeAIMenuPage_Promotions(t *testing.T) {
 	page, err := DecodeAIMenuPage(`{"categories":[],"product_groups":[],"products":[],"option_groups":[],"formulas":[],"warnings":[],
-		"promotions":[{"name":"N","description":"D","kind":"percent_off","price_cents":null,"percent":20,"amount_cents":null,
-		"buy_quantity":null,"max_units":null,"order_types":["IN"],"days":[1,2],"from_time":"11:00","to_time":"14:00",
-		"valid_from":null,"valid_until":null,"min_order_cents":null,"product_refs":[],"all_products":true,"source_text":"-20%"}],
+		"promotions":[{"name":"N","kind":"percent_off","value":20,"max_units":0,"order_types":["IN"],"days":[1,2],
+		"from_time":"11:00","to_time":"14:00","valid_until":"","min_order_cents":0,"product_refs":[],"all_products":true,"source_text":"-20%"}],
 		"promotions_not_created":[{"source_text":"x","reason":"y"}]}`)
 	if err != nil {
 		t.Fatalf("DecodeAIMenuPage: %v", err)
 	}
-	if len(page.Promotions) != 1 || *page.Promotions[0].Percent != 20 || *page.Promotions[0].FromTime != "11:00" || len(page.PromotionsNotCreated) != 1 {
+	if len(page.Promotions) != 1 || page.Promotions[0].Value != 20 || page.Promotions[0].FromTime != "11:00" || len(page.PromotionsNotCreated) != 1 {
 		t.Errorf("page décodée = %+v", page)
+	}
+}
+
+// Le schéma des promotions ne doit contenir aucun champ facultatif (anyOf) :
+// c'est ce qui a fait dépasser la taille de grammaire acceptée par l'API.
+func TestAIMenuPageSchema_PromotionsHaveNoOptionalFields(t *testing.T) {
+	schema := string(AIMenuPageSchema)
+	start := strings.Index(schema, `"promotions": {`)
+	if start < 0 {
+		t.Fatal("schéma sans promotions")
+	}
+	if n := strings.Count(schema[start:], "anyOf"); n != 0 {
+		t.Errorf("le schéma des promotions contient %d anyOf, want 0", n)
 	}
 }
 
@@ -315,8 +327,8 @@ func TestBuildCommitPlan_PromotionNthFreeMapsToEngineFields(t *testing.T) {
 
 func TestBuildCommitPlan_PromotionPercentAndTimeWindow(t *testing.T) {
 	promo := AIPromotion{
-		Name: "Midi -20 %", Description: "-20 % le midi", Kind: "percent_off", Percent: intPtr(20), MaxUnits: intPtr(2),
-		Days: []int{1, 2, 3, 4, 5}, FromTime: strPtr("11:30"), ToTime: strPtr("14:00"), MinOrderCents: intPtr(1500),
+		Name: "Midi -20 %", Kind: "percent_off", Value: 20, MaxUnits: 2,
+		Days: []int{1, 2, 3, 4, 5}, FromTime: "11:30", ToTime: "14:00", MinOrderCents: 1500,
 		ProductRefs: []string{"p3"}, SourceText: "Midi -20 %",
 	}
 	plan := aiPromoPlan(t, buildAIPromoImport(t, promo), nil)

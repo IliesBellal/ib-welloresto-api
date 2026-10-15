@@ -66,34 +66,32 @@ const (
 )
 
 // AIPromotion est une promotion telle que le modèle la restitue. Le JSON est
-// contraint par AIMenuPageSchema ; les bornes et références sont revalidées
-// ici (aiMerger.promotion).
+// contraint par AIMenuPageSchema, volontairement sans champ facultatif
+// (anyOf avec null) : la grammaire compilée par l'API a une taille limite que
+// la première version, à champs facultatifs, dépassait. Une valeur absente est
+// donc 0 ou une chaîne vide ; les bornes et références sont revalidées ici
+// (aiMerger.promotion).
 type AIPromotion struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Kind        string `json:"kind"`
-	// PriceCents : nouveau prix (new_price). Percent : remise en % (percent_off).
-	// AmountCents : remise en centimes (amount_off). BuyQuantity : nombre
-	// d'articles achetés avant l'offert (nth_free : 3 → « le 4ᵉ offert »).
-	PriceCents  *int `json:"price_cents"`
-	Percent     *int `json:"percent"`
-	AmountCents *int `json:"amount_cents"`
-	BuyQuantity *int `json:"buy_quantity"`
-	// MaxUnits : nombre d'articles remisés par commande ; null = tous les
-	// articles concernés. Sans objet pour nth_free (toujours 1).
-	MaxUnits *int `json:"max_units"`
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+	// Value dépend de Kind : nouveau prix en centimes (new_price), pourcentage
+	// (percent_off), montant en centimes (amount_off), nombre d'articles
+	// achetés avant l'offert (nth_free : 3 → « le 4ᵉ offert »).
+	Value int `json:"value"`
+	// MaxUnits : nombre d'articles remisés par commande ; 0 = tous les
+	// articles concernés. Toujours 0 pour nth_free.
+	MaxUnits int `json:"max_units"`
 	// OrderTypes : IN, TAKE_AWAY, DELIVERY ; vide = tous les modes.
 	OrderTypes []string `json:"order_types"`
 	// Days : 1 = lundi … 7 = dimanche ; vide = tous les jours.
 	Days []int `json:"days"`
-	// FromTime, ToTime : « HH:MM » ; null = toute la journée.
-	FromTime *string `json:"from_time"`
-	ToTime   *string `json:"to_time"`
-	// ValidFrom, ValidUntil : « AAAA-MM-JJ » ; null = sans limite.
-	ValidFrom  *string `json:"valid_from"`
-	ValidUntil *string `json:"valid_until"`
-	// MinOrderCents : montant minimum de la commande, en centimes.
-	MinOrderCents *int `json:"min_order_cents"`
+	// FromTime, ToTime : « HH:MM » ; vides = toute la journée.
+	FromTime string `json:"from_time"`
+	ToTime   string `json:"to_time"`
+	// ValidUntil : « AAAA-MM-JJ », date de fin ; vide = sans limite.
+	ValidUntil string `json:"valid_until"`
+	// MinOrderCents : montant minimum de la commande, en centimes ; 0 = aucun.
+	MinOrderCents int `json:"min_order_cents"`
 	// ProductRefs : produits concernés (refs de products). AllProducts : la
 	// promotion vise toute la carte.
 	ProductRefs []string `json:"product_refs"`
@@ -126,8 +124,7 @@ type CanonicalPromotion struct {
 	Days       []int    // 1..7 triés ; vide = tous les jours
 	FromTime   string   // « HH:MM » ou vide
 	ToTime     string
-	ValidFrom  string // « AAAA-MM-JJ » ou vide (= date de l'import)
-	ValidUntil string
+	ValidUntil string // « AAAA-MM-JJ » ou vide ; la validité commence à la date de l'import
 
 	MinOrderCents int
 
@@ -197,13 +194,11 @@ func buildCanonicalPromotion(p AIPromotion, productIDByRef map[string]string, ph
 	}
 	promo := CanonicalPromotion{
 		Name:        truncateRunes(name, aiPromotionNameMax),
-		Description: strings.TrimSpace(p.Description),
 		SourceText:  strings.TrimSpace(p.SourceText),
 		SourcePhoto: photo,
 	}
-	if promo.Description == "" {
-		promo.Description = promo.SourceText
-	}
+	// Le texte de la carte sert de description (varchar(100) côté caisse).
+	promo.Description = promo.SourceText
 	if promo.Description == "" {
 		promo.Description = promo.Name
 	}
@@ -214,48 +209,48 @@ func buildCanonicalPromotion(p AIPromotion, productIDByRef map[string]string, ph
 	promo.Kind = PromotionKind(strings.TrimSpace(p.Kind))
 	switch promo.Kind {
 	case PromotionNewPrice:
-		if p.PriceCents == nil || *p.PriceCents <= 0 || *p.PriceCents > aiMaxPriceCents {
+		if p.Value <= 0 || p.Value > aiMaxPriceCents {
 			return promo, "prix promotionnel absent ou illisible"
 		}
-		promo.NewPriceCents = *p.PriceCents
+		promo.NewPriceCents = p.Value
 	case PromotionPercentOff:
-		if p.Percent == nil || *p.Percent < 1 || *p.Percent > 100 {
+		if p.Value < 1 || p.Value > 100 {
 			return promo, "pourcentage de remise absent ou illisible"
 		}
-		promo.Percent = *p.Percent
+		promo.Percent = p.Value
 	case PromotionAmountOff:
-		if p.AmountCents == nil || *p.AmountCents <= 0 || *p.AmountCents > aiMaxPriceCents {
+		if p.Value <= 0 || p.Value > aiMaxPriceCents {
 			return promo, "montant de la remise absent ou illisible"
 		}
-		promo.AmountCents = *p.AmountCents
+		promo.AmountCents = p.Value
 	case PromotionNthFree:
-		if p.BuyQuantity == nil || *p.BuyQuantity < 1 || *p.BuyQuantity > aiPromotionMaxBuy {
+		if p.Value < 1 || p.Value > aiPromotionMaxBuy {
 			return promo, "nombre d'articles achetés absent ou illisible"
 		}
-		promo.BuyQuantity = *p.BuyQuantity
+		promo.BuyQuantity = p.Value
 		promo.Notes = append(promo.Notes, promotionEngineNthFreeNote)
 	default:
 		return promo, fmt.Sprintf("type de promotion %q non pris en charge", p.Kind)
 	}
 
-	if p.MaxUnits != nil {
+	if p.MaxUnits != 0 {
 		if promo.Kind == PromotionNthFree {
 			return promo, "un nombre d'articles remisés n'a pas de sens pour un article offert"
 		}
-		if *p.MaxUnits < 1 || *p.MaxUnits > aiPromotionAllUnits {
+		if p.MaxUnits < 1 || p.MaxUnits > aiPromotionAllUnits {
 			return promo, "nombre d'articles remisés par commande illisible"
 		}
-		promo.MaxUnits = *p.MaxUnits
+		promo.MaxUnits = p.MaxUnits
 	}
 
-	if p.MinOrderCents != nil && *p.MinOrderCents != 0 {
+	if p.MinOrderCents != 0 {
 		if promo.Kind == PromotionNthFree {
 			return promo, "un montant minimum de commande ne se combine pas avec un article offert"
 		}
-		if *p.MinOrderCents < 0 || *p.MinOrderCents > aiMaxPriceCents {
+		if p.MinOrderCents < 0 || p.MinOrderCents > aiMaxPriceCents {
 			return promo, "montant minimum de commande illisible"
 		}
-		promo.MinOrderCents = *p.MinOrderCents
+		promo.MinOrderCents = p.MinOrderCents
 	}
 
 	// Modes de commande.
@@ -289,7 +284,7 @@ func buildCanonicalPromotion(p AIPromotion, productIDByRef map[string]string, ph
 	}
 	sort.Ints(promo.Days)
 
-	from, to := trimmedPtr(p.FromTime), trimmedPtr(p.ToTime)
+	from, to := strings.TrimSpace(p.FromTime), strings.TrimSpace(p.ToTime)
 	if (from == "") != (to == "") {
 		return promo, "plage horaire incomplète (une seule heure lue)"
 	}
@@ -311,27 +306,16 @@ func buildCanonicalPromotion(p AIPromotion, productIDByRef map[string]string, ph
 		promo.Days = nil
 	}
 
-	// Période de validité.
-	var validFrom time.Time
-	if s := trimmedPtr(p.ValidFrom); s != "" {
-		t, err := time.Parse("2006-01-02", s)
+	// Date de fin : la validité commence à la date de l'import.
+	if until := strings.TrimSpace(p.ValidUntil); until != "" {
+		t, err := time.Parse("2006-01-02", until)
 		if err != nil {
-			return promo, fmt.Sprintf("date de début %q illisible", s)
-		}
-		validFrom, promo.ValidFrom = t, s
-	}
-	if s := trimmedPtr(p.ValidUntil); s != "" {
-		t, err := time.Parse("2006-01-02", s)
-		if err != nil {
-			return promo, fmt.Sprintf("date de fin %q illisible", s)
-		}
-		if !validFrom.IsZero() && t.Before(validFrom) {
-			return promo, "date de fin antérieure à la date de début"
+			return promo, fmt.Sprintf("date de fin %q illisible", until)
 		}
 		if t.Before(time.Now().UTC().Truncate(24 * time.Hour)) {
-			return promo, fmt.Sprintf("période déjà terminée (jusqu'au %s)", s)
+			return promo, fmt.Sprintf("période déjà terminée (jusqu'au %s)", until)
 		}
-		promo.ValidUntil = s
+		promo.ValidUntil = until
 	}
 
 	// Produits concernés : tous reconnus, sinon on ne devine pas.
@@ -360,13 +344,6 @@ func buildCanonicalPromotion(p AIPromotion, productIDByRef map[string]string, ph
 		}
 	}
 	return promo, ""
-}
-
-func trimmedPtr(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return strings.TrimSpace(*s)
 }
 
 // ---------------------------------------------------------------------------
@@ -429,15 +406,8 @@ func DescribePromotion(p CanonicalPromotion, names map[string]string) string {
 	if p.FromTime != "" {
 		parts = append(parts, fmt.Sprintf("de %s à %s", p.FromTime, p.ToTime))
 	}
-	if p.ValidFrom != "" || p.ValidUntil != "" {
-		switch {
-		case p.ValidFrom != "" && p.ValidUntil != "":
-			parts = append(parts, fmt.Sprintf("du %s au %s", p.ValidFrom, p.ValidUntil))
-		case p.ValidUntil != "":
-			parts = append(parts, fmt.Sprintf("jusqu'au %s", p.ValidUntil))
-		default:
-			parts = append(parts, fmt.Sprintf("à partir du %s", p.ValidFrom))
-		}
+	if p.ValidUntil != "" {
+		parts = append(parts, fmt.Sprintf("jusqu'au %s", p.ValidUntil))
 	}
 	if p.MinOrderCents > 0 {
 		parts = append(parts, fmt.Sprintf("dès %s € d'achat", formatCents(p.MinOrderCents)))
@@ -586,7 +556,6 @@ type PlannedPromotion struct {
 	DiscountedQuantity int
 	MinOrderValue      int
 	MinOrderUnit       string // "" = aucun minimum
-	ValidFrom          string // "" = date de l'import
 	ValidUntil         string
 	Schedules          []PlannedPromotionSchedule
 
@@ -624,7 +593,6 @@ func (b *commitPlanner) buildPromotions() {
 			Description:        promo.Description,
 			NewPriceCents:      promo.NewPriceCents,
 			OrderTypes:         promo.OrderTypes,
-			ValidFrom:          promo.ValidFrom,
 			ValidUntil:         promo.ValidUntil,
 			AllProducts:        promo.AllProducts,
 			Notes:              append([]string(nil), promo.Notes...),

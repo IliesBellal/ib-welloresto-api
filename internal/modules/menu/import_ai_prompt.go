@@ -57,19 +57,20 @@ Formules et menus composés : deux cas.
 Promotions (promotions, promotions_not_created) :
 - Une promotion est une offre écrite sur la carte (« Tous les lundis, 9 € sur nos pizzas 31 cm », « Sur place, 3 pizzas achetées, la 4ᵉ offerte », « -20 % le midi en semaine »). Elle diffère d'une formule : une formule vend un ensemble de produits à un prix, une promotion baisse le prix de produits vendus par ailleurs.
 - Mets une offre dans promotions SEULEMENT si tu la comprends parfaitement : son effet, les produits concernés, les modes de commande, les jours et les heures. Au moindre doute, ou si l'offre ne rentre pas dans les types ci-dessous, mets-la dans promotions_not_created avec source_text (le texte de la carte, recopié) et reason (ce qui t'empêche de la créer, en une phrase). N'invente aucun élément absent de la carte et n'arrondis pas une offre pour la faire rentrer dans un type. Un restaurateur relira tout : une offre non créée vaut mieux qu'une offre fausse.
-- kind, et le seul champ de valeur qui va avec (les autres valent null) :
-  - new_price : les produits concernés sont vendus à un prix fixe ; price_cents est ce prix en centimes (9 € → 900) ;
-  - percent_off : remise en pourcentage ; percent vaut 20 pour 20 % ;
-  - amount_off : remise en euros ; amount_cents est le montant en centimes ;
-  - nth_free : « N achetés, le suivant offert » ; buy_quantity vaut N (« 3 pizzas achetées, la 4ᵉ offerte » → 3).
-- max_units : nombre de produits remisés par commande quand la carte le précise (« une pizza à 9 € par commande » → 1). Null quand l'offre vaut pour chaque produit concerné, ce qui est le cas sauf mention contraire. Toujours null pour nth_free.
+- kind, et value, dont le sens dépend de kind :
+  - new_price : les produits concernés sont vendus à un prix fixe ; value est ce prix en centimes (9 € → 900) ;
+  - percent_off : remise en pourcentage ; value vaut 20 pour 20 % ;
+  - amount_off : remise en euros ; value est le montant en centimes ;
+  - nth_free : « N achetés, le suivant offert » ; value vaut N (« 3 pizzas achetées, la 4ᵉ offerte » → 3).
+- Aucun champ n'est facultatif : ce qui ne s'applique pas vaut 0 (max_units, min_order_cents), une liste vide (order_types, days, product_refs) ou une chaîne vide (from_time, to_time, valid_until).
+- max_units : nombre de produits remisés par commande quand la carte le précise (« une pizza à 9 € par commande » → 1). 0 quand l'offre vaut pour chaque produit concerné, ce qui est le cas sauf mention contraire. Toujours 0 pour nth_free.
 - order_types : « sur place » → ["IN"], « à emporter » → ["TAKE_AWAY"], « livraison » → ["DELIVERY"], plusieurs possibles ; liste vide quand la carte ne limite pas le mode de commande.
-- days : 1 = lundi … 7 = dimanche (« tous les lundis » → [1], « en semaine » → [1,2,3,4,5]) ; liste vide si l'offre vaut tous les jours. from_time et to_time : « HH:MM » (« de 11h30 à 14h » → "11:30" et "14:00") ; null sans plage horaire.
-- valid_from et valid_until : « AAAA-MM-JJ » quand la carte donne une période ; null sinon.
-- min_order_cents : montant minimum d'achat en centimes (« dès 20 € » → 2000) ; null sinon. Pas avec nth_free.
+- days : 1 = lundi … 7 = dimanche (« tous les lundis » → [1], « en semaine » → [1,2,3,4,5]) ; liste vide si l'offre vaut tous les jours. from_time et to_time : « HH:MM » (« de 11h30 à 14h » → "11:30" et "14:00") ; chaînes vides sans plage horaire.
+- valid_until : date de fin « AAAA-MM-JJ » quand la carte en donne une ; chaîne vide sinon.
+- min_order_cents : montant minimum d'achat en centimes (« dès 20 € » → 2000) ; 0 sinon. Toujours 0 avec nth_free.
 - product_refs : les ref des produits (products) concernés, tels que tu les as lus sur cette photo ; pour « pizzas 31 cm », tous les produits « pizza 31 cm » de la carte. Jamais de ref de product_groups. all_products vaut true seulement si l'offre vise toute la carte (product_refs est alors vide).
 - Si les produits concernés ne sont pas des produits de la carte (une taille proposée comme option d'un produit, une catégorie que tu n'as pas lue en entier), mets l'offre dans promotions_not_created.
-- name : nom court de l'offre (50 caractères au plus) ; description : une phrase (100 au plus) ; source_text : le texte de la carte.
+- name : nom court de l'offre (50 caractères au plus) ; source_text : le texte de la carte, recopié.
 - Quand la carte ne montre aucune offre, promotions et promotions_not_created sont des listes vides.
 
 Nature du produit (kind), qui sert à proposer la TVA :

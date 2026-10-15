@@ -779,11 +779,6 @@ func (r *MenuRepository) materializePromotionsTx(
 			orderType := discounts.OrderType(strings.Join(promo.OrderTypes, " "))
 			req.OrderType = &orderType
 		}
-		if promo.ValidFrom != "" {
-			if t, err := time.Parse("2006-01-02", promo.ValidFrom); err == nil {
-				req.ValidFrom = t
-			}
-		}
 		if promo.ValidUntil != "" {
 			if t, err := time.Parse("2006-01-02", promo.ValidUntil); err == nil {
 				req.ValidTo = &t
