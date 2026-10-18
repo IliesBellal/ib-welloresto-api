@@ -1217,6 +1217,8 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		r.Use(notSuspendedMiddleware)
 
 		r.Post("/token", authH.SaveDeviceToken)
+		r.With(middleware.RequirePermission(permission.SettingsManage)).
+			Get("/versions", authH.ListDeviceVersions)
 	})
 
 	// --- APP VERSION ---

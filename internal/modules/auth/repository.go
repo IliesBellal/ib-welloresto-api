@@ -915,7 +915,7 @@ func (r *AuthRepository) CheckAppVersion(ctx context.Context, currentVersion int
 
 	// Step 1: get highest version > currentVersion
 	q1 := fmt.Sprintf(`
-SELECT id, version_code, download_url
+SELECT id, version_code, download_url, COALESCE(checksum_sha256, '')
 FROM app_version
 WHERE app_id = ?
   AND version_code > ?
@@ -928,8 +928,9 @@ LIMIT 1;
 	var versionID int
 	var versionCode int
 	var downloadURL string
+	var checksum string
 
-	err := row.Scan(&versionID, &versionCode, &downloadURL)
+	err := row.Scan(&versionID, &versionCode, &downloadURL, &checksum)
 	if err == sql.ErrNoRows {
 		return map[string]interface{}{"status": "no_update"}, nil
 	}
@@ -952,10 +953,7 @@ LIMIT 1;
 	err = db.QueryRowContext(ctx, q2, versionCode, app).Scan(&restricted)
 	if err == sql.ErrNoRows {
 		// Not restricted → update available
-		return map[string]interface{}{
-			"status":       "update_available",
-			"download_url": downloadURL,
-		}, nil
+		return updateAvailableResult(versionCode, downloadURL, checksum), nil
 	}
 	if err != nil {
 		return nil, err
@@ -980,10 +978,25 @@ LIMIT 1;
 	}
 
 	// Allowed → update available
-	return map[string]interface{}{
+	return updateAvailableResult(versionCode, downloadURL, checksum), nil
+}
+
+// updateAvailableResult construit la réponse « mise à jour disponible » de
+// POST /app/version/check. version_code et checksum_sha256 sont des ajouts
+// pour la mise à jour automatique du POS (docs/POS_AUTO_UPDATE.md) : les
+// clients qui ne lisent que status/download_url les ignorent. L'empreinte est
+// omise tant qu'elle n'est pas renseignée dans app_version — l'appli refuse
+// alors d'installer seule et retombe sur le téléchargement manuel.
+func updateAvailableResult(versionCode int, downloadURL, checksum string) map[string]interface{} {
+	result := map[string]interface{}{
 		"status":       "update_available",
 		"download_url": downloadURL,
-	}, nil
+		"version_code": versionCode,
+	}
+	if checksum != "" {
+		result["checksum_sha256"] = checksum
+	}
+	return result
 }
 
 func (r *AuthRepository) SaveDevice(ctx context.Context, userID, merchantID, app, deviceID, fcmToken string) error {
@@ -1020,6 +1033,61 @@ ON CONFLICT (device_id) DO UPDATE SET
 	}
 
 	return nil
+}
+
+// UpdateDeviceAppVersion enregistre la version de l'appli remontée par un
+// appareil déjà présent dans users_devices. Volontairement séparé de
+// SaveDevice : l'enregistrement du token FCM ne doit jamais dépendre de ces
+// colonnes (migration 184). Un versionCode nil conserve la valeur connue.
+func (r *AuthRepository) UpdateDeviceAppVersion(ctx context.Context, deviceID, appVersion string, versionCode *int) error {
+	db := dbx.GetDB(ctx, r.database)
+
+	_, err := db.ExecContext(ctx, fmt.Sprintf(`
+UPDATE users_devices
+SET app_version = ?,
+    version_code = COALESCE(?, version_code),
+    app_version_at = %s
+WHERE device_id = ?
+`, dbx.UTCNow()), appVersion, versionCode, deviceID)
+	return err
+}
+
+// ListDeviceVersions retourne les appareils du merchant avec leur version
+// applicative, les plus récemment utilisés d'abord.
+func (r *AuthRepository) ListDeviceVersions(ctx context.Context, merchantID string) ([]DeviceVersion, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	rows, err := db.QueryContext(ctx, `
+SELECT ud.device_id, ud.app, ud.user_id, COALESCE(u.name, ''),
+       ud.app_version, ud.version_code, ud.app_version_at, ud.last_used
+FROM users_devices ud
+LEFT JOIN users u ON u.user_id = ud.user_id
+WHERE ud.merchant_id = ?
+ORDER BY ud.last_used DESC
+`, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	devices := []DeviceVersion{}
+	for rows.Next() {
+		var d DeviceVersion
+		var versionAt, lastUsed sql.NullTime
+		if err := rows.Scan(&d.DeviceID, &d.App, &d.UserID, &d.UserName,
+			&d.AppVersion, &d.VersionCode, &versionAt, &lastUsed); err != nil {
+			return nil, err
+		}
+		if versionAt.Valid {
+			s := versionAt.Time.UTC().Format(time.RFC3339)
+			d.AppVersionAt = &s
+		}
+		if lastUsed.Valid {
+			d.LastUsed = lastUsed.Time.UTC().Format(time.RFC3339)
+		}
+		devices = append(devices, d)
+	}
+	return devices, rows.Err()
 }
 
 // UpdateMFAStatus met à jour le statut MFA dans users_rights pour un token donné

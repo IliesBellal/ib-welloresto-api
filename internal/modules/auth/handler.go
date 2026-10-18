@@ -113,13 +113,30 @@ func (h *AuthHandler) SaveDeviceToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.svc.SaveDeviceToken(ctx, token, req.DeviceToken, req.DeviceID, req.App)
+	resp, err := h.svc.SaveDeviceToken(ctx, token, req)
 	if err != nil {
 		models.SendErrorJSON(w, "device", "save_token", err)
 		return
 	}
 
 	models.SendJSON(w, http.StatusOK, "device", "save_token", resp)
+}
+
+// ListDeviceVersions handles GET /device/versions.
+func (h *AuthHandler) ListDeviceVersions(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "device", "list_versions", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	devices, err := h.svc.ListDeviceVersions(r.Context(), token)
+	if err != nil {
+		models.SendErrorJSON(w, "device", "list_versions", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "device", "list_versions", devices)
 }
 
 // SendVerification envoie un code de vérification à l'utilisateur

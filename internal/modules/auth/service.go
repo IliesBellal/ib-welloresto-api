@@ -685,7 +685,9 @@ func (s *AuthService) CheckAppVersion(ctx context.Context, token, versionCodeStr
 	return result, nil
 }
 
-func (s *AuthService) SaveDeviceToken(ctx context.Context, token, deviceToken, deviceID, app string) (map[string]string, error) {
+const maxDeviceAppVersionLen = 20
+
+func (s *AuthService) SaveDeviceToken(ctx context.Context, token string, req SaveDeviceTokenRequest) (map[string]string, error) {
 
 	user, err := s.repo.GetUserByToken(ctx, token)
 	if err != nil {
@@ -695,7 +697,7 @@ func (s *AuthService) SaveDeviceToken(ctx context.Context, token, deviceToken, d
 		return nil, models.ErrInvalidToken
 	}
 
-	err = s.repo.SaveDevice(ctx, user.UserID, user.MerchantID, app, deviceID, deviceToken)
+	err = s.repo.SaveDevice(ctx, user.UserID, user.MerchantID, req.App, req.DeviceID, req.DeviceToken)
 	if err != nil {
 		return map[string]string{
 			"status": "-3",
@@ -703,7 +705,37 @@ func (s *AuthService) SaveDeviceToken(ctx context.Context, token, deviceToken, d
 		}, nil
 	}
 
+	// Version de l'appli : informative, donc best-effort. Un échec (colonnes
+	// absentes avant la migration 184, par exemple) est journalisé mais ne doit
+	// jamais faire échouer l'enregistrement du token FCM ci-dessus.
+	if appVersion := truncateRunes(strings.TrimSpace(req.AppVersion), maxDeviceAppVersionLen); appVersion != "" {
+		if err := s.repo.UpdateDeviceAppVersion(ctx, req.DeviceID, appVersion, req.VersionCode); err != nil {
+			logger.FromContext(ctx).Warn("Failed to save device app version: " + err.Error())
+		}
+	}
+
 	return map[string]string{"status": "1"}, nil
+}
+
+// ListDeviceVersions liste les appareils du merchant du token et leur version.
+func (s *AuthService) ListDeviceVersions(ctx context.Context, token string) ([]DeviceVersion, error) {
+	user, err := s.repo.GetUserByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, models.ErrInvalidToken
+	}
+
+	return s.repo.ListDeviceVersions(ctx, user.MerchantID)
+}
+
+func truncateRunes(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max])
 }
 
 func (s *AuthService) SendMFACode(ctx context.Context, user *UserLoginRow, fallbackToSMS bool) error {

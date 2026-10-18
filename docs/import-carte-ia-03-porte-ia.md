@@ -404,8 +404,9 @@ Demande d'Ilies : créer aussi les promotions découvertes sur la carte (« Tous
 | date de fin | `valid_from` = date de l'import, `valid_to` = date de fin lue |
 | autres | non cumulable, `prefered_order` 0, pas de code, portée `PRODUCT` |
 
-### D27 — Limites du moteur, signalées et non contournées
-- **« N-ième offert »** : le moteur ne joue la promotion qu'**une fois par commande**, sur le **premier article éligible** du panier (pas forcément le moins cher). Note affichée sur la promotion à la relecture (`promotionEngineNthFreeNote`). À corriger dans la session moteur (M1, M6).
+### D27 — Limites du moteur, non contournées et non affichées
+Règle : une limite technique du moteur ne s'affiche jamais au restaurateur (ni note, ni avertissement). Elle se documente ici et se corrige dans le moteur. Les `Notes` d'une promotion ne portent que ce qui l'aide à décider (doublon, produit retiré).
+- **« N-ième offert »** : le moteur ne joue la promotion qu'**une fois par commande**, sur le **premier article éligible** du panier (pas forcément le moins cher). Aucune note n'est affichée (retirée le 2026-10-15, jugée non professionnelle). À corriger dans la session moteur (M1, M6).
 - **Nouveau prix** : le moteur appliquerait le prix même s'il augmente le prix du produit (P2). L'import retire du ciblage les produits dont le prix n'est pas supérieur au prix fixe, sur chaque canal de la promotion (avertissement à la relecture, note au commit) ; une promotion sans produit restant n'est pas créée.
 - **Non cumulable** : une promotion appliquée à une commande bloque les suivantes (comportement du moteur).
 

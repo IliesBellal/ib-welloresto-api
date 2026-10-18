@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // TimeOfDay represents a time of day in HH:MM format for JSON serialization
@@ -414,10 +415,10 @@ func (r *UpdateDiscountRequest) UnmarshalJSON(data []byte) error {
 
 // Validate checks the CreateDiscountRequest validity
 func (r *CreateDiscountRequest) Validate() error {
-	if r.DiscountName == "" || len(r.DiscountName) > 50 {
+	if r.DiscountName == "" || utf8.RuneCountInString(r.DiscountName) > 50 {
 		return ErrInvalidDiscountName
 	}
-	if r.DiscountDesc == "" || len(r.DiscountDesc) > 100 {
+	if r.DiscountDesc == "" || utf8.RuneCountInString(r.DiscountDesc) > 100 {
 		return ErrInvalidDiscountDesc
 	}
 	if r.DiscountValue < 0 {

@@ -23,9 +23,11 @@ import (
 // jamais appliquée par le calcul de prix) : une erreur de lecture sur une
 // remise coûte de l'argent sans se voir, à la différence d'un prix.
 //
-// Le moteur de promotions n'est pas modifié ici. Ses limites actuelles
-// (docs/promotions-moteur-a-fiabiliser.md) sont signalées sur la promotion
-// concernée plutôt que contournées.
+// Le moteur de promotions n'est pas modifié ici. Ses limites actuelles sont
+// décrites dans docs/promotions-moteur-a-fiabiliser.md : elles se corrigent
+// dans le moteur, elles ne s'affichent pas au restaurateur. Les Notes d'une
+// promotion ne portent que des informations utiles à sa décision (doublon,
+// produit retiré), jamais un commentaire technique sur l'implémentation.
 
 // Codes des signalements des promotions (SourceWarning → PreviewWarning).
 const (
@@ -51,9 +53,6 @@ const (
 	orderTypeIn       = "IN"
 	orderTypeTakeAway = "TAKE_AWAY"
 	orderTypeDelivery = "DELIVERY"
-
-	promotionEngineNthFreeNote = "Limite actuelle du moteur de promotions : la promotion s'applique une seule fois par commande, " +
-		"sur le premier article éligible du panier (pas forcément le moins cher)."
 )
 
 // PromotionKind est la nature d'une promotion lue.
@@ -279,7 +278,6 @@ func buildCanonicalPromotion(p AIPromotion, productIDByRef map[string]string, ph
 			return promo, "nombre d'articles achetés absent ou illisible"
 		}
 		promo.BuyQuantity = p.Value
-		promo.Notes = append(promo.Notes, promotionEngineNthFreeNote)
 	default:
 		return promo, fmt.Sprintf("type de promotion %q non pris en charge", p.Kind)
 	}

@@ -103,6 +103,23 @@ type SaveDeviceTokenRequest struct {
 	DeviceToken string `json:"device_token"`
 	DeviceID    string `json:"device_id"`
 	App         string `json:"app"`
+	// AppVersion / VersionCode sont facultatifs : les appli antérieures à
+	// docs/DEVICE_APP_VERSIONS.md ne les envoient pas.
+	AppVersion  string `json:"app_version"`
+	VersionCode *int   `json:"version_code"`
+}
+
+// DeviceVersion est une ligne de GET /device/versions : un appareil enregistré
+// du merchant et la dernière version de l'appli qu'il a remontée.
+type DeviceVersion struct {
+	DeviceID     string  `json:"device_id"`
+	App          string  `json:"app"`
+	UserID       string  `json:"user_id"`
+	UserName     string  `json:"user_name"`
+	AppVersion   *string `json:"app_version"`
+	VersionCode  *int    `json:"version_code"`
+	AppVersionAt *string `json:"app_version_at"`
+	LastUsed     string  `json:"last_used"`
 }
 
 type CheckAppVersionRequest struct {

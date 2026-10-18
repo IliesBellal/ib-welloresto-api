@@ -79,8 +79,8 @@ func TestBuildAIMenuImport_PromotionsFromCard(t *testing.T) {
 	if inFourth.BuyQuantity != 3 || !reflect.DeepEqual(inFourth.OrderTypes, []string{"IN"}) || !inFourth.AllProducts {
 		t.Errorf("4e offerte sur place = %+v", inFourth)
 	}
-	if len(inFourth.Notes) != 1 || !strings.Contains(inFourth.Notes[0], "une seule fois par commande") {
-		t.Errorf("la limite du moteur doit être signalée, notes = %v", inFourth.Notes)
+	if len(inFourth.Notes) != 0 {
+		t.Errorf("aucune note technique ne doit être affichée au restaurateur, notes = %v", inFourth.Notes)
 	}
 }
 
@@ -265,6 +265,35 @@ func TestBuildPreview_Promotions(t *testing.T) {
 		case "Sur place 4e offerte":
 			if p.Action != ActionAlreadyExists {
 				t.Errorf("promotion existante : action = %q, want %q", p.Action, ActionAlreadyExists)
+			}
+		}
+	}
+}
+
+// Garde-fou : le back-office affiche tels quels les Notes et les avertissements.
+// Un commentaire technique sur le moteur de promotions (ses limites, son
+// implémentation) n'a rien à y faire : il se documente dans docs/, pas à l'écran.
+func TestBuildPreview_PromotionsShowNoEngineInternals(t *testing.T) {
+	imp := buildAIPromoImport(t, mondayNinePromo(),
+		fourthFreePromo("Sur place 4e offerte", "IN", 3),
+		fourthFreePromo("Livraison 5e offerte", "DELIVERY", 4))
+	res, err := BuildPreview(imp, defaultLookups())
+	if err != nil {
+		t.Fatalf("BuildPreview: %v", err)
+	}
+
+	var shown []string
+	for _, p := range res.Promotions {
+		shown = append(shown, p.Notes...)
+	}
+	for _, w := range res.Warnings {
+		shown = append(shown, w.Message)
+	}
+	for _, text := range shown {
+		lower := strings.ToLower(text)
+		for _, banned := range []string{"moteur", "limite actuelle", "premier article éligible"} {
+			if strings.Contains(lower, banned) {
+				t.Errorf("texte affiché au restaurateur à caractère technique (%q) : %q", banned, text)
 			}
 		}
 	}

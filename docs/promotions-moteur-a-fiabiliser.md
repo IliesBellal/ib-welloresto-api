@@ -2,6 +2,8 @@
 
 **Statut :** constats et décisions du 2026-10-15, **rien n'est développé**. Ce sera l'objet d'une session dédiée, à mener **avant** la création de promotions par l'import de carte photo (voir § 5).
 
+**Mise à jour du 2026-10-16 :** le chantier est cadré dans [promotions-moteur-chantier.md](promotions-moteur-chantier.md) (décisions D1 à D11 d'Ilies, règle cible, plan de tests, export de la production). M1, M5 et M6 y sont **confirmées et précisées** (modèle de groupes, D3). Ce document-ci reste la référence sur l'état actuel du moteur.
+
 Périmètre : `applyDiscounts` ([orders/service.go](../internal/modules/orders/service.go)), appelée par `ComputePricing`, le calcul de prix commun à la caisse, à la borne et au Scan&Order. À la date du constat, aucune copie du calcul n'a été trouvée côté applications Flutter (recherche de `discounted_quantity` / `discountedQuantity`) : la correction se fait à un seul endroit. Les tests existants sont dans [orders/discounts_pricing_test.go](../internal/modules/orders/discounts_pricing_test.go).
 
 ---

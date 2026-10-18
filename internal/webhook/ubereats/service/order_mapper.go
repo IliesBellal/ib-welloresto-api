@@ -10,12 +10,16 @@ import (
 	ueModels "welloresto-api/internal/webhook/ubereats/models"
 )
 
-// knownUberFulfillmentTypes are the order.type values Uber Eats is known to
-// send for a self-delivery (BYOC) order. Anything else is passed through
-// as-is (courier-delivered order, or a future Uber value we haven't mapped
-// yet) but logged, so a drift doesn't silently break the delivery_sessions
-// pool filter (which matches on FulfillmentTypeRestaurant).
-const knownUberFulfillmentTypeRestaurant = "DELIVERY_BY_RESTAURANT"
+// Uber Eats order.type values we know about. DELIVERY_BY_RESTAURANT is a
+// self-delivery (BYOC) order and is mapped to FulfillmentTypeRestaurant;
+// DELIVERY_BY_UBER is a courier-delivered order and is passed through as-is
+// (it never enters the delivery_sessions pool, which matches on
+// FulfillmentTypeRestaurant). Any other value is passed through too but
+// logged, so a drift doesn't silently break that pool filter.
+const (
+	knownUberFulfillmentTypeRestaurant = "DELIVERY_BY_RESTAURANT"
+	knownUberFulfillmentTypeUber       = "DELIVERY_BY_UBER"
+)
 
 func MapUberOrderToRequest(
 	ctx context.Context,
@@ -25,7 +29,7 @@ func MapUberOrderToRequest(
 	fulfillmentType := order.Type
 	if fulfillmentType == knownUberFulfillmentTypeRestaurant {
 		fulfillmentType = models.FulfillmentTypeRestaurant
-	} else if fulfillmentType != "" {
+	} else if fulfillmentType != "" && fulfillmentType != knownUberFulfillmentTypeUber {
 		logger.FromContext(ctx).Warn("Uber Eats order.type not recognized as a known fulfillment type: " + fulfillmentType)
 	}
 
