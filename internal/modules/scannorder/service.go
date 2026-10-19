@@ -138,9 +138,7 @@ func (s *Service) computeGetMerchant(ctx context.Context, qr string) (*MerchantR
 
 	// Expiration QR (2h)
 	if row.CreationDate != nil {
-		creationTime := time.Unix(*row.CreationDate, 0)
-
-		if time.Since(creationTime) > 2*time.Hour {
+		if time.Since(*row.CreationDate) > 2*time.Hour {
 			return &MerchantResponse{
 				Status: "qr_code_expired",
 			}, nil
@@ -208,6 +206,17 @@ func (s *Service) computeGetMerchant(ctx context.Context, qr string) (*MerchantR
 		DeliveryFeesLimit: row.DeliveryFeesLimit,
 	}
 	resp.Merchant.MinimumOrderAmount = row.MinimumCartForDeliveryOrder
+
+	// Horaires de livraison : un échec de lecture ne doit pas empêcher
+	// d'afficher la carte ; CreateOrderSNO refait le contrôle de toute façon.
+	resp.Merchant.DeliveryOpenNow = true
+	if deliveryHours, err := s.repo.GetDeliveryHours(ctx, row.MerchantID); err != nil {
+		logger.FromContext(ctx).Warn("GetDeliveryHours failed", zap.Error(err))
+	} else {
+		resp.Merchant.DeliveryHours = weeklyDeliveryHours(deliveryHours)
+		now := time.Now().In(helpers.MerchantLocation(ctx, row.Timezone))
+		resp.Merchant.DeliveryOpenNow = isDeliveryOpenAt(deliveryHours, now)
+	}
 
 	resp.Merchant.QRCode.MenuOnly = row.MenuOnly
 	resp.Merchant.QRCode.UserID = row.UserID
@@ -1144,6 +1153,18 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest
 		*/
 
 	case "DELIVERY":
+		// Horaires de livraison (delivery_hours) : propres à ScanNOrder, le POS
+		// et les autres canaux ne les appliquent pas (cf. delivery_hours.go).
+		deliveryHours, err := s.repo.GetDeliveryHours(ctx, merchant.MerchantID)
+		if err != nil {
+			log.Error("GetDeliveryHours", zap.Error(err))
+			return models.CreateOrderResult{Status: "error_005"}, err
+		}
+		now := time.Now().In(helpers.MerchantLocation(ctx, merchant.Timezone))
+		if !isDeliveryOpenAt(deliveryHours, deliveryRequestedAt(order, now)) {
+			return models.CreateOrderResult{Status: StatusDeliveryClosed}, nil
+		}
+
 		zone_result := s.CustomerInDeliveryZone(*merchant, *order.Customer)
 		if !zone_result.InZone {
 			return models.CreateOrderResult{Status: "address_too_far",

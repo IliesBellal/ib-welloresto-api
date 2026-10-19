@@ -66,6 +66,14 @@ type MerchantData struct {
 	PaymentTypes         PaymentTypes `json:"payment_types"`
 	AdvanceOrdersEnabled bool         `json:"advance_orders_enabled"`
 
+	// DeliveryHours : créneaux de livraison par jour (delivery_hours), absent
+	// quand aucun n'est configuré (livraison sur les horaires d'ouverture).
+	DeliveryHours []OpenHoursDay `json:"delivery_hours,omitempty"`
+	// DeliveryOpenNow : l'heure actuelle tombe dans un créneau de livraison
+	// (true sans créneau configuré). Ne tient pas compte de l'ouverture
+	// (status.is_open), à combiner côté front.
+	DeliveryOpenNow bool `json:"delivery_open_now"`
+
 	QRCode struct {
 		LocationID     *string `json:"location_id"`
 		LocationName   *string `json:"location_name"`

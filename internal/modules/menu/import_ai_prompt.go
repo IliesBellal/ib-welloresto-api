@@ -70,6 +70,13 @@ Nature du produit (kind), qui sert à proposer la TVA :
 - alcohol : toute boisson contenant de l'alcool (bière, vin, cidre, cocktail, spiritueux) ;
 - other : impossible à déterminer.
 
+Couleur (color_groups, color_group_ref) :
+- Le logiciel de caisse affiche chaque produit sur une tuile colorée, pour qu'une équipe en service repère les familles d'un coup d'œil. Le but est une couleur par famille de produits, pas une couleur par recette.
+- Définis dans color_groups les familles utiles à cette carte, par exemple : « Viande rouge », « Volaille », « Poisson et fruits de mer », « Végétarien », « Pizza », « Dessert », « Boisson ». Adapte les noms à la carte (une carte sans dessert n'a pas cette famille), mais n'en crée jamais plus de 5 à 7 pour l'ensemble de la carte, même répartie sur plusieurs photos.
+- Rattache chaque produit à une famille par color_group_ref. Deux produits de la même famille partagent la même famille même si leurs recettes diffèrent : deux burgers tous deux à base de bœuf sont « Viande rouge », même si l'un a du bacon et l'autre non. La famille porte sur l'ingrédient ou le type dominant, pas sur la garniture ni la présentation.
+- Écris le nom d'une famille à l'identique (mêmes mots, même casse) sur chaque photo où elle revient : c'est ce qui permet de lui garder la même couleur sur toute la carte.
+- color_group_ref vaut null quand le produit n'entre dans aucune famille retenue (par exemple un frais de service, ou un produit trop isolé pour créer une famille à lui seul).
+
 Ingrédients (ingredients) — seulement si le message de la photo les demande ; sinon ingredients est une liste vide pour chaque produit :
 - Reprends uniquement les ingrédients écrits dans la description du produit sur la carte. N'en déduis aucun du nom du produit ni de la recette habituelle : une « Margherita » sans description n'a aucun ingrédient.
 - Un ingrédient par élément cité, au singulier, première lettre en majuscule, sans quantité, sans mode de préparation ni adjectif de présentation : « tomates fraîches confites » → « Tomate » ; « 2 œufs bio » → « Œuf » ; « crème fraîche » reste « Crème fraîche ». Écris le même ingrédient de la même façon dans tous les produits.
@@ -82,7 +89,7 @@ Qualité :
 - issues : les problèmes précis de la ligne (« prix partiellement masqué », « nom coupé »), sinon une liste vide.
 - warnings : les problèmes de la photo elle-même (floue, reflet, carte coupée, photo sans carte), sinon une liste vide.
 
-Identifiants : ref est un identifiant court, unique dans ta réponse (c1, g1, p1, o1…), qui ne sert qu'aux rattachements internes.`
+Identifiants : ref est un identifiant court, unique dans ta réponse (c1, g1, k1, p1, o1…), qui ne sert qu'aux rattachements internes.`
 
 // menuOCRUserPrompt accompagne chaque photo. La demande d'ingrédients y
 // figure, et non dans la consigne système, pour que celle-ci reste identique

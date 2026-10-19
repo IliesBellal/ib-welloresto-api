@@ -103,21 +103,6 @@ const (
 	CodeSMS              = "sms"
 )
 
-// ValidCodes is the closed set subscription_items.code must belong to.
-var ValidCodes = map[string]bool{
-	CodeEssentiel:        true,
-	CodePro:              true,
-	CodeComplet:          true,
-	CodeReservation:      true,
-	CodeHACCP:            true,
-	CodePlanning:         true,
-	CodePlanningEmployee: true,
-	CodeMarketplaces:     true,
-	CodeDelivery:         true,
-	CodeExtraPOS:         true,
-	CodeKiosk:            true,
-	CodeSMS:              true,
-}
 
 // Item is one row of subscription_items — a billed line, distinct from
 // subscriptions.*_enabled (access). See package doc comment in

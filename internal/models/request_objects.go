@@ -269,7 +269,7 @@ type MerchantRow struct {
 	OrderID                     *string
 	LocationID                  *string
 	LocationName                *string
-	CreationDate                *int64
+	CreationDate                *time.Time
 	VariableFees                *float64
 	FixedFees                   *int
 	AccountID                   *string

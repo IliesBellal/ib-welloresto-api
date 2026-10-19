@@ -516,6 +516,10 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 	if row := payments["CB"]; row.Total != 2300 {
 		t.Fatalf("by_payment CB = %d, want 2300 (doublon labels ne doit pas gonfler le SUM)", row.Total)
 	}
+	// Deux encaissements CB : le remboursement n'est pas compté.
+	if row := payments["CB"]; row.PaymentsCount != 2 {
+		t.Fatalf("by_payment CB payments_count = %d, want 2 (remboursement exclu)", row.PaymentsCount)
+	}
 	if row := payments["CB"]; row.Label != "itest-lbl-cb-dup" {
 		t.Fatalf("label CB = %q, want itest-lbl-cb-dup (dernière ligne insérée)", row.Label)
 	}

@@ -1101,6 +1101,9 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			r.Post("/hours_of_operations", posH.CreateHourOfOperation)
 			r.Patch("/hours_of_operations/{hour_id}", posH.UpdateHourOfOperation)
 			r.Delete("/hours_of_operations/{hour_id}", posH.DeleteHourOfOperation)
+			// Horaires de livraison ScanNOrder (module scannorder, ignorés par le POS).
+			r.Get("/delivery_hours", scannHandler.GetDeliveryHours)
+			r.With(middleware.RequirePermission(permission.SettingsManage)).Put("/delivery_hours", scannHandler.ReplaceDeliveryHours)
 
 			r.Patch("/scannorder", posH.ToggleScanNOrder)
 			r.Patch("/production_paid_only", posH.ToggleProductionPaidOnly)

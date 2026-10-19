@@ -95,24 +95,21 @@ func (s *Service) ResolveStripeLineItems(ctx context.Context, merchantID string)
 				quantity = 0
 			}
 
-		case CodeEssentiel, CodePro, CodeComplet:
-			plan, ok := catalog.Plans[it.Code]
-			if !ok || plan.StripePriceID == "" {
-				return nil, models.ErrStripeCatalogPriceMissing
-			}
-			priceID = plan.StripePriceID
-
-		case CodeReservation, CodeHACCP, CodePlanning, CodeMarketplaces, CodeDelivery:
-			mod, ok := catalog.Modules[it.Code]
-			if !ok || mod.StripePriceID == "" {
-				return nil, models.ErrStripeCatalogPriceMissing
-			}
-			priceID = mod.StripePriceID
-
 		default:
-			// CodeKiosk, CodeSMS — never resolvable, same as the cents-price
-			// switch in computeAmount.
-			return nil, models.ErrStripeCatalogPriceMissing
+			// Generic plan/module lookup — mirrors resolveUnitPriceCents in
+			// amount.go: any pricing_catalog row under kind='plan' or
+			// kind='module' resolves here with no Go change, as long as it
+			// also carries a real stripe_price_id (cmd/ensure_stripe_prices).
+			// CodeKiosk, CodeSMS, and anything else absent from the catalog
+			// (or present but still missing its Stripe Price) fall through
+			// to the error.
+			if plan, ok := catalog.Plans[it.Code]; ok && plan.StripePriceID != "" {
+				priceID = plan.StripePriceID
+			} else if mod, ok := catalog.Modules[it.Code]; ok && mod.StripePriceID != "" {
+				priceID = mod.StripePriceID
+			} else {
+				return nil, models.ErrStripeCatalogPriceMissing
+			}
 		}
 
 		// A quantity-0 metered line (e.g. no extra POS beyond the first)

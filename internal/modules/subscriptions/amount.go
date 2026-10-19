@@ -109,9 +109,19 @@ func NewService(db *sql.DB, repo *Repository, pricingRepo *pricing.Repository, p
 // place every caller that needs to know "does this code have a real price,
 // and what is it" goes through: ComputeSubscriptionAmount's per-item loop,
 // AddItem's write-time guard (P3), and preview.go's simulation and
-// ApplyItemChanges (B1e). kiosk/sms (and anything outside ValidCodes) always
-// resolve ok=false — see models.ErrSubscriptionItemPriceUnavailable's doc
-// comment for why.
+// ApplyItemChanges (B1e).
+//
+// planning_employee/extra_pos are the only two hardcoded cases — they're
+// metered (rule 3), billed under a different underlying catalog entry
+// (planning's per-employee rate, extra_seat's addon) than their own code
+// name, so there's no pricing_catalog row named "planning_employee" or
+// "extra_pos" to look up directly. Every other code is resolved generically
+// by looking it up in catalog.Plans then catalog.Modules — so a new
+// negotiated plan/module variant (e.g. a discounted "essentiel-xxx" row
+// added to pricing_catalog with kind='plan') becomes billable the moment
+// it's added to the catalog, with no Go code change. kiosk/sms (and any
+// other code pricing_catalog has no row for) fall through to ok=false — see
+// models.ErrSubscriptionItemPriceUnavailable's doc comment for why.
 func resolveUnitPriceCents(catalog *pricing.Catalog, code string) (cents int, ok bool) {
 	switch code {
 	case CodePlanningEmployee:
@@ -126,21 +136,14 @@ func resolveUnitPriceCents(catalog *pricing.Catalog, code string) (cents int, ok
 			return 0, false
 		}
 		return addon.MonthlyPriceCents, true
-	case CodeEssentiel, CodePro, CodeComplet:
-		plan, ok := catalog.Plans[code]
-		if !ok {
-			return 0, false
-		}
-		return plan.MonthlyPriceCents, true
-	case CodeReservation, CodeHACCP, CodePlanning, CodeMarketplaces, CodeDelivery:
-		mod, ok := catalog.Modules[code]
-		if !ok {
-			return 0, false
-		}
-		return mod.MonthlyPriceCents, true
-	default:
-		return 0, false
 	}
+	if plan, ok := catalog.Plans[code]; ok {
+		return plan.MonthlyPriceCents, true
+	}
+	if mod, ok := catalog.Modules[code]; ok {
+		return mod.MonthlyPriceCents, true
+	}
+	return 0, false
 }
 
 // PriceAvailableForCode reports whether pricing_catalog currently has a
@@ -155,13 +158,11 @@ func PriceAvailableForCode(catalog *pricing.Catalog, code string) bool {
 // writing (LOT B PRÉALABLE P3): a subscription_items row must never exist
 // for a code the catalog can't yet price, or ComputeSubscriptionAmount would
 // immediately fail to read it back. Repository.AddItem itself stays
-// unguarded (kind/code shape validation only) — it is exercised directly by
+// unguarded (kind shape validation only, plus its own pricing_catalog
+// existence check — see its doc comment) — it is exercised directly by
 // TestRepository_Postgres against always-priced codes, and is not itself a
 // reachable HTTP path.
 func (s *Service) AddItem(ctx context.Context, merchantID, code, kind string, quantity, unitPriceCents int) (Item, error) {
-	if !ValidCodes[code] {
-		return Item{}, models.ErrInvalidSubscriptionItemCode
-	}
 	catalog, err := s.pricingRepo.LoadCatalog(ctx)
 	if err != nil {
 		return Item{}, err
@@ -258,25 +259,22 @@ func (s *Service) computeAmount(ctx context.Context, merchantID string, items []
 				quantity = 0
 			}
 
-		case CodeEssentiel, CodePro, CodeComplet:
-			plan, ok := catalog.Plans[it.Code]
-			if !ok {
-				return Amount{}, models.ErrSubscriptionItemPriceUnavailable
-			}
-			unitPriceCents = plan.MonthlyPriceCents
-
-		case CodeReservation, CodeHACCP, CodePlanning, CodeMarketplaces, CodeDelivery:
-			mod, ok := catalog.Modules[it.Code]
-			if !ok {
-				return Amount{}, models.ErrSubscriptionItemPriceUnavailable
-			}
-			unitPriceCents = mod.MonthlyPriceCents
-
 		default:
-			// CodeKiosk, CodeSMS — no usable pricing_catalog entry (kiosk
-			// is tiered across 3 addon codes, sms has no row at all). See
+			// Generic plan/module lookup — any code pricing_catalog carries
+			// under kind='plan' or kind='module' is billable here with no Go
+			// change, including a negotiated variant (e.g. a discounted
+			// "essentiel-xxx" row) added straight to the catalog. CodeKiosk,
+			// CodeSMS (no usable pricing_catalog entry — kiosk is tiered
+			// across 3 addon codes, sms has no row at all) and anything else
+			// absent from the catalog fall through to the error. See
 			// models.ErrSubscriptionItemPriceUnavailable's doc comment.
-			return Amount{}, models.ErrSubscriptionItemPriceUnavailable
+			if plan, ok := catalog.Plans[it.Code]; ok {
+				unitPriceCents = plan.MonthlyPriceCents
+			} else if mod, ok := catalog.Modules[it.Code]; ok {
+				unitPriceCents = mod.MonthlyPriceCents
+			} else {
+				return Amount{}, models.ErrSubscriptionItemPriceUnavailable
+			}
 		}
 
 		amountCents := quantity * unitPriceCents * cycleMultiplier

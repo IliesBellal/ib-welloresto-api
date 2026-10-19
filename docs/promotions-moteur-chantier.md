@@ -29,7 +29,12 @@ Principe de la mise en production (décision D4) : **un seul comportement, le bo
 | D10 | **Remises sur le total du panier (`ORDER_TOTAL`, plafonds `max_redemptions`) : hors du cœur du chantier**, documentées au § 7 et traitées plus tard dans la session. | Ilies | 2026-10-16 |
 | D11 | **Export de la production par requête SQL en lecture seule** exécutée par Ilies, résultat transmis, convertie en tests « golden » (§ 5). | Ilies | 2026-10-16 |
 | D12 | **Une unité que la promotion n'abaisse pas (D6) compte comme « achetée » mais n'est jamais remisée.** Elle reste à son prix, compte pour le minimum en quantité et pour les groupes, et ne consomme pas la quantité remisée. Exemple « 3 achetés, le 4ᵉ à 5 € » avec des articles à 4, 5, 6 et 7 € : les quatre comptent pour le minimum, seul celui à 6 € passe à 5 € (le moins touché parmi ceux que la promotion abaisse). *Remplace la version du 2026-10-17, qui excluait ces unités du minimum et aurait privé le client d'une offre méritée.* | Ilies | 2026-10-18 |
-| D13 | **Une unité déjà remisée par une promotion précédente ne compte ni pour le minimum, ni pour les groupes de la promotion suivante** (Q2, pratique usuelle des moteurs de promotions : une unité « consommée » par une offre ne sert pas de seuil à une autre). **Proposée, en attente de confirmation explicite.** Aucun effet sur la production actuelle (§ 10) : les seules promotions qui se chevauchent sont toutes non cumulables, donc la première appliquée bloque les suivantes. | proposée | 2026-10-17 |
+| D13 | **Une unité déjà remisée par une promotion précédente ne compte ni pour le minimum, ni pour les groupes de la promotion suivante** (Q2, pratique usuelle des moteurs de promotions : une unité « consommée » par une offre ne sert pas de seuil à une autre). **Confirmée par Ilies le 2026-10-18.** Aucun effet sur la production actuelle (§ 10) : les seules promotions qui se chevauchent sont toutes non cumulables, donc la première appliquée bloque les suivantes. | proposée 2026-10-17, confirmée par Ilies | 2026-10-18 |
+| D19 | **Commande ouverte modifiée (ajout d'articles) : recalcul sur toute la commande, sans geler les lignes déjà enregistrées ou payées** (recommandation, **à confirmer par Ilies**). Le total est celui que donnerait la même commande passée en une fois ; la ligne qui porte la remise peut changer d'une saisie à l'autre. Garantie à vérifier par test en phase 1 : un ajout en deux temps donne le même total qu'en un seul (indépendance à l'ordre d'ajout). Limite connue et inchangée : atteindre un seuil (minimum, groupe complet) peut faire baisser le prix de lignes déjà enregistrées, y compris le total (prix fixe 5 €, minimum 2 : 10 € devient 7 € avec un article à 2 €), comme aujourd'hui. Justification au § 13.3. | proposée, **confirmée par Ilies** | 2026-10-18 |
+| D20 | **Principe : le pricing et la prise de commande ne sont jamais empêchés par une promotion** ; mieux vaut rater une promotion que bloquer une commande. Garde-fous G1 (chargement dégradé), G2 (isolation des paniques), G3 (contrôle de cohérence) et G5 (surface minimale) du § 14. | Ilies (principe) ; garde-fous proposés | 2026-10-18 |
+| D21 | **Pas d'interrupteur d'ancien moteur** (G4 écarté) : le nouveau calcul remplace directement l'ancien, sans mode `shadow`. Retour arrière = redéploiement du code. L'ancien calcul est conservé **uniquement dans un fichier de test**, comme oracle du test différentiel (§ 14.3). | Ilies | 2026-10-18 |
+| D22 | **Deux livraisons** : promotions produit d'abord, récompenses de fidélité (D14) ensuite (G6). | Ilies | 2026-10-18 |
+| D23 | **Chargement dégradé confirmé (G1)** : si les promotions ou les récompenses ne se chargent pas, le pricing continue sans promotion, au prix du catalogue, avec une erreur dans les journaux. | Ilies | 2026-10-18 |
 | D14 | **La règle « unité la moins chère » s'applique aussi aux récompenses de fidélité `free_product`** (P5, Q3). À faire dans le même chantier, après le cœur du moteur de promotions. | Ilies (« Oui ») | 2026-10-17 |
 | D15 | **Arrondi du pourcentage (entier tronqué sur le prix unitaire) et plafond par unité : conservés** (Q4). | Ilies (« Oui ») | 2026-10-17 |
 | D16 | **Aucun recalcul de promotion côté applications** (caisse, borne, Scan&Order) : le calcul reste uniquement dans `ComputePricing` (Q5). | Ilies (« Non ») | 2026-10-17 |
@@ -131,7 +136,9 @@ L'export (colonne `flag_portee_panier`) dit s'il en existe en production. À tra
 
 ## 10. Promotions en production (export du 2026-10-17)
 
-Résultats des requêtes A à E reçus. **B et C sont tronquées** (promotion 9 : 25 produits sur 34 et 5 contraintes d'options sur 34 ; promotion 10 : absente des deux) : la section G de [diagnostic-promotions-prod.sql](diagnostic-promotions-prod.sql) les relance pour ces deux promotions, et la section F répond à Q6.
+Résultats des requêtes A à E reçus le 2026-10-17. B et C étaient tronquées pour les promotions 9 et 10 ; la section G (reçue le 2026-10-18) les complète. **La section F, qui répond à Q6, ne renvoie aucune ligne** : en 180 jours, aucune ligne de commande n'a été facturée avec une promotion sur une formule ou sur un prix fixe supérieur ou égal au prix du catalogue. Le comportement « la formule à 0 € passe à 6 € » **n'a donc jamais joué en production sur cette période**, et D18 ne coûte rien à ce jour aux commerçants concernés (il reste à prévenir par prudence).
+
+Apport de G : les promotions 9 et 10 ciblent bien les 34 produits (31 produits à 8,00 €, un à 10,00 €, un à 11,00 €, la formule 1541 à 0 €). La promotion 9 a un prix d'option promotionnel de 2,00 € sur l'option 2176 (obligatoire) ; la promotion 10 est un prix fixe de 3,00 € avec l'option 2176 (obligatoire) à 0 €. La formule 1541 est donc aussi ciblée par un prix fixe de 3,00 € (hausse de 0 à 3 €, comme pour les promotions 5 à 7).
 
 ### 10.1 Vue d'ensemble
 
@@ -177,24 +184,27 @@ Cas particuliers imposés par l'export :
 
 | | Élément | État |
 |---|---|---|
-| ✔ | Règle cible et décisions D1 à D17 | Figées (D13 à confirmer) |
+| ✔ | Règle cible et décisions D1 à D18 | Figées (D13 confirmée le 2026-10-18) ; D19 (commande ouverte) proposée |
 | ✔ | Export de production A à E | Reçu et analysé (§ 10) |
 | ✔ | Base de tests actuelle verte (`orders`, `kiosk`, `scannorder`, `discounts`, `menu/importer`) | Vérifiée le 2026-10-17 |
-| ☐ | Export complet des promotions 9 et 10 (section G) | **À fournir** |
-| ☐ | Prix réellement facturés sur les formules (section F) | **À fournir** |
-| ✔ | Q6 : formule à 0 € et prix fixe | Tranchée (D18) ; reste à mesurer l'impact avec la requête F et à prévenir les 2 commerçants |
-| ☐ | D13 : confirmation explicite | À confirmer |
-| ☐ | Relecture cas par cas des tests existants qui figent l'ancien comportement (`discounts_pricing_test.go`, `discount_options_test.go`, listes borne et Scan&Order) | À faire en phase 0 |
+| ✔ | Export complet des promotions 9 et 10 (section G) | Reçu le 2026-10-18 (§ 10) |
+| ✔ | Prix réellement facturés sur les formules (section F) | Reçue le 2026-10-18 : **aucune ligne** en 180 jours, le cas n'a jamais joué en production |
+| ✔ | Q6 : formule à 0 € et prix fixe | Tranchée (D18) ; impact mesuré nul ; prévenir quand même les commerçants |
+| ✔ | D13 | Confirmée par Ilies le 2026-10-18 |
+| ✔ | Phase 0 : tests de caractérisation | **Écrits et verts le 2026-10-18** (§ 13) : 27 cas du moteur, 15 cas de créneaux, 5 cas de bout en bout sur Postgres |
+| ☐ | Relecture cas par cas des tests existants qui figent l'ancien comportement (`discounts_pricing_test.go`, `discount_options_test.go`) | À faire au moment de la correction du moteur (phase 1) |
 | ☐ | Vérification des remises de commande sur Stripe Checkout et terminal (§ 12) | Second temps, test de vérification à écrire |
 | ✔ | Listes de promotions de la borne et du Scan&Order | Vérifiées le 2026-10-18 : elles ne font que badger les produits ciblés (`promoProducts`, kiosk/service.go), sans règle de quantité ni de minimum ; le nouveau calcul ne les contredit pas |
 | ✔ | Recalcul côté applications (D16) | Confirmé dans le code : la caisse Flutter n'utilise que `discountedPrice` renvoyé par `/orders/pricing` (estimation locale du total avant réponse, sans règle de promotion). Le serveur enregistre tel quel les prix et le total envoyés par la caisse |
 | ✔ | Migration de base de données | Aucune : D4 exclut une colonne « mode de calcul », le correctif est uniquement dans le code |
-| ☐ | **Commande ouverte modifiée (ajout d'articles) sur la caisse** | À vérifier en phase 0 : si le prix est recalculé sur tout le panier, choisir « l'article le moins cher » peut déplacer la remise d'une ligne déjà enregistrée ou payée vers une nouvelle. Lire comment la caisse appelle `/orders/pricing` pour une commande existante et écrire le test |
-| ☐ | Uber Eats, Deliveroo | Non concernés d'après le mapper (ils portent leurs propres promotions, `SubTotalPromoApplied`) : à ne pas modifier, à confirmer en relisant leur appel |
-| ☐ | Moment du déploiement | Hors des créneaux de la promotion 3 (lundi au samedi 10:45–14:00, la plus utilisée) et des autres créneaux actifs ; ré-export de la production juste avant, pour voir les promotions créées ou activées entre-temps |
-| ☐ | Message aux commerçants | Trois commerçants seulement : formule à 0 € (promotions 3 et 5 à 7), changement de l'article remisé (toutes), date incohérente de la promotion 92 |
+| ✔ | **Commande ouverte modifiée (ajout d'articles) sur la caisse** | D19 confirmée par Ilies ; la garantie « total indépendant de l'ordre » est couverte par `TestEngine_Properties_OrderIndependence` et `TestEngine_DisjointPromotions_TotalIndependentOfCartOrder` (§ 15.3) |
+| ✔ | Phase 1 : moteur corrigé, garde-fous G1 à G3, tests différentiel et propriétés | Faite le 2026-10-18 (§ 15), non commitée |
+| ✔ | Uber Eats, Deliveroo | Validé par Ilies le 2026-10-18 : non concernés, à ne pas modifier |
+| ✔ | Moment du déploiement | Validé par Ilies le 2026-10-18 : hors des créneaux de la promotion 3 (lundi au samedi 10:45–14:00, la plus utilisée) et des autres créneaux actifs ; ré-export de la production juste avant |
+| ✔ | Message aux commerçants | Validé par Ilies le 2026-10-18 : trois commerçants ; l'article remisé change (toutes), formule à 0 € (promotions 3 et 5 à 7, sans effet observé), date incohérente de la promotion 92 |
+| ✔ | Après le moteur : retrait de la note « N-ième offert », revue du retrait des produits non abaissés par l'import, récompenses de fidélité (D14) | Validé par Ilies le 2026-10-18 |
 
-La phase 0 (tests de caractérisation, aucun changement du moteur) peut démarrer dès maintenant : Q6 n'est plus bloquante. Les exports F et G sont nécessaires pour compléter les cas de la promotion 10 et mesurer l'impact sur les formules, pas pour écrire les tests des autres promotions.
+Les phases 0 (§ 13) et 1 (§ 15) sont faites ; D19 confirmée. Restent la phase 3 (ré-export de la production, avertissement des commerçants, déploiement hors créneaux, § 15.4) puis la seconde livraison (récompenses, D22).
 
 ## 12. Second temps : remises au niveau de la commande et paiement (D17)
 
@@ -204,8 +214,135 @@ Exemple visé : 5 € offerts sur la 10ᵉ commande. Vérifications faites dans 
 - **Une remise de commande n'est pas une remise d'article.** Les récompenses `fixed_discount` et `percent_discount` sont calculées par `applyRewards` comme un **paiement `REWARD`** ajouté à `Order.Payments`, sans toucher aux prix des lignes ni au TTC. Or Scan&Order ([scannorder/service.go:1252](../internal/modules/scannorder/service.go)) et la borne ([kiosk/service.go:1950](../internal/modules/kiosk/service.go)) **vident la liste des paiements après le calcul de prix**, et les lignes de Stripe Checkout ne contiennent que les articles. Par lecture du code, une telle remise **n'est pas déduite du montant encaissé** sur ces canaux, alors que `UsedRewards` semble consommer la récompense (`consumeUsedRewards`, order_life_cycle). À reproduire par un test avant d'agir.
 - **Piste de conception** (à décider à ce moment-là) : répartir la remise de commande au prorata sur les lignes (comme les caisses du commerce, ce qui garde cohérents TVA, total, lignes Stripe et montant du terminal) plutôt que l'ajouter comme un paiement. Cela touche aussi la chaîne fiscale et les exports comptables ([TVA_FIGEE_LIGNES_COMMANDE.md](TVA_FIGEE_LIGNES_COMMANDE.md)) : chantier à part entière, avec les remises `ORDER_TOTAL` (§ 7).
 
-## 13. Journal
+## 13. Phase 0 : tests de caractérisation (2026-10-18)
+
+### 13.1 Ce qui a été écrit
+
+Aucun code applicatif n'est modifié. Trois fichiers de tests, plus la correction d'un test existant.
+
+| Fichier | Contenu | Exécution |
+|---|---|---|
+| [orders/discounts_prod_golden_test.go](../internal/modules/orders/discounts_prod_golden_test.go) | **27 cas** sur les promotions réelles (3, 4 et l'échelle du lundi 8, 10, 9 ainsi que 5, 6, 7), avec les prix du catalogue de l'export, les options obligatoires et les prix d'option promotionnels. Chaque cas fige le résultat du moteur **actuel** ; **8 cas** portent en plus le résultat attendu après correction (`target`), calculé à la main d'après la règle du § 3. | `go test ./internal/modules/orders/`, sans base |
+| [orders/discounts_prod_postgres_integration_test.go](../internal/modules/orders/discounts_prod_postgres_integration_test.go) | **15 cas de créneaux** aux bornes réelles (début inclus, fin exclue, minuit, jours, promotion 92 aux dates inversées jamais active, promotion sans créneau toujours active) et **5 cas de calcul complet** de la promotion 3 par `ComputePricing` sur un vrai Postgres. | `POSTGRES_URL=… go test -tags postgres_integration -run ProdPromotions ./internal/modules/orders/` |
+| [orders/discounts_postgres_integration_test.go](../internal/modules/orders/discounts_postgres_integration_test.go) | **Correction d'un test existant** : `TestDiscountTimeRestriction_Postgres` fixait la date « 2026-09-21 » alors que ses promotions valent à partir d'hier ; dès la fin septembre aucune n'était plus active et le test échouait sur staging. Il utilise maintenant la date du jour. | idem |
+
+Résultat : tout est vert sur staging (le moteur actuel), ainsi que les packages `orders`, `kiosk`, `scannorder`, `discounts` et `menu/importer`.
+
+### 13.2 Comment s'en servir le jour de la correction
+
+La constante `goldenTargetEngine` (discounts_prod_golden_test.go) vaut `false`. Quand le moteur est corrigé, on la passe à `true` :
+- les 19 cas sans `target` doivent rester **identiques** ;
+- les 8 cas avec `target` doivent donner exactement la valeur cible ;
+- toute autre différence est un bug.
+
+Un second test (`TestProdPromotionsGolden_TargetDefinedForEveryChange`) garantit qu'un cas ne change jamais sans que sa valeur cible et ses remises appliquées soient renseignées. Le test de bout en bout de la promotion 3 suit la même constante. Les valeurs cibles n'ont **pas** été exécutées : elles sont calculées à la main et seront vérifiées par le moteur corrigé.
+
+Les 8 cas qui changent : promotion 3 avec les prix du plus cher au moins cher, promotion 3 avec une formule à 0 €, promotion 4 avec trois articles, lundi avec deux articles de prix différents, lundi avec un article à 11 € en premier, lundi avec la formule en premier, mercredi avec deux articles de prix différents, mercredi avec la formule.
+
+### 13.3 Commande ouverte modifiée : recommandation (D19)
+
+Constats dans le code (2026-10-18) :
+- `buildSelectedProducts` **recompose la commande de zéro** à chaque appel : `DiscountID` et `DiscountedPrice` des lignes reçues sont ignorés, l'identifiant de ligne n'est pas recopié. La caisse envoie sa commande entière à `/orders/pricing`, et le serveur enregistre telles quelles les lignes et le total qu'elle renvoie.
+- Avec le moteur actuel, ajouter un article **à la fin** du panier ne déplace jamais une remise (« les premiers du panier »). Avec la règle cible, ajouter un article moins cher peut la déplacer vers lui. C'est le seul changement de comportement dû à la correction.
+
+Recommandation : **ne pas geler** les lignes déjà enregistrées ou payées.
+1. Geler obligerait la caisse à renvoyer les remises déjà accordées et le serveur à les respecter ; cela rendrait le total dépendant de l'ordre dans lequel le client commande, ce que D1 vise justement à supprimer.
+2. Ce qui compte pour le client est le **total** de la commande, pas la ligne qui porte la remise. Avec la règle cible, le total d'un ajout en deux temps est le même qu'en un seul ; avec le moteur actuel il ne l'est pas.
+3. Le cas où atteindre un seuil fait baisser le prix de lignes déjà enregistrées existe déjà aujourd'hui (4ᵉ article qui rend le 1ᵉʳ gratuit) et n'est pas aggravé.
+
+À écrire en phase 1 : test « ajout en deux temps = même total qu'en un seul » sur chaque forme de promotion.
+
+**Observation de même nature, antérieure au chantier (P9)** : puisque le calcul repart de zéro, modifier une commande ouverte **après la fin d'un créneau** retire la promotion de toutes ses lignes (promotion 3 à 14:01, par exemple), et utilise les prix du catalogue du moment. Non traité ici ; à signaler à Ilies pour la suite.
+
+## 14. Garde-fous de mise en production (principe : mieux vaut rater une promotion que bloquer une commande)
+
+Principe posé par Ilies le 2026-10-18 : **le pricing et la prise de commande ne doivent jamais être empêchés par une promotion**. Une promotion ratée coûte une remise ; un pricing en erreur coûte une commande.
+
+### 14.1 Risques constatés dans le code actuel (indépendants de la correction)
+
+- `loadDiscountStructures` ([orders/service.go](../internal/modules/orders/service.go), appelée par `ComputePricing`) **renvoie l'erreur** si l'une des trois requêtes de promotions échoue : tout le pricing échoue, donc plus de prise de commande sur la caisse, la borne et le Scan&Order. Même chose pour `GetRewards`.
+- Aucune protection contre une **panique** dans `applyDiscounts` : elle remonte jusqu'à la requête HTTP.
+
+### 14.2 Garde-fous proposés
+
+| # | Garde-fou | Effet |
+|---|---|---|
+| G1 | **Chargement dégradé** : si les promotions (ou les récompenses) ne se chargent pas, on journalise l'erreur (déjà fait par `logPricingStageError`) et le pricing continue **sans promotion**, au prix du catalogue. | Une panne de la table des promotions ne bloque plus les commandes. |
+| G2 | **Isolation des paniques** : l'application des promotions est enveloppée par une récupération de panique ; en cas de panique, journal d'erreur, toutes les remises sont annulées, le prix du catalogue s'applique. | Un défaut du nouveau calcul ne peut pas faire tomber une requête. |
+| G3 | **Contrôle de cohérence du résultat** : après calcul, vérifier que chaque unité a un prix remisé compris entre 0 et son prix de base (jamais une hausse), que le nombre d'unités remisées ne dépasse pas le nombre d'unités, et que les prix d'option promotionnels sont positifs ou nuls. Si un contrôle échoue : journal d'erreur, remises annulées. | Un résultat absurde n'arrive jamais jusqu'à Stripe ni au ticket. |
+| ~~G4~~ | ~~Interrupteur `PROMO_ENGINE_MODE` (`legacy` / `shadow` / `new`)~~ — **écarté par Ilies le 2026-10-18 (D21)**. | Le filet repose donc sur G1 à G3, les tests différentiels et le déploiement hors créneaux. |
+| G5 | **Le nouveau calcul n'ajoute aucune requête SQL ni signature publique** : il remplace uniquement l'intérieur d'`applyDiscounts` ; aucune migration. | Surface de changement minimale. |
+| G6 | **Deux livraisons** : la première ne touche que les promotions produit ; les récompenses de fidélité (D14) viennent dans une seconde livraison séparée. | Un seul comportement change à la fois. |
+
+L'ancien calcul n'est pas conservé dans le code de production. Il vit dans un fichier de test (`discounts_legacy_oracle_test.go`) qui sert d'oracle au test différentiel.
+
+### 14.3 Tests supplémentaires prévus en phase 1
+
+- **Test différentiel** : sur plusieurs milliers de paniers et de promotions tirés au hasard (graine fixe), pour toutes les formes (pourcentage, montant, prix fixe, cumulable ou non, quantité remisée, minimum en quantité ou en euros, options), **quand le choix de l'unité n'a pas d'importance** (toutes les unités éligibles ont le même prix de base), le nouveau calcul doit donner **exactement** le résultat de l'ancien. Toute différence est une régression.
+- **Tests de propriétés** sur les mêmes tirages : aucune panique ; jamais de hausse de prix ; jamais de prix négatif ; nombre d'unités remisées ≤ `n` ; résultat identique quel que soit l'ordre du panier ; un second passage donne le même résultat.
+- **Tests des garde-fous** : panique simulée dans le calcul (G2), résultat incohérent injecté (G3), échec simulé du chargement des promotions et des récompenses (G1) → le pricing renvoie le prix du catalogue sans erreur.
+- **Cas golden** (§ 13) avec `goldenTargetEngine = true`.
+
+### 14.4 Déploiement
+
+1. Tests verts (golden avec `goldenTargetEngine = true`, différentiel, propriétés, garde-fous), suite complète et tests Postgres sur staging.
+2. Ré-export de la production, rejeu des cas golden sur les données fraîches, liste « ancien résultat / nouveau résultat » par commerçant.
+3. Avertissement des commerçants concernés.
+4. Déploiement **hors des créneaux** de la promotion 3 (lundi au samedi 10:45–14:00) et des autres créneaux actifs. Retour arrière = redéploiement de la version précédente (pas d'interrupteur, D21) ; les garde-fous G1 à G3 limitent l'impact d'un défaut à une promotion non appliquée, jamais à une commande bloquée.
+5. Surveillance des journaux « promotions annulées » (G2/G3) et « pricing dependency failed » (G1) après le déploiement.
+
+## 15. Phase 1 : moteur corrigé (2026-10-18)
+
+### 15.1 Ce qui a changé dans le code
+
+| Fichier | Changement |
+|---|---|
+| [orders/discounts_engine.go](../internal/modules/orders/discounts_engine.go) (nouveau) | `applyDiscounts` réécrit d'après le § 3, même signature ; `discountedUnitPrice` (calcul d'une unité, plafond, plancher à 0) ; `applyDiscountsSafe` (G2 : récupération de panique, G3 : contrôle de cohérence, annulation de toutes les remises et journal « promotions annulées, prix du catalogue appliqué ») ; `checkDiscountResult`. |
+| [orders/service.go](../internal/modules/orders/service.go) | L'ancien `applyDiscounts` est retiré. `ComputePricing` appelle `applyDiscountsSafe` et **continue sans promotion** si les promotions ou les récompenses ne se chargent pas (G1, D23). Aucune requête SQL ni migration. |
+| [orders/discounts_legacy_oracle_test.go](../internal/modules/orders/discounts_legacy_oracle_test.go) (nouveau, test) | Copie verbatim de l'ancien calcul, oracle du test différentiel. Hors production. |
+| [orders/discounts_engine_test.go](../internal/modules/orders/discounts_engine_test.go) (nouveau, test) | Règles une à une, différentiel, propriétés, garde-fous (§ 15.3). |
+| [orders/discounts_prod_golden_test.go](../internal/modules/orders/discounts_prod_golden_test.go) | `goldenTargetEngine = true`. |
+
+Comportements du nouveau calcul, tous décidés (D1 à D13) sauf le dernier :
+- l'unité remisée est la **plus petite remise** parmi celles que la promotion abaisse (ordre du panier en égalité) ;
+- une unité que la promotion n'abaisse pas **compte comme achetée** mais n'est jamais remisée ;
+- cumulable : `floor(unités éligibles / max(minimum, remisée)) × remisée` unités ; non cumulable : la quantité remisée une seule fois ;
+- une unité déjà remisée par une promotion précédente n'est plus disponible pour la suivante ;
+- **unité de remise inconnue** (ni `PERCENTAGE`, `CURRENCY` ni `NEWPRICE`) : la promotion est ignorée. L'ancien calcul rendait alors **tous les articles gratuits** (prix à 0) ; aucun cas en production dans l'export du 2026-10-17, mais le défaut est supprimé.
+
+### 15.2 Vérifications faites
+
+| Vérification | Résultat |
+|---|---|
+| Cas golden de production (27) avec `goldenTargetEngine = true` | Verts : les **19 cas inchangés** donnent le même résultat qu'avant, les **8 cas à valeur cible** donnent exactement la valeur calculée à la main avant le code |
+| Avant d'écrire le nouveau calcul, avec l'ancienne attente | Exactement les 8 mêmes cas échouaient, aucun autre : toute la suite existante (`TestApplyDiscounts` et les autres) passait déjà avec le nouveau moteur |
+| Test différentiel contre l'ancien calcul | **40 000** tirages aléatoires (graine fixe), choix de l'unité sans importance : résultat **identique** (unités, prix, suppléments d'options, remises appliquées) |
+| Propriétés | 40 000 tirages avec valeurs extrêmes, négatives, unité inconnue, promotions qui se chevauchent : aucune panique, jamais de hausse ni de prix négatif ; 15 000 tirages : total indépendant de l'ordre du panier |
+| Mutations | 5 défauts injectés à la main (plafond décalé, tri inversé, unités déjà remisées recomptées, taille de groupe, filtre de code promo) : chacun est détecté par au moins un test, le fichier est restauré à l'identique |
+| Postgres sur staging | Verts : créneaux réels, promotion 3 de bout en bout (dont « trois articles du plus cher au moins cher » avec la valeur cible), test d'activation corrigé |
+| Suite complète `go test ./internal/... ./cmd/...` | Verte, **sauf `planning/employees`, `planning/leave`, `planning/swaps`** : échecs préexistants sans lien (ce module n'importe pas `orders` et n'a aucune modification en cours) |
+| Compilation | `go build ./...` et `go vet` (avec et sans balise `postgres_integration`) propres |
+
+### 15.3 Tests ajoutés (phase 1)
+
+Règles (`discounts_engine_test.go`) : unité la moins chère quel que soit l'ordre (toutes les permutations) ; égalité = ordre du panier ; « N-ième offert » avec 3 à 12 unités, cumulable et non ; « 2 pizzas à −50 % » ; prix fixe qui n'augmente jamais et unités qui comptent (4, 5, 6, 7 € → seul 6 € passe à 5 €) ; unité à 0 € qui compte sans être remisée ; suppléments toujours facturés sur l'unité offerte ; minimum en euros sur le panier entier ; unité déjà remisée non recomptée (D13) ; unité de remise inconnue ; indépendance à l'ordre sur les 120 permutations d'un panier avec deux promotions.
+Garde-fous : panique simulée (G2), 12 cas de `checkDiscountResult` (G3), pricing complet qui réussit quand `GetDiscounts`, `GetDiscountProducts`, `GetDiscountProductOptions` ou `GetRewards` échouent (G1).
+
+### 15.4 Reste à faire avant la mise en production
+
+1. **Rien n'est commité** (règle : pas de commit sans demande explicite).
+2. Ré-export de la production et rejeu des cas sur données fraîches ([diagnostic-promotions-prod.sql](diagnostic-promotions-prod.sql)).
+3. Avertir les commerçants (§ 11), puis déployer **hors des créneaux** de la promotion 3.
+4. Surveiller après déploiement : « promotions annulées, prix du catalogue appliqué » (G2/G3) et « pricing continue sans promotion » (G1) ; la moindre occurrence est un défaut à analyser.
+5. Seconde livraison (D22) : récompenses de fidélité, règle « article le moins cher » (D14).
+6. Import de carte photo : retirer `promotionEngineNthFreeNote`, revoir le retrait des produits non abaissés, mettre à jour [import-carte-ia-03-porte-ia.md](import-carte-ia-03-porte-ia.md) D26 et D27 (§ 6).
+7. Relire cas par cas `discounts_pricing_test.go` et `discount_options_test.go` : tous passent, mais certains figent un comportement qui n'est plus la règle de référence (ex. « non cumulable sur 2 unités » ne dit rien du choix de l'unité).
+
+## 16. Journal
 
 - **2026-10-16** — Cadrage : relecture du moteur et du modèle (`discounts`, `discounts_products`, `discounts_schedules`, `discounts_products_options`, `discount_redemptions`), questions à Ilies, décisions D1 à D11, requête d'export prod validée sur staging, ce document. Constats P5 à P8. Aucun code applicatif modifié.
 - **2026-10-17** — Export de production reçu (8 promotions, 3 commerçants, 2 utilisées) et analysé (§ 10). Réponses d'Ilies à Q1 à Q5 (D12 à D16), remarque sur les remises de commande (D17, § 12, circuit de paiement lu dans le code). Nouveau point bloquant Q6 (formules à 0 € ciblées par un prix fixe). Requête d'export complétée (sections F et G, validées sur staging), base de tests verte. Aucun code applicatif modifié.
 - **2026-10-18** — Q6 tranchée : une unité que la promotion n'abaisse pas compte comme achetée mais n'est jamais remisée (D12 révisé, D6 précisé, spécification § 3 réécrite, nouveaux cas de contrôle), pas d'exception pour les formules à 0 € (D18), retrait par l'import des produits non abaissés à revoir (§ 6). D17 confirmé (remises de commande plus tard). Aucun code applicatif modifié.
+- **2026-10-18 (suite)** — Export complété : F vide (le cas de la formule à 0 € n'a jamais joué en 180 jours), G reçue. D13 confirmée, points 4 à 7 de la liste validés par Ilies. **Phase 0 réalisée** (§ 13) : 27 cas golden du moteur dont 8 à valeur cible, 15 cas de créneaux et 5 cas de calcul complet sur Postgres, test existant corrigé (date figée). Recommandation D19 pour la commande ouverte, à confirmer. Aucun code du moteur modifié.
+- **2026-10-18 (fin)** — D19 confirmée. Principe d'Ilies : mieux vaut rater une promotion que bloquer le pricing (D20). Constat dans le code : un échec de chargement des promotions ou des récompenses fait échouer tout le pricing, et rien n'isole une panique. Garde-fous G1 à G6, tests différentiels et plan de déploiement par paliers consignés au § 14 (D21 et D22 à confirmer). Aucun code du moteur modifié.
+- **2026-10-18 (code)** — D21 (pas d'interrupteur), D22 (deux livraisons), D23 (chargement dégradé) confirmées par Ilies. **Phase 1 réalisée** : `applyDiscounts` réécrit (`discounts_engine.go`), enveloppe de sécurité `applyDiscountsSafe`, chargement dégradé dans `ComputePricing`, ancien calcul déplacé en oracle de test. Vérifié : 27 cas golden, 40 000 tirages différentiels identiques à l'ancien calcul, propriétés et indépendance à l'ordre, 5 mutations détectées, Postgres sur staging, suite complète verte hors échecs préexistants de `planning/*`. Non commité.

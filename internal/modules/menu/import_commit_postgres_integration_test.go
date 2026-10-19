@@ -484,14 +484,15 @@ func TestImportCommit_Postgres_AIPhotoGroups(t *testing.T) {
 	ctx := itestImportContext(merchantID)
 	service := itestImportService(db, newFakePreviewStore())
 
-	cat, grp := "c1", "g1"
+	cat, grp, col := "c1", "g1", "k1"
 	price := func(v int) *int { return &v }
 	imp, err := importer.BuildAIMenuImport([]importer.AIMenuPage{{
 		Categories:    []importer.AICategory{{Ref: cat, Name: "Boissons itest"}},
 		ProductGroups: []importer.AIProductGroup{{Ref: grp, CategoryRef: &cat, Name: "Coca-Cola itest"}},
+		ColorGroups:   []importer.AIColorGroup{{Ref: col, Name: "Boisson itest"}},
 		Products: []importer.AIProduct{
-			{Ref: "p1", CategoryRef: &cat, GroupRef: &grp, Name: "Coca-Cola Zero itest", PriceCents: price(350), Kind: "soft_drink_sealed", Confidence: "high"},
-			{Ref: "p2", CategoryRef: &cat, GroupRef: &grp, Name: "Coca-Cola Cherry itest", PriceCents: price(380), Kind: "soft_drink_sealed", Confidence: "high"},
+			{Ref: "p1", CategoryRef: &cat, GroupRef: &grp, ColorGroupRef: &col, Name: "Coca-Cola Zero itest", PriceCents: price(350), Kind: "soft_drink_sealed", Confidence: "high"},
+			{Ref: "p2", CategoryRef: &cat, GroupRef: &grp, ColorGroupRef: &col, Name: "Coca-Cola Cherry itest", PriceCents: price(380), Kind: "soft_drink_sealed", Confidence: "high"},
 			{Ref: "p3", CategoryRef: &cat, Name: "Limonade itest", PriceCents: price(400), OptionGroupRefs: []string{"o1"}, Kind: "soft_drink_served", Confidence: "high"},
 		},
 		OptionGroups: []importer.AIOptionGroup{{Ref: "o1", Name: "Glaçons itest", Max: 1, Options: []importer.AIOption{{Title: "Avec"}, {Title: "Sans"}}}},
@@ -543,6 +544,34 @@ func TestImportCommit_Postgres_AIPhotoGroups(t *testing.T) {
 		`SELECT count(*) FROM products WHERE merchant_Id = $1 AND name = 'Limonade itest' AND by_product_of IS NULL`, merchantID); got != 1 {
 		t.Fatalf("Limonade doit rester à la racine")
 	}
+
+	// Couleur : le groupe et ses deux déclinaisons, toutes de la même famille
+	// « Boisson itest », doivent porter la même bg_color. Limonade, sans
+	// famille, n'en reçoit aucune.
+	var groupColor, zeroColor, cherryColor string
+	var limonadeColor sql.NullString
+	if err := db.QueryRowContext(context.Background(),
+		`SELECT bg_color FROM products WHERE merchant_Id = $1 AND name = 'Coca-Cola itest'`, merchantID).Scan(&groupColor); err != nil {
+		t.Fatalf("lecture bg_color du groupe: %v", err)
+	}
+	if err := db.QueryRowContext(context.Background(),
+		`SELECT bg_color FROM products WHERE merchant_Id = $1 AND name = 'Coca-Cola Zero itest'`, merchantID).Scan(&zeroColor); err != nil {
+		t.Fatalf("lecture bg_color de Coca-Cola Zero: %v", err)
+	}
+	if err := db.QueryRowContext(context.Background(),
+		`SELECT bg_color FROM products WHERE merchant_Id = $1 AND name = 'Coca-Cola Cherry itest'`, merchantID).Scan(&cherryColor); err != nil {
+		t.Fatalf("lecture bg_color de Coca-Cola Cherry: %v", err)
+	}
+	if err := db.QueryRowContext(context.Background(),
+		`SELECT bg_color FROM products WHERE merchant_Id = $1 AND name = 'Limonade itest'`, merchantID).Scan(&limonadeColor); err != nil {
+		t.Fatalf("lecture bg_color de Limonade: %v", err)
+	}
+	if groupColor == "" || groupColor != zeroColor || groupColor != cherryColor {
+		t.Fatalf("bg_color = groupe %q, zero %q, cherry %q ; want la même couleur sur les trois", groupColor, zeroColor, cherryColor)
+	}
+	if limonadeColor.Valid {
+		t.Fatalf("bg_color de Limonade = %q, want NULL (aucune famille de couleur)", limonadeColor.String)
+	}
 	if got := itestCount(t, db,
 		`SELECT count(*) FROM product_configurable_attribute pca JOIN products p ON p.product_id::text = pca.product_id::text
 		 WHERE p.merchant_Id = $1 AND p.name = 'Limonade itest'`, merchantID); got != 1 {
@@ -570,8 +599,8 @@ func TestImportCommit_Postgres_AIPhotoGroups(t *testing.T) {
 }
 
 // Porte IA : promotions lues sur la carte. Créées dans la transaction du lot,
-// toujours inactives, avec leurs produits et créneaux ; relire la même carte ne
-// les recrée pas.
+// toujours actives (D32), avec leurs produits et créneaux ; relire la même
+// carte ne les recrée pas.
 func TestImportCommit_Postgres_AIPhotoPromotions(t *testing.T) {
 	db := pgtest.Open(t)
 	merchantID, _ := itestImportMerchant(t, db, "aipromo")
@@ -628,7 +657,7 @@ func TestImportCommit_Postgres_AIPhotoPromotions(t *testing.T) {
 		t.Fatalf("promotions créées = %+v, want 2", resp.Summary.Promotions)
 	}
 
-	// Inactives, et avec les bons réglages du moteur.
+	// Actives dès la création (D32), et avec les bons réglages du moteur.
 	var unit, orderType string
 	var available, timeLimited bool
 	var value, quantity int
@@ -638,12 +667,12 @@ func TestImportCommit_Postgres_AIPhotoPromotions(t *testing.T) {
 		Scan(&unit, &orderType, &available, &timeLimited, &value, &quantity); err != nil {
 		t.Fatalf("lecture de la 4e offerte: %v", err)
 	}
-	if unit != "PERCENTAGE" || value != 100 || quantity != 1 || orderType != "IN" || available || timeLimited {
-		t.Fatalf("4e offerte = %s %d%% ×%d mode %q actif %v horaires %v, want PERCENTAGE 100 ×1 IN inactive sans horaires",
+	if unit != "PERCENTAGE" || value != 100 || quantity != 1 || orderType != "IN" || !available || timeLimited {
+		t.Fatalf("4e offerte = %s %d%% ×%d mode %q actif %v horaires %v, want PERCENTAGE 100 ×1 IN active sans horaires",
 			unit, value, quantity, orderType, available, timeLimited)
 	}
-	if got := itestCount(t, db, `SELECT count(*) FROM discounts WHERE merchant_id = $1 AND available`, merchantID); got != 0 {
-		t.Fatalf("promotions actives = %d, want 0 : une promotion lue sur une photo ne doit jamais s'appliquer sans activation", got)
+	if got := itestCount(t, db, `SELECT count(*) FROM discounts WHERE merchant_id = $1 AND available`, merchantID); got != 2 {
+		t.Fatalf("promotions actives = %d, want 2 : une promotion lue sur une photo s'applique dès l'import (D32)", got)
 	}
 	if got := itestCount(t, db, `SELECT count(*) FROM discounts_products dp JOIN discounts d ON d.discount_id = dp.discount_id
 		WHERE d.merchant_id = $1 AND d.discount_name = 'Lundi 9 euros itest' AND dp.new_price = 900`, merchantID); got != 1 {

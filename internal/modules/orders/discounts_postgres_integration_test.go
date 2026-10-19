@@ -89,11 +89,15 @@ func TestDiscountTimeRestriction_Postgres(t *testing.T) {
 	seedDiscount(t, db, "itest-sched-all-modes", merchantID, 20, false, true, nil, 5)
 
 	repo := NewOrdersRepository(db, nil)
+	// Date du jour et non une date figée : les promotions de test valent à partir
+	// d'hier (seedDiscount), une date passée les rendait toutes inactives. Seul
+	// le jour de semaine (day) et l'heure comptent pour les créneaux.
+	today := time.Now().Format("2006-01-02")
 	at := func(day int, clock string) map[string]bool {
 		t.Helper()
 		discounts, err := repo.GetDiscounts(ctx, &models.PricingRequest{
 			MerchantID: merchantID,
-			Time:       "2026-09-21 " + clock,
+			Time:       today + " " + clock,
 			DayOfWeek:  day,
 		})
 		if err != nil {

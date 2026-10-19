@@ -64,10 +64,13 @@ type ChannelSummaryRow struct {
 // PaymentSummaryRow : un moyen de paiement. Total est NET des remboursements.
 // Les commandes marketplace ont de vraies lignes de paiement (mop UBER_EATS /
 // DELIVEROO), elles sont donc couvertes ici sans traitement particulier.
+// PaymentsCount compte les lignes d'encaissement, remboursements exclus : une
+// commande reglee en CB + especes compte une fois dans chacun des deux mop.
 type PaymentSummaryRow struct {
-	MOP   string `json:"mop"`
-	Label string `json:"label"`
-	Total int64  `json:"total"`
+	MOP           string `json:"mop"`
+	Label         string `json:"label"`
+	Total         int64  `json:"total"`
+	PaymentsCount int    `json:"payments_count"`
 }
 
 type OrderHistoryData struct {

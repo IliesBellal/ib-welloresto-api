@@ -204,6 +204,37 @@ func (h *Handler) CheckDeliveryZone(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, statusCode, "scannorder", "check_delivery_zone", resp)
 }
 
+// DeliveryHoursPayload : corps de GET/PUT /pos/settings/delivery_hours.
+type DeliveryHoursPayload struct {
+	DeliveryHours []DeliveryHour `json:"delivery_hours"`
+}
+
+// GetDeliveryHours handles GET /pos/settings/delivery_hours (back-office).
+func (h *Handler) GetDeliveryHours(w http.ResponseWriter, r *http.Request) {
+	hours, err := h.service.GetDeliveryHoursSettings(r.Context())
+	if err != nil {
+		models.SendErrorJSON(w, "scannorder", "get_delivery_hours", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "scannorder", "get_delivery_hours", DeliveryHoursPayload{DeliveryHours: hours})
+}
+
+// ReplaceDeliveryHours handles PUT /pos/settings/delivery_hours (back-office) :
+// remplace toute la semaine ; une liste vide supprime la restriction.
+func (h *Handler) ReplaceDeliveryHours(w http.ResponseWriter, r *http.Request) {
+	var req DeliveryHoursPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "scannorder", "replace_delivery_hours", models.ErrInvalidRequestBody)
+		return
+	}
+	hours, err := h.service.ReplaceDeliveryHoursSettings(r.Context(), req.DeliveryHours)
+	if err != nil {
+		models.SendErrorJSON(w, "scannorder", "replace_delivery_hours", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "scannorder", "replace_delivery_hours", DeliveryHoursPayload{DeliveryHours: hours})
+}
+
 func (h *Handler) GetLoyaltyPrograms(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)

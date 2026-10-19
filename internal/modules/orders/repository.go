@@ -457,6 +457,9 @@ func (r *OrdersRepository) GetHistorySummary(ctx context.Context, merchantID str
 	// explique l'ecart entre TotalRevenue (somme des TTC, inchangee par un
 	// remboursement) et la somme des paiements.
 	//
+	// Le nombre de paiements exclut les remboursements, mais garde les lignes
+	// dont operation_type est NULL (paiements anterieurs a cette colonne).
+	//
 	// Le LEFT JOIN customer est indispensable : la branche Search du filtre
 	// reference des colonnes de c.
 	paymentFrom := ` FROM payments p
@@ -466,7 +469,8 @@ func (r *OrdersRepository) GetHistorySummary(ctx context.Context, merchantID str
 	paymentQuery := `
 		SELECT p.mop,
 		       COALESCE(SUM(p.amount), 0),
-		       COALESCE(SUM(CASE WHEN p.operation_type = 'REFUND' THEN p.amount ELSE 0 END), 0)
+		       COALESCE(SUM(CASE WHEN p.operation_type = 'REFUND' THEN p.amount ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN p.operation_type = 'REFUND' THEN 0 ELSE 1 END), 0)
 	` + paymentFrom + where + `
 		  AND p.enabled = TRUE
 		GROUP BY p.mop
@@ -482,7 +486,7 @@ func (r *OrdersRepository) GetHistorySummary(ctx context.Context, merchantID str
 	for paymentRows.Next() {
 		var row models.PaymentSummaryRow
 		var refunds int64
-		if err := paymentRows.Scan(&row.MOP, &row.Total, &refunds); err != nil {
+		if err := paymentRows.Scan(&row.MOP, &row.Total, &refunds, &row.PaymentsCount); err != nil {
 			return summary, err
 		}
 

@@ -678,6 +678,10 @@ func (r *MenuRepository) materializeProductsTx(
 			Components:        components,
 			IsProductGroup:    product.IsGroup,
 		}
+		if product.ColorHex != "" {
+			colorHex := product.ColorHex
+			payload.BgColor = &colorHex
+		}
 
 		productID, err := r.insertProductTx(ctx, payload)
 		if err != nil {
@@ -719,9 +723,10 @@ func (r *MenuRepository) materializeProductsTx(
 }
 
 // materializePromotionsTx écrit les promotions lues sur la carte (porte photo),
-// toujours INACTIVES (available = false : le calcul de prix ne les applique
-// pas) pour que le restaurateur les active après vérification. Une promotion
-// dont plus aucun produit ciblé n'a été créé est rapportée comme ignorée.
+// toujours ACTIVES (available = true) dès leur création : une promotion
+// importée s'applique donc immédiatement, comme si le restaurateur l'avait
+// saisie lui-même (décision D32, qui remplace D25). Une promotion dont plus
+// aucun produit ciblé n'a été créé est rapportée comme ignorée.
 func (r *MenuRepository) materializePromotionsTx(
 	ctx context.Context,
 	merchantID string,
@@ -771,7 +776,7 @@ func (r *MenuRepository) materializePromotionsTx(
 			DiscountUnit:       discounts.DiscountUnit(promo.DiscountUnit),
 			DiscountedQuantity: promo.DiscountedQuantity,
 			ValidFrom:          today,
-			Available:          false,
+			Available:          true,
 			DiscountScope:      discounts.DiscountScopeProduct,
 			Products:           targets,
 		}

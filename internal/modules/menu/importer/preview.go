@@ -282,7 +282,7 @@ type PreviewSummary struct {
 	UnresolvedTvaRates int `json:"unresolved_tva_rates"`
 
 	// PromotionsToCreate : promotions lues sur la carte qui seront créées
-	// (inactives) — porte IA.
+	// (actives dès l'import, D32) — porte IA.
 	PromotionsToCreate int `json:"promotions_to_create"`
 }
 
@@ -373,6 +373,9 @@ type PreviewProduct struct {
 	Confidence       string      `json:"confidence,omitempty"`
 	Issues           []string    `json:"issues,omitempty"`
 	SourcePhoto      int         `json:"source_photo,omitempty"`
+	// ColorHex : couleur proposée pour le produit (products.bg_color),
+	// modifiable comme n'importe quel autre champ de la fiche une fois importé.
+	ColorHex string `json:"color_hex,omitempty"`
 	// ComponentExternalIDs : ingrédients lus dans la description (entrées de
 	// PreviewResult.Components), si le restaurateur les a demandés.
 	ComponentExternalIDs []string `json:"component_external_ids,omitempty"`
@@ -814,6 +817,7 @@ func (b *previewBuilder) buildProducts() {
 			Confidence:       p.Confidence,
 			Issues:           p.Issues,
 			SourcePhoto:      p.SourcePhoto,
+			ColorHex:         p.ColorHex,
 
 			AttributeExternalIDs: p.AttributeExternalIDs,
 		}

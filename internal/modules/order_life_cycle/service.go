@@ -769,12 +769,11 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 		go func(mID, oID string) {
 			ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := s.uberSvc.AcceptOrder(ctxTimeout, mID, oID); err != nil {
-				s.log.Error("uber accept failed", zap.String("order_id", oID), zap.Error(err))
-				s.uberSvc.RecoverOrderState(ctxTimeout, oID)
+			acceptErr := s.uberSvc.AcceptOrder(ctxTimeout, mID, oID)
+			if acceptErr != nil {
+				s.log.Error("uber accept failed", zap.String("order_id", oID), zap.Error(acceptErr))
 			}
-
-			s.notificationsService.SendNotificationAsync(MerchantID, orderID, notification.NotificationTypeOrderUpdate)
+			s.finishPlatformAcceptance(mID, oID, acceptErr)
 		}(MerchantID, orderID)
 	case models.BrandDeliveroo:
 		if UserID != models.DeliverooWebhookUserID {
@@ -798,6 +797,40 @@ func (s *OrdersLifeCycleService) SetOrderAccepted(ctx context.Context, UserID, M
 
 	accept_order.Status = "success"
 	return accept_order, err
+}
+
+// finishPlatformAcceptance conclut l'acceptation d'une commande Uber Eats une
+// fois la réponse d'Uber connue : c'est le seul moment où les appareils sont
+// prévenus (docs/acceptation-auto-commandes-plateformes.md). Refusée par Uber,
+// la commande revient dans les commandes à accepter. Le cache Redis est vidé
+// après l'écriture et avant la notification, sinon la caisse relirait la
+// version d'avant. Contexte neuf : celui de l'appel Uber peut avoir expiré.
+func (s *OrdersLifeCycleService) finishPlatformAcceptance(merchantID, orderID string, acceptErr error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if acceptErr != nil {
+		if _, err := s.ordersLifeCycleRepo.RevertOrderAcceptedLocal(ctx, orderID); err != nil {
+			s.log.Error("revert of local acceptance failed", zap.String("order_id", orderID), zap.Error(err))
+		}
+	}
+	if s.redis != nil {
+		s.redis.Delete(ctx, helpers.GetRedisOrderKey(merchantID, orderID))
+	}
+	s.notificationsService.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
+}
+
+// AutoAcceptOrder accepte automatiquement une commande de plateforme créée par
+// CreateOrderWithoutNotification. SetOrderAccepted notifie les appareils une
+// fois l'acceptation tranchée ; s'il échoue avant (erreur base), la commande,
+// restée à accepter, n'a été notifiée nulle part : on la notifie ici pour
+// qu'elle apparaisse en caisse.
+func (s *OrdersLifeCycleService) AutoAcceptOrder(ctx context.Context, userID, merchantID, orderID string) error {
+	if _, err := s.SetOrderAccepted(ctx, userID, merchantID, orderID); err != nil {
+		s.notificationsService.SendNotificationAsync(merchantID, orderID, notification.NotificationTypeOrderUpdate)
+		return err
+	}
+	return nil
 }
 
 func (s *OrdersLifeCycleService) AcceptOrder(ctx context.Context, orderID string) (*models.HandlerDefaultResponseModelSet, error) {
@@ -1129,6 +1162,18 @@ func (s *OrdersLifeCycleService) ProcessRefund(ctx context.Context, req models.R
 }
 
 func (s *OrdersLifeCycleService) CreateOrder(ctx context.Context, req *models.RequestObject) (*models.CreateOrderResult, error) {
+	return s.createOrder(ctx, req, true)
+}
+
+// CreateOrderWithoutNotification crée une commande de plateforme acceptée
+// automatiquement : aucune notification à la création, sinon la caisse
+// l'affiche quelques secondes dans les commandes à accepter. Les appareils
+// sont prévenus par AutoAcceptOrder, que l'appelant doit appeler ensuite.
+func (s *OrdersLifeCycleService) CreateOrderWithoutNotification(ctx context.Context, req *models.RequestObject) (*models.CreateOrderResult, error) {
+	return s.createOrder(ctx, req, false)
+}
+
+func (s *OrdersLifeCycleService) createOrder(ctx context.Context, req *models.RequestObject, notify bool) (*models.CreateOrderResult, error) {
 	log := logger.FromContext(ctx)
 
 	result, err := s.ordersLifeCycleRepo.CreateOrder(ctx, req)
@@ -1137,7 +1182,9 @@ func (s *OrdersLifeCycleService) CreateOrder(ctx context.Context, req *models.Re
 		log.Error(err.Error())
 	} else {
 		log.Info("🆕 New order created for merchant " + req.MerchantID + " : " + result.OrderID)
-		s.notificationsService.SendNotificationAsync(req.MerchantID, result.OrderID, notification.NotificationTypeOrderUpdate)
+		if notify {
+			s.notificationsService.SendNotificationAsync(req.MerchantID, result.OrderID, notification.NotificationTypeOrderUpdate)
+		}
 
 		createdBy := ""
 		if req.Order.CreatedBy != nil {

@@ -25,6 +25,7 @@ const (
 	aiProductPrefix      = "ai-p"
 	aiAttributePrefix    = "ai-o"
 	aiOptionPrefix       = "ai-oo"
+	aiColorGroupPrefix   = "ai-k"
 	aiMaxPriceCents      = 1_000_000 // 10 000 € : au-delà, prix jugé illisible
 	aiConfidenceHigh     = "high"
 	aiConfidenceMedium   = "medium"
@@ -33,6 +34,24 @@ const (
 	aiOptionKeySeparator = " | "
 )
 
+// aiColorPalette fixe les couleurs proposées pour products.bg_color : une
+// couleur par famille de produits (color_group_ref), jamais par recette.
+// Sept teintes fortement distinctes, pensées pour un écran de caisse (fond
+// derrière un libellé noir ou blanc), dans l'ordre où elles sont attribuées à
+// la première famille rencontrée, puis la deuxième, etc. Au-delà de sept
+// familles sur un même menu (le modèle ne devrait pas en proposer plus,
+// menuOCRSystemPrompt), les suivantes réutilisent le cycle plutôt que de
+// bloquer l'import — un avertissement le signale (WarningAIColorPalette).
+var aiColorPalette = []string{
+	"#E53935", // rouge — viande rouge
+	"#FB8C00", // orange — volaille
+	"#2E7D32", // vert — végétarien, salades
+	"#1565C0", // bleu — poisson, fruits de mer
+	"#6D4C41", // brun — pizza, four
+	"#8E24AA", // violet — dessert
+	"#00897B", // bleu-vert — boissons
+}
+
 // Codes des signalements de la porte IA (SourceWarning → PreviewWarning).
 const (
 	WarningAIFormulaNotCreated = "ai_formula_not_created"
@@ -40,6 +59,11 @@ const (
 	WarningAIDuplicateMerged   = "ai_duplicate_merged"
 	WarningAIGroupDissolved    = "ai_group_dissolved"
 	WarningAILowConfidence     = "ai_low_confidence"
+	// WarningAIColorPalette : plus de familles de couleur (color_groups) que
+	// la palette n'a de teintes distinctes — les suivantes réutilisent une
+	// couleur déjà posée. Non bloquant : le restaurateur peut changer
+	// n'importe quelle couleur après import.
+	WarningAIColorPalette = "ai_color_palette_exceeded"
 )
 
 // AIMenuPage est la sortie du modèle pour une photo. Le JSON est contraint
@@ -48,10 +72,15 @@ const (
 type AIMenuPage struct {
 	Categories    []AICategory     `json:"categories"`
 	ProductGroups []AIProductGroup `json:"product_groups"`
-	Products      []AIProduct      `json:"products"`
-	OptionGroups  []AIOptionGroup  `json:"option_groups"`
-	Formulas      []AIFormula      `json:"formulas"`
-	Warnings      []string         `json:"warnings"`
+	// ColorGroups : familles de produits utilisées pour proposer une couleur
+	// (products.bg_color), au sens de menuOCRSystemPrompt — jamais une par
+	// recette. Fusionnées entre photos par nom, comme Categories ; chacune
+	// reçoit une teinte de aiColorPalette à sa première apparition.
+	ColorGroups  []AIColorGroup  `json:"color_groups"`
+	Products     []AIProduct     `json:"products"`
+	OptionGroups []AIOptionGroup `json:"option_groups"`
+	Formulas     []AIFormula     `json:"formulas"`
+	Warnings     []string        `json:"warnings"`
 
 	// Offers : le texte de chaque offre ou promotion vue sur la photo, recopié.
 	// C'est tout ce que la lecture principale en dit : la structurer demande un
@@ -77,10 +106,19 @@ type AIProductGroup struct {
 	Name        string  `json:"name"`
 }
 
+// AIColorGroup est une famille de produits proposée pour la couleur
+// (menuOCRSystemPrompt) : viande rouge, volaille, poisson, végétarien,
+// pizza, dessert, boisson… Jamais une par recette ni par catégorie de carte.
+type AIColorGroup struct {
+	Ref  string `json:"ref"`
+	Name string `json:"name"`
+}
+
 type AIProduct struct {
 	Ref             string   `json:"ref"`
 	CategoryRef     *string  `json:"category_ref"`
 	GroupRef        *string  `json:"group_ref"`
+	ColorGroupRef   *string  `json:"color_group_ref"`
 	Name            string   `json:"name"`
 	Description     string   `json:"description"`
 	PriceCents      *int     `json:"price_cents"`
@@ -131,12 +169,17 @@ var AIMenuPageSchema = json.RawMessage(`{
         "category_ref": {"anyOf": [{"type": "string"}, {"type": "null"}]},
         "name": {"type": "string"}},
       "required": ["ref", "category_ref", "name"], "additionalProperties": false}},
+    "color_groups": {"type": "array", "items": {
+      "type": "object",
+      "properties": {"ref": {"type": "string"}, "name": {"type": "string"}},
+      "required": ["ref", "name"], "additionalProperties": false}},
     "products": {"type": "array", "items": {
       "type": "object",
       "properties": {
         "ref": {"type": "string"},
         "category_ref": {"anyOf": [{"type": "string"}, {"type": "null"}]},
         "group_ref": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "color_group_ref": {"anyOf": [{"type": "string"}, {"type": "null"}]},
         "name": {"type": "string"},
         "description": {"type": "string"},
         "price_cents": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
@@ -151,7 +194,7 @@ var AIMenuPageSchema = json.RawMessage(`{
             "category": {"type": "string", "enum": ["meat", "fish", "dairy", "vegetables", "fruits", "grocery", "sauces", "bakery", "other"]},
             "unit": {"type": "string", "enum": ["PCE", "G", "KG", "L", "ML", "CL"]}},
           "required": ["name", "category", "unit"], "additionalProperties": false}}},
-      "required": ["ref", "category_ref", "group_ref", "name", "description", "price_cents", "option_group_refs", "kind", "confidence", "issues", "ingredients"],
+      "required": ["ref", "category_ref", "group_ref", "color_group_ref", "name", "description", "price_cents", "option_group_refs", "kind", "confidence", "issues", "ingredients"],
       "additionalProperties": false}},
     "option_groups": {"type": "array", "items": {
       "type": "object",
@@ -175,7 +218,7 @@ var AIMenuPageSchema = json.RawMessage(`{
     "warnings": {"type": "array", "items": {"type": "string"}},
     "offers": {"type": "array", "items": {"type": "string"}}
   },
-  "required": ["categories", "product_groups", "products", "option_groups", "formulas", "warnings", "offers"],
+  "required": ["categories", "product_groups", "color_groups", "products", "option_groups", "formulas", "warnings", "offers"],
   "additionalProperties": false
 }`)
 
@@ -204,6 +247,15 @@ type aiMerger struct {
 	categoryNames  map[string]string // externalID -> nom
 	categoryByKey  map[string]string // nom normalisé -> externalID
 	attributeByKey map[string]string // clé normalisée -> externalID
+
+	// Couleur (color_groups) : même mécanique que les catégories, une famille
+	// par nom normalisé, fusionnée entre photos. colorHexByID fixe la teinte
+	// à la première apparition de la famille (ordre de colorOrder), cyclée
+	// au-delà de aiColorPalette.
+	colorGroupByKey map[string]string // nom normalisé -> externalID
+	colorHexByID    map[string]string // externalID -> hex
+	colorOrder      []string          // externalID, dans l'ordre d'apparition
+	colorOverflowed bool
 
 	groups      []*aiGroup
 	groupByID   map[string]*aiGroup
@@ -246,6 +298,8 @@ func BuildAIMenuImport(pages []AIMenuPage, unitIDs map[string]string) (*Intermed
 		categoryNames:        make(map[string]string),
 		categoryByKey:        make(map[string]string),
 		attributeByKey:       make(map[string]string),
+		colorGroupByKey:      make(map[string]string),
+		colorHexByID:         make(map[string]string),
 		groupByID:            make(map[string]*aiGroup),
 		productByID:          make(map[string]int),
 		promotionByKey:       make(map[string]int),
@@ -262,6 +316,11 @@ func BuildAIMenuImport(pages []AIMenuPage, unitIDs map[string]string) (*Intermed
 	m.out.Promotions = m.promotions
 	if m.ingredientsSkipped {
 		m.warn(WarningAIIngredientsSkipped, "", "des ingrédients n'ont pas pu être repris : aucune unité de mesure n'est configurée")
+	}
+	if m.colorOverflowed {
+		m.warn(WarningAIColorPalette, "", fmt.Sprintf(
+			"plus de %d familles de couleur proposées : certaines partagent la même couleur, à ajuster au besoin",
+			len(aiColorPalette)))
 	}
 
 	if len(m.out.Products) == 0 {
@@ -290,6 +349,19 @@ func (m *aiMerger) addPage(page *AIMenuPage, photo int) {
 		return categoryByRef[*ref]
 	}
 
+	colorGroupByRef := make(map[string]string)
+	for _, c := range page.ColorGroups {
+		if id := m.colorGroup(c.Name); id != "" {
+			colorGroupByRef[c.Ref] = id
+		}
+	}
+	resolveColorHex := func(ref *string) string {
+		if ref == nil {
+			return ""
+		}
+		return m.colorHexByID[colorGroupByRef[*ref]]
+	}
+
 	attributeByRef := make(map[string]string)
 	for _, og := range page.OptionGroups {
 		if id := m.attribute(og); id != "" {
@@ -310,7 +382,8 @@ func (m *aiMerger) addPage(page *AIMenuPage, photo int) {
 		if p.GroupRef != nil {
 			grp = groupByRef[*p.GroupRef]
 		}
-		if id := m.product(p, resolveCategory(p.CategoryRef), grp, attributeByRef, photo); id != "" && p.Ref != "" {
+		colorHex := resolveColorHex(p.ColorGroupRef)
+		if id := m.product(p, resolveCategory(p.CategoryRef), grp, attributeByRef, colorHex, photo); id != "" && p.Ref != "" {
 			productIDByRef[p.Ref] = id
 		}
 	}
@@ -366,6 +439,29 @@ func (m *aiMerger) category(rawName string) string {
 	m.categoryByKey[key] = id
 	m.categoryNames[id] = name
 	m.out.Categories = append(m.out.Categories, CanonicalCategory{ExternalID: id, Name: name})
+	return id
+}
+
+// colorGroup rend l'identifiant externe d'une famille de couleur, fusionnée
+// entre photos par nom normalisé comme une catégorie. Contrairement à une
+// catégorie, elle ne devient aucune entité Wello : seule sa teinte
+// (colorHexByID) sert, posée à sa première apparition.
+func (m *aiMerger) colorGroup(rawName string) string {
+	name := strings.TrimSpace(rawName)
+	if name == "" {
+		return ""
+	}
+	key := importutil.NormalizeLabel(name)
+	if id, ok := m.colorGroupByKey[key]; ok {
+		return id
+	}
+	id := importutil.GeneratedExternalID(aiColorGroupPrefix, name)
+	m.colorGroupByKey[key] = id
+	m.colorOrder = append(m.colorOrder, id)
+	if len(m.colorOrder) > len(aiColorPalette) {
+		m.colorOverflowed = true
+	}
+	m.colorHexByID[id] = aiColorPalette[(len(m.colorOrder)-1)%len(aiColorPalette)]
 	return id
 }
 
@@ -457,7 +553,7 @@ func (m *aiMerger) group(g AIProductGroup, categoryID string, photo int) *aiGrou
 
 // product ajoute un produit et rend son identifiant externe (celui du premier
 // quand la ligne en double un autre), "" si la ligne est ignorée.
-func (m *aiMerger) product(p AIProduct, categoryID string, grp *aiGroup, attributeByRef map[string]string, photo int) string {
+func (m *aiMerger) product(p AIProduct, categoryID string, grp *aiGroup, attributeByRef map[string]string, colorHex string, photo int) string {
 	name := strings.TrimSpace(p.Name)
 	if name == "" {
 		return ""
@@ -531,6 +627,7 @@ func (m *aiMerger) product(p AIProduct, categoryID string, grp *aiGroup, attribu
 		Issues:               issues,
 		SourcePhoto:          photo,
 		Components:           m.ingredients(p),
+		ColorHex:             colorHex,
 	}
 
 	m.productByID[id] = len(m.products)
@@ -556,9 +653,12 @@ func (m *aiMerger) finishGroups() {
 			continue
 		}
 
-		// Le groupe prend la nature (donc la TVA) de sa première déclinaison :
-		// tva_*_id est NOT NULL, y compris pour un produit groupe sans prix.
-		kind := m.products[grp.children[0]].Kind
+		// Le groupe prend la nature (donc la TVA) et la couleur de sa première
+		// déclinaison : tva_*_id est NOT NULL, y compris pour un produit groupe
+		// sans prix, et les déclinaisons d'un même groupe partagent la même
+		// famille de couleur en pratique (ce sont les mêmes produits).
+		first := m.products[grp.children[0]]
+		kind := first.Kind
 		rateIn, rateTakeAway, rateDelivery := KindTvaRates(kind)
 		m.out.Products = append(m.out.Products, CanonicalProduct{
 			ExternalID:         grp.externalID,
@@ -571,6 +671,7 @@ func (m *aiMerger) finishGroups() {
 			Kind:               kind,
 			Confidence:         aiConfidenceHigh,
 			SourcePhoto:        grp.sourcePhoto,
+			ColorHex:           first.ColorHex,
 		})
 		for _, idx := range grp.children {
 			m.products[idx].ParentExternalID = grp.externalID

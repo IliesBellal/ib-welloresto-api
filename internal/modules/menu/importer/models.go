@@ -199,6 +199,11 @@ type CanonicalProduct struct {
 	Confidence  string
 	Issues      []string
 	SourcePhoto int
+
+	// ColorHex est la couleur proposée (products.bg_color, "#RRGGBB"), une
+	// par famille de produits (color_group_ref côté AIProduct) et non par
+	// recette. Vide quand la photo n'a rattaché le produit à aucune famille.
+	ColorHex string
 }
 
 // CanonicalProductComponent est une ligne de composition (requires) : quelle

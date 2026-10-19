@@ -12,6 +12,7 @@ import (
 	"welloresto-api/internal/modules/customers"
 	"welloresto-api/internal/modules/openinghours"
 	settingspkg "welloresto-api/internal/modules/planning/settings"
+	"welloresto-api/internal/utils/dbutils"
 
 	"go.uber.org/zap"
 )
@@ -689,6 +690,54 @@ func formatHour(hour string) string {
 		return hour[:5]
 	}
 	return hour
+}
+
+// GetDeliveryHours retourne les créneaux de livraison ScanNOrder du marchand
+// (vide = aucune restriction), heures au format "HH:MM".
+func (r *Repository) GetDeliveryHours(ctx context.Context, merchantID string) ([]DeliveryHour, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	rows, err := db.QueryContext(ctx, `
+	SELECT day_of_week, CAST(hour_from AS CHAR(8)), CAST(hour_to AS CHAR(8))
+	FROM delivery_hours
+	WHERE merchant_id = ?
+	ORDER BY day_of_week, hour_from`, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	hours := []DeliveryHour{}
+	for rows.Next() {
+		var h DeliveryHour
+		if err := rows.Scan(&h.DayOfWeek, &h.HourFrom, &h.HourTo); err != nil {
+			return nil, err
+		}
+		h.HourFrom = formatHour(h.HourFrom)
+		h.HourTo = formatHour(h.HourTo)
+		hours = append(hours, h)
+	}
+	return hours, rows.Err()
+}
+
+// ReplaceDeliveryHours remplace, dans une transaction, tous les créneaux de
+// livraison du marchand par ceux fournis (déjà validés).
+func (r *Repository) ReplaceDeliveryHours(ctx context.Context, merchantID string, hours []DeliveryHour) error {
+	return dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
+		db := dbx.GetDB(txCtx, r.database)
+		if _, err := db.ExecContext(txCtx, `DELETE FROM delivery_hours WHERE merchant_id = ?`, merchantID); err != nil {
+			return err
+		}
+		for _, h := range hours {
+			if _, err := db.ExecContext(txCtx, `
+			INSERT INTO delivery_hours (merchant_id, day_of_week, hour_from, hour_to)
+			VALUES (?, ?, CAST(? AS TIME), CAST(? AS TIME))`,
+				merchantID, h.DayOfWeek, h.HourFrom, h.HourTo); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // GetDeliverySessionByOrderID resolves the delivery session currently linked to an order.

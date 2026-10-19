@@ -112,16 +112,20 @@ func (s *DeliverooService) ProcessNewOrder(ctx context.Context, payload Delivero
 		}
 	}
 
-	// 7. CRÉATION DE LA COMMANDE
-	result, err := s.lifecycleService.CreateOrder(ctx, reqObject)
+	// 7. CRÉATION DE LA COMMANDE. Acceptée automatiquement, elle n'est notifiée
+	// qu'une fois acceptée (AutoAcceptOrder).
+	createOrder := s.lifecycleService.CreateOrder
+	if merchantData.AutoAcceptOrders {
+		createOrder = s.lifecycleService.CreateOrderWithoutNotification
+	}
+	result, err := createOrder(ctx, reqObject)
 	if err != nil {
 		return fmt.Errorf("failed to create order from deliveroo webhook: %w", err)
 	}
 
 	// 8. Auto-acceptation
 	if merchantData.AutoAcceptOrders {
-		_, err := s.lifecycleService.SetOrderAccepted(context.Background(), models.DeliverooWebhookUserID, merchantData.MerchantID, result.OrderID)
-		if err != nil {
+		if err := s.lifecycleService.AutoAcceptOrder(context.Background(), models.DeliverooWebhookUserID, merchantData.MerchantID, result.OrderID); err != nil {
 			log.Error("Error auto-accepting order " + result.OrderID + ": " + err.Error())
 		}
 	}

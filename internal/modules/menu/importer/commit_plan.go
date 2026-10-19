@@ -217,6 +217,9 @@ type PlannedProduct struct {
 	IsGroup          bool
 	ParentExternalID string
 	EmptyGroup       bool
+
+	// ColorHex reprend CanonicalProduct.ColorHex telle quelle (products.bg_color).
+	ColorHex string
 }
 
 // PlannedProductComponent est une ligne de composition résolue, prête à
@@ -639,6 +642,7 @@ func (b *commitPlanner) buildProducts() {
 			PriceDelivery:    p.PriceDelivery,
 			IsGroup:          p.IsGroup,
 			ParentExternalID: p.ParentExternalID,
+			ColorHex:         p.ColorHex,
 		}
 		if p.AllPricesZero {
 			entry.Status = ProductStatusRemovedFromMenu

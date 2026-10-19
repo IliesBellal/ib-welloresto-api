@@ -151,14 +151,11 @@ func (s *Service) ApplyItemChanges(ctx context.Context, merchantID string, add, 
 		if _, ok := active[code]; ok {
 			continue // already active — a no-op, not a duplicate-row error
 		}
-		if !ValidCodes[code] {
-			return Amount{}, models.ErrInvalidSubscriptionItemCode
-		}
 		unitPriceCents, ok := resolveUnitPriceCents(catalog, code)
 		if !ok {
 			return Amount{}, models.ErrSubscriptionItemPriceUnavailable
 		}
-		kind := itemKindForCode(code)
+		kind := itemKindForCode(catalog, code)
 		if _, err := s.AddItem(ctx, merchantID, code, kind, 1, unitPriceCents); err != nil {
 			return Amount{}, err
 		}
@@ -202,14 +199,11 @@ func simulateItems(currentItems []Item, add, remove []string, catalog *pricing.C
 		if _, ok := active[code]; ok {
 			continue
 		}
-		if !ValidCodes[code] {
-			return nil, models.ErrInvalidSubscriptionItemCode
-		}
 		unitPriceCents, ok := resolveUnitPriceCents(catalog, code)
 		if !ok {
 			return nil, models.ErrSubscriptionItemPriceUnavailable
 		}
-		active[code] = Item{Code: code, Kind: itemKindForCode(code), Quantity: 1, UnitPriceCents: unitPriceCents}
+		active[code] = Item{Code: code, Kind: itemKindForCode(catalog, code), Quantity: 1, UnitPriceCents: unitPriceCents}
 	}
 
 	items := make([]Item, 0, len(active))
@@ -219,15 +213,22 @@ func simulateItems(currentItems []Item, add, remove []string, catalog *pricing.C
 	return items, nil
 }
 
-func itemKindForCode(code string) string {
+// itemKindForCode derives the structural kind for code from the catalog —
+// generic for plan/module (so a new negotiated catalog variant gets the
+// right kind with no Go change), hardcoded only for the two metered codes,
+// which aren't resolved by their own catalog entry in the first place (see
+// resolveUnitPriceCents). Callers only reach here after resolveUnitPriceCents
+// already confirmed code is priceable, so the catalog.Modules fallback is
+// safe — it's never reached for a code absent from both maps.
+func itemKindForCode(catalog *pricing.Catalog, code string) string {
 	switch code {
-	case CodeEssentiel, CodePro, CodeComplet:
-		return KindPlan
 	case CodePlanningEmployee, CodeExtraPOS:
 		return KindMetered
-	default:
-		return KindModule
 	}
+	if _, ok := catalog.Plans[code]; ok {
+		return KindPlan
+	}
+	return KindModule
 }
 
 func buildCart(items []Item) pricing.Cart {

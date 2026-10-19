@@ -62,3 +62,64 @@ DELETE /v1/admin/overrides/{override_id}
 Ne révoque que la dérogation elle-même — ne touche pas `activation_state` ni
 `override_price_cents`. Si l'établissement doit repasser en `SETUP` immédiatement, c'est à faire à
 la main (pas automatisé par cette route).
+
+## Partie 2 — directement en SQL (sans passer par l'API)
+
+Même procédure, pour quand l'API n'est pas accessible (script, intervention base). Reproduit
+exactement ce que fait `subscriptions.Service.CreateOverride` pour `kind='price'` avec un
+`trial_ends_at` : une seule transaction, dans cet ordre précis.
+
+`created_by` doit être le `user_id` d'un compte `is_platform_staff = true` (traçabilité de qui a
+accordé la dérogation) :
+```sql
+SELECT user_id, name, email FROM users WHERE email = '<votre email>';
+```
+
+Puis :
+```sql
+BEGIN;
+
+-- 1. Dérogation (ligne d'audit)
+INSERT INTO subscription_overrides
+    (id, merchant_id, kind, target, reason, note, created_by, trial_ends_at)
+VALUES (
+    'sbov-' || gen_random_uuid(),
+    '<merchant_id>',
+    'price',
+    '0',                                    -- target : prix en centimes, "0" = gratuit
+    'commercial',                           -- reason : commercial | test | partenaire | migration | geste
+    'Essai 14 jours - nouvel établissement',
+    '<user_id du membre staff>',
+    '2026-11-01T00:00:00+00'                -- trial_ends_at : échéance de l'essai
+);
+
+-- 2. Effet : tarif de grille remplacé par 0
+UPDATE subscriptions SET override_price_cents = 0 WHERE merchant_id = '<merchant_id>';
+
+-- 3. Effet : passage en LIVE immédiat (ne touche rien si déjà passé LIVE par ailleurs)
+UPDATE merchant
+SET activation_state = 'LIVE', went_live_at = now()
+WHERE id::text = '<merchant_id>' AND went_live_at IS NULL;
+
+UPDATE subscriptions SET status = 'active' WHERE merchant_id = '<merchant_id>';
+
+COMMIT;
+```
+
+**Vérifier** :
+```sql
+SELECT id, kind, target, reason, trial_ends_at, revoked_at FROM subscription_overrides WHERE merchant_id = '<merchant_id>' ORDER BY created_at DESC;
+SELECT activation_state, went_live_at FROM merchant WHERE id::text = '<merchant_id>';
+SELECT status, override_price_cents FROM subscriptions WHERE merchant_id = '<merchant_id>';
+```
+
+**Arrêter l'essai avant terme** (équivalent du `DELETE /v1/admin/overrides/{id}`) :
+```sql
+UPDATE subscription_overrides SET revoked_at = now() WHERE id = '<override_id>' AND revoked_at IS NULL;
+```
+Même limite qu'en API : ça ne touche ni `activation_state` ni `override_price_cents` — à remettre à
+la main si l'établissement doit repasser en `SETUP` immédiatement.
+
+**Ne rien faire pour l'échéance** : le cron horaire (`RunTrialExpiryCheck`) la gère tout seul (rappels
+J-7/J-1, puis révocation + retour en `SETUP` si aucun mandat SEPA actif) — pas besoin de SQL pour ça,
+sauf si les tâches planifiées sont arrêtées pour une raison quelconque.

@@ -389,8 +389,10 @@ Demande d'Ilies : créer aussi les promotions découvertes sur la carte (« Tous
 ### D24 — « Comprise parfaitement » ou rien
 `buildCanonicalPromotion` (`importer/ai_promotions.go`) refuse, avec une raison lisible, toute promotion dont un élément manque ou est incohérent : nom ou valeur illisible, type inconnu, mode de commande ou jour hors bornes, plage horaire incomplète ou à l'envers, période terminée, produit cité introuvable, aucun produit identifié, prix fixe « sur toute la carte », article offert combiné à un minimum en euros (le moteur n'a qu'une unité de minimum). Le refus devient l'avertissement `ai_promotion_not_created` : « promotion « X » (photo N) non créée : raison. Texte de la carte : « … ». À configurer manuellement dans les promotions. » Même message pour celles que le modèle déclare lui-même non exprimables. Le back-office l'affiche dans la section Promotions, pas replié avec les autres avertissements.
 
-### D25 — Toujours créées désactivées
+### D25 — Toujours créées désactivées *(remplacé par D32, § 7)*
 `discounts.available = false` : le calcul de prix ne charge que `available = TRUE`, donc une promotion importée ne s'applique à aucune commande tant que le restaurateur ne l'active pas. Une erreur de lecture sur une remise coûte de l'argent sans se voir, à la différence d'un prix. La relecture montre chaque promotion en une phrase (`DescribePromotion`) à côté du texte de la carte, avec une case pour l'écarter (décision `excluded_promotions`).
+
+**Remplacé le 2026-10-18** (demande explicite d'Ilies) : les promotions sont désormais créées actives. Voir D32.
 
 ### D26 — Traduction vers le moteur actuel
 | Promotion | Réglages créés |
@@ -446,3 +448,67 @@ Premier essai sur staging : l'API Anthropic a refusé **toutes** les lectures (`
 - **Non vérifié** : que l'API accepte les deux schémas. À confirmer au prochain essai sur staging, avec une photo qui montre une offre et une qui n'en montre pas. Si la seconde requête était refusée à son tour, ses offres seraient signalées « non créées » sans bloquer la lecture.
 
 Le test d'intégration existant `TestImportCommit_Postgres_AIPhotoGroups` ne compilait plus (`BuildAIMenuImport` prend les unités depuis l'étape des ingrédients) : corrigé au passage.
+
+---
+
+## 7. Couleur par famille de produits (demande d'Ilies, 2026-10-18)
+
+**Statut : codé, non testé sur une vraie photo, non commité.**
+
+Chaque produit reçoit une couleur de fond (`products.bg_color`) proposée à l'import, pour qu'un écran de caisse distingue les familles d'un coup d'œil. Règles demandées : une couleur par **famille principale**, jamais par recette (deux burgers au bœuf partagent la même couleur malgré des garnitures différentes), et 5 à 7 couleurs au total.
+
+### D-couleur — Le modèle déclare des familles, le palette est fixé côté Go
+
+Plutôt que de demander au modèle un code hexadécimal par produit (impossible à garder cohérent entre deux requêtes indépendantes, une par photo), le contrat reprend le mécanisme déjà utilisé pour les catégories et les groupes de déclinaisons :
+- un nouveau tableau `color_groups` (`ref`, `name`) par photo — des familles génériques (« Viande rouge », « Volaille », « Poisson et fruits de mer », « Végétarien », « Pizza », « Dessert », « Boisson »), adaptées à la carte mais plafonnées à 5-7 par la consigne (`menuOCRSystemPrompt`, section « Couleur ») ;
+- un champ `color_group_ref` (nullable) sur chaque produit, qui le rattache à une famille.
+
+Côté Go (`ai_menu.go`) :
+- les familles sont fusionnées entre photos **par nom normalisé**, exactement comme les catégories (`aiMerger.colorGroup`, miroir de `aiMerger.category`) — une famille écrite à l'identique sur deux photos reste une seule couleur ;
+- la teinte elle-même vient d'une palette fixe de 7 couleurs (`aiColorPalette`), attribuée **dans l'ordre d'apparition** de chaque famille, jamais choisie par le modèle — ce qui garantit la cohérence et le plafond, même si le modèle proposait plus de familles que demandé ;
+- au-delà de 7 familles distinctes sur un même lot, les suivantes **recyclent** une couleur déjà posée plutôt que de bloquer l'import, avec un avertissement non bloquant `ai_color_palette_exceeded` ;
+- un produit sans `color_group_ref` (ou dont la référence ne résout rien) n'a pas de couleur (`bg_color` reste NULL) ;
+- un groupe de déclinaisons (`is_product_group`) hérite de la couleur de sa première déclinaison, comme pour la nature/TVA (D3/D4).
+
+`CanonicalProduct.ColorHex` → `PlannedProduct.ColorHex` → `CreateProductPayload.BgColor` (déjà un champ existant du produit, utilisé ailleurs par la fiche produit du back-office) : aucune migration, aucune nouvelle colonne.
+
+### Risque non vérifié : taille du schéma JSON
+
+**C'est le point à surveiller en premier.** L'incident du 2026-10-15 (D30) a montré que la grammaire JSON compilée côté Anthropic a une limite non documentée, et qu'aucune clé API locale ne permet de la mesurer avant un essai réel. L'ajout ici est modeste — un tableau d'objets `{ref, name}` de la même forme que `product_groups`, et un champ `anyOf` de plus sur `products` (il y en a déjà deux, `category_ref` et `group_ref`) — mais **n'a pas été essayé contre l'API**. À tester sur staging avec de vraies photos avant de considérer le schéma principal stable ; en cas de refus, la seule option proche du précédent (D30) serait de sortir `color_groups`/`color_group_ref` dans une requête séparée, comme les promotions.
+
+### Fichiers
+`importer/ai_menu.go` (`AIColorGroup`, `AIProduct.ColorGroupRef`, `AIMenuPageSchema`, `aiColorPalette`, `aiMerger.colorGroup`, fusion, héritage par les groupes, avertissement `ai_color_palette_exceeded`), `importer/models.go` (`CanonicalProduct.ColorHex`), `importer/commit_plan.go` (`PlannedProduct.ColorHex`), `importer/preview.go` (`PreviewProduct.ColorHex`), `import_ai_prompt.go` (section « Couleur » de `menuOCRSystemPrompt`), `import_commit_repository.go` (`CreateProductPayload.BgColor`).
+
+### Vérifications
+
+| Vérification | Résultat |
+|---|---|
+| `go build ./...`, `go vet ./internal/modules/menu/...` (avec et sans tag `postgres_integration`) | OK |
+| `TestAIMenuPageSchema_RespectsStructuredOutputConstraints` | OK, inchangé : `color_groups` et `color_group_ref` respectent `additionalProperties: false` / tout requis |
+| `TestBuildAIMenuImport_ColorGroupsMergeAcrossPhotosAndInheritToGroups` | OK : même famille (casse différente) sur deux photos → même couleur ; produit sans famille → aucune couleur ; groupe de déclinaisons → couleur de sa première déclinaison |
+| `TestBuildAIMenuImport_ColorPaletteOverflowCyclesAndWarns` | OK : 8 familles sur une palette de 7 → chaque produit reçoit quand même une couleur (recyclée), avertissement `ai_color_palette_exceeded` présent |
+| `TestImportCommit_Postgres_AIPhotoGroups` (mis à jour) | **Écrit, non exécuté** (nécessite `POSTGRES_URL`) : vérifie que le groupe Coca-Cola et ses deux déclinaisons portent la même `bg_color`, et que Limonade (sans famille) a `bg_color` NULL |
+| Consigne sur de vraies photos | **Non testée** : premier essai à faire sur staging, notamment pour confirmer que le schéma élargi est accepté par l'API (voir risque ci-dessus) |
+
+---
+
+## 8. Promotions actives dès l'import (demande d'Ilies, 2026-10-18)
+
+### D32 — Remplace D25 : plus de délai à l'activation
+
+Jusqu'ici, toute promotion lue sur une photo était créée désactivée (`discounts.available = false`, D25) : le restaurateur devait l'activer lui-même après relecture, par précaution contre une erreur de lecture qui coûterait de l'argent sans se voir. Ilies demande l'inverse : les promotions doivent être **actives dès l'import**, comme s'il les avait saisies lui-même.
+
+- `materializePromotionsTx` (`import_commit_repository.go`) pose désormais `Available: true` sur chaque promotion créée.
+- Les garde-fous qui précèdent la création ne changent pas : une promotion mal comprise n'est toujours pas créée (`promotions_not_created`, D24), et le commit refuse toujours sans `tva_confirmed`. Seul l'état final change, inactif → actif.
+- Les filets de sécurité documentés en D27 (limites du moteur de promotions lui-même — « N-ième offert » joué sur le premier article éligible, non cumulable…) restent inchangés et s'appliquent donc **dès l'import**, pas seulement après une activation manuelle. C'est désormais le seul moment où le restaurateur peut rattraper une mauvaise lecture avant qu'elle ne s'applique à une vraie commande : la relecture (`Notes` par promotion, texte de la carte, case `excluded_promotions`) est donc la seule vérification qui reste avant effet réel.
+
+### Fichiers
+`import_commit_repository.go` (`Available: true`), `importer/ai_promotions.go` (commentaires de tête, `PlannedPromotion`, `Notes`), `importer/preview.go` (commentaire `PromotionsToCreate`), `import_commit_postgres_integration_test.go` (`TestImportCommit_Postgres_AIPhotoPromotions` mis à jour).
+
+### Vérifications
+
+| Vérification | Résultat |
+|---|---|
+| `go build ./...`, `go vet -tags postgres_integration ./internal/modules/menu/...` | OK |
+| `go test ./internal/modules/menu/...` | OK, inchangé (aucun test non-intégration ne portait sur `Available`) |
+| `TestImportCommit_Postgres_AIPhotoPromotions` (mis à jour) | **Écrit, non exécuté** (nécessite `POSTGRES_URL`) : attend désormais `available = true` sur les deux promotions créées, au lieu de `false` |

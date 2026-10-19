@@ -36,19 +36,26 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{database: db}
 }
 
-// AddItem creates a new billed line for merchantID. Validates kind/code
-// against the closed sets from the brief before writing — subscription_items
-// has no DB-level CHECK constraint (same convention as pricing_catalog.kind),
-// so this is the only guard. Does not check for an existing active item on
-// the same code: the partial unique index (merchant_id, code) WHERE
-// removed_at IS NULL does that at the database level, and callers should
-// remove (RemoveItem) the previous line — a plan change, not two concurrent
-// prices for the same code — before adding a replacement.
+// AddItem creates a new billed line for merchantID. Validates kind against
+// the closed set from the brief, and code against pricing_catalog itself
+// (live query, not a hardcoded Go list — a negotiated catalog variant is
+// usable the moment it's added to pricing_catalog, no code change) before
+// writing — subscription_items has no DB-level CHECK constraint (same
+// convention as pricing_catalog.kind), so this is the only guard at this
+// layer. Does not check for an existing active item on the same code: the
+// partial unique index (merchant_id, code) WHERE removed_at IS NULL does
+// that at the database level, and callers should remove (RemoveItem) the
+// previous line — a plan change, not two concurrent prices for the same
+// code — before adding a replacement.
 func (r *Repository) AddItem(ctx context.Context, merchantID, code, kind string, quantity, unitPriceCents int) (Item, error) {
 	if !ValidKinds[kind] {
 		return Item{}, models.ErrInvalidSubscriptionItemKind
 	}
-	if !ValidCodes[code] {
+	known, err := r.codeIsKnown(ctx, code)
+	if err != nil {
+		return Item{}, err
+	}
+	if !known {
 		return Item{}, models.ErrInvalidSubscriptionItemCode
 	}
 
@@ -62,6 +69,29 @@ func (r *Repository) AddItem(ctx context.Context, merchantID, code, kind string,
 	}
 
 	return r.get(ctx, id)
+}
+
+// codeIsKnown reports whether code is a recognized subscription_items code —
+// not necessarily a *priced* one (see resolveUnitPriceCents for that, one
+// layer up in Service.AddItem): kiosk/sms are deliberately real, recognized
+// codes with no usable price yet (tests seed them directly at this layer to
+// exercise that exact "known but unbillable" state downstream), and
+// planning_employee/extra_pos are metered, billed under a different catalog
+// entry than their own name. Every other code is checked live against
+// pricing_catalog (kind='plan'/'module') rather than a hardcoded Go list, so
+// a new negotiated plan/module variant becomes addable the moment it's
+// inserted into pricing_catalog — no code change.
+func (r *Repository) codeIsKnown(ctx context.Context, code string) (bool, error) {
+	switch code {
+	case CodePlanningEmployee, CodeExtraPOS, CodeKiosk, CodeSMS:
+		return true, nil
+	}
+	db := dbx.GetDB(ctx, r.database)
+	var exists bool
+	err := db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM pricing_catalog WHERE kind IN ('plan', 'module') AND code = ?)
+	`, code).Scan(&exists)
+	return exists, err
 }
 
 // RemoveItem soft-removes item id — sets removed_at, never deletes the row

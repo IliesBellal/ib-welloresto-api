@@ -19,9 +19,9 @@ import (
 // exactement, ou dont un élément est illisible, n'est pas créée : elle donne un
 // avertissement qui reprend le texte de la carte et la raison.
 //
-// Toute promotion lue est créée INACTIVE (discounts.available = false, donc
-// jamais appliquée par le calcul de prix) : une erreur de lecture sur une
-// remise coûte de l'argent sans se voir, à la différence d'un prix.
+// Toute promotion lue est créée ACTIVE (discounts.available = true, donc
+// appliquée dès l'import — décision D32, demande explicite d'Ilies qui
+// remplace le choix initial D25 de les créer désactivées).
 //
 // Le moteur de promotions n'est pas modifié ici. Ses limites actuelles sont
 // décrites dans docs/promotions-moteur-a-fiabiliser.md : elles se corrigent
@@ -183,7 +183,8 @@ type CanonicalPromotion struct {
 
 	SourceText  string
 	SourcePhoto int
-	// Notes : limites à montrer au restaurateur avant d'activer.
+	// Notes : limites à montrer au restaurateur en relecture — la promotion
+	// sera active dès l'import (D32), donc avant le commit et non après.
 	Notes []string
 }
 
@@ -514,7 +515,8 @@ type PreviewPromotion struct {
 	Action             string   `json:"action"`
 	AllProducts        bool     `json:"all_products,omitempty"`
 	ProductExternalIDs []string `json:"product_external_ids,omitempty"`
-	// Notes : limites à connaître avant d'activer la promotion.
+	// Notes : limites à connaître avant de confirmer l'import — la promotion
+	// sera active dès sa création (D32).
 	Notes       []string `json:"notes,omitempty"`
 	SourceText  string   `json:"source_text,omitempty"`
 	SourcePhoto int      `json:"source_photo,omitempty"`
@@ -590,7 +592,7 @@ type PlannedPromotionSchedule struct {
 }
 
 // PlannedPromotion est une promotion entièrement résolue, prête à devenir une
-// ligne de discounts. Elle est toujours créée inactive.
+// ligne de discounts. Elle est toujours créée active (D32).
 type PlannedPromotion struct {
 	ExternalID  string
 	Name        string

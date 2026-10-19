@@ -36,15 +36,16 @@ func (s *Service) CreateOverride(ctx context.Context, merchantID, kind, target, 
 
 	switch kind {
 	case OverrideKindModule:
-		if !ValidCodes[target] {
-			return Override{}, models.ErrOverrideTargetUnsupported
-		}
 		// P3 (LOT B PRÉALABLE) : kiosk/sms have no real price in
 		// pricing_catalog yet — granting free access to them via dérogation
 		// is blocked for the same reason AddItem refuses to bill them.
 		if target == CodeKiosk || target == CodeSMS {
 			return Override{}, models.ErrSubscriptionItemPriceUnavailable
 		}
+		// moduleOverrideColumns is the real, complete gate here — a target
+		// outside it (including anything that used to be caught by the old
+		// ValidCodes pre-check) fails with the same ErrOverrideTargetUnsupported
+		// either way, so that separate check was redundant and has been removed.
 		column, ok := moduleOverrideColumns[target]
 		if !ok {
 			return Override{}, models.ErrOverrideTargetUnsupported

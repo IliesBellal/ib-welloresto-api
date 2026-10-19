@@ -2,6 +2,7 @@ package importer
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -295,6 +296,100 @@ func TestBuildAIMenuImport_FormulasAndPhotoWarnings(t *testing.T) {
 	}
 	if w := sourceWarning(t, imp, WarningAIPhoto); w.Ref != "photo 2" {
 		t.Errorf("avertissement de photo = %+v, want ref photo 2", w)
+	}
+}
+
+// Deux burgers de la même famille (« Viande rouge ») partagent la même
+// couleur même si leurs recettes diffèrent, la famille déclarée sur la photo
+// 2 (« viande rouge ») fusionne avec celle de la photo 1 malgré la casse, et
+// un produit sans famille (color_group_ref nil) ne reçoit aucune couleur. Le
+// groupe Coca-Cola hérite de la couleur de sa première déclinaison.
+func TestBuildAIMenuImport_ColorGroupsMergeAcrossPhotosAndInheritToGroups(t *testing.T) {
+	pages := []AIMenuPage{
+		{
+			Categories:    []AICategory{{Ref: "c1", Name: "Burgers"}, {Ref: "c2", Name: "Boissons"}},
+			ColorGroups:   []AIColorGroup{{Ref: "k1", Name: "Viande rouge"}, {Ref: "k2", Name: "Boisson"}},
+			ProductGroups: []AIProductGroup{{Ref: "g1", CategoryRef: strPtr("c2"), Name: "Coca-Cola"}},
+			Products: []AIProduct{
+				{Ref: "p1", CategoryRef: strPtr("c1"), ColorGroupRef: strPtr("k1"), Name: "Classique", PriceCents: intPtr(1000), Kind: "food", Confidence: "high"},
+				{Ref: "p2", CategoryRef: strPtr("c1"), ColorGroupRef: strPtr("k1"), Name: "Bacon Cheese", PriceCents: intPtr(1200), Kind: "food", Confidence: "high"},
+				{Ref: "p3", CategoryRef: strPtr("c1"), Name: "Frites", PriceCents: intPtr(400), Kind: "food", Confidence: "high"},
+				{Ref: "p4", CategoryRef: strPtr("c2"), GroupRef: strPtr("g1"), ColorGroupRef: strPtr("k2"), Name: "Coca-Cola Zero", PriceCents: intPtr(350), Kind: "soft_drink_sealed", Confidence: "high"},
+				{Ref: "p5", CategoryRef: strPtr("c2"), GroupRef: strPtr("g1"), ColorGroupRef: strPtr("k2"), Name: "Coca-Cola Cherry", PriceCents: intPtr(380), Kind: "soft_drink_sealed", Confidence: "high"},
+			},
+		},
+		{
+			Categories:  []AICategory{{Ref: "c1", Name: "Burgers"}},
+			ColorGroups: []AIColorGroup{{Ref: "k1", Name: "viande rouge"}},
+			Products: []AIProduct{
+				{Ref: "p6", CategoryRef: strPtr("c1"), ColorGroupRef: strPtr("k1"), Name: "Double Steak", PriceCents: intPtr(1400), Kind: "food", Confidence: "high"},
+			},
+		},
+	}
+	imp, err := BuildAIMenuImport(pages, nil)
+	if err != nil {
+		t.Fatalf("BuildAIMenuImport: %v", err)
+	}
+
+	classique := productByName(t, imp, "Classique")
+	if classique.ColorHex == "" {
+		t.Fatalf("Classique doit recevoir une couleur")
+	}
+	for _, name := range []string{"Bacon Cheese", "Double Steak"} {
+		if got := productByName(t, imp, name).ColorHex; got != classique.ColorHex {
+			t.Errorf("%s : couleur = %q, want %q (même famille « Viande rouge »)", name, got, classique.ColorHex)
+		}
+	}
+	if frites := productByName(t, imp, "Frites"); frites.ColorHex != "" {
+		t.Errorf("Frites sans famille : couleur = %q, want aucune", frites.ColorHex)
+	}
+
+	cocaZero := productByName(t, imp, "Coca-Cola Zero")
+	if cocaZero.ColorHex == "" || cocaZero.ColorHex == classique.ColorHex {
+		t.Errorf("Coca-Cola Zero doit avoir une couleur distincte de « Viande rouge », a %q", cocaZero.ColorHex)
+	}
+	group := productByName(t, imp, "Coca-Cola")
+	if !group.IsGroup || group.ColorHex != cocaZero.ColorHex {
+		t.Errorf("le groupe Coca-Cola doit hériter de la couleur de sa première déclinaison : %q, want %q", group.ColorHex, cocaZero.ColorHex)
+	}
+	if hasSourceWarning(imp, WarningAIColorPalette) {
+		t.Errorf("deux familles seulement : pas d'avertissement de palette dépassée")
+	}
+}
+
+// Plus de familles de couleur que la palette n'a de teintes : chaque produit
+// reçoit quand même une couleur (cyclée), et un avertissement non bloquant
+// signale le dépassement.
+func TestBuildAIMenuImport_ColorPaletteOverflowCyclesAndWarns(t *testing.T) {
+	names := []string{"Famille 1", "Famille 2", "Famille 3", "Famille 4", "Famille 5", "Famille 6", "Famille 7", "Famille 8"}
+	var colorGroups []AIColorGroup
+	var products []AIProduct
+	for i, name := range names {
+		ref := fmt.Sprintf("k%d", i+1)
+		colorGroups = append(colorGroups, AIColorGroup{Ref: ref, Name: name})
+		products = append(products, AIProduct{
+			Ref: fmt.Sprintf("p%d", i+1), CategoryRef: strPtr("c1"), ColorGroupRef: strPtr(ref),
+			Name: fmt.Sprintf("Produit %d", i+1), PriceCents: intPtr(500), Kind: "food", Confidence: "high",
+		})
+	}
+	pages := []AIMenuPage{{
+		Categories:  []AICategory{{Ref: "c1", Name: "Plats"}},
+		ColorGroups: colorGroups,
+		Products:    products,
+	}}
+
+	imp, err := BuildAIMenuImport(pages, nil)
+	if err != nil {
+		t.Fatalf("BuildAIMenuImport: %v", err)
+	}
+	for _, name := range names {
+		productName := strings.Replace(name, "Famille", "Produit", 1)
+		if productByName(t, imp, productName).ColorHex == "" {
+			t.Errorf("%s doit recevoir une couleur même au-delà de la palette", productName)
+		}
+	}
+	if !hasSourceWarning(imp, WarningAIColorPalette) {
+		t.Errorf("dépassement de palette non signalé")
 	}
 }
 

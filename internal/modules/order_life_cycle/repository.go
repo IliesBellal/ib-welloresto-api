@@ -658,6 +658,30 @@ func (r *OrdersLifeCycleRepository) SetOrderAcceptedLocal(ctx context.Context, o
 	return n > 0, nil
 }
 
+// RevertOrderAcceptedLocal annule l'acceptation locale de SetOrderAcceptedLocal
+// quand la plateforme l'a refusée : la commande revient dans les commandes à
+// accepter. Ne touche qu'une commande restée exactement dans l'état posé par
+// SetOrderAcceptedLocal (une annulation reçue entre-temps l'emporte).
+func (r *OrdersLifeCycleRepository) RevertOrderAcceptedLocal(ctx context.Context, orderID string) (reverted bool, err error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	q := `
+		UPDATE orders
+		SET last_update = ` + dbx.UTCNow() + `,
+		    merchant_approval = 'PENDING_APPROVAL'
+		WHERE order_id = ? AND state = 'OPEN' AND brand_status = 'PENDING' AND merchant_approval = 'ACCEPTED';
+	`
+	res, err := db.ExecContext(ctx, q, orderID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // olcResponsible reproduit la coercition MySQL non-strict d'un user_id vers la
 // colonne integer orders.responsible : non numérique -> 0 (les user_id de prod
 // sont numériques ; Postgres rejetterait une chaîne arbitraire).
