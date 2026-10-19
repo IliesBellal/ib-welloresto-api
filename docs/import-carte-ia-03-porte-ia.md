@@ -502,6 +502,8 @@ Jusqu'ici, toute promotion lue sur une photo était créée désactivée (`disco
 - Les garde-fous qui précèdent la création ne changent pas : une promotion mal comprise n'est toujours pas créée (`promotions_not_created`, D24), et le commit refuse toujours sans `tva_confirmed`. Seul l'état final change, inactif → actif.
 - Les filets de sécurité documentés en D27 (limites du moteur de promotions lui-même — « N-ième offert » joué sur le premier article éligible, non cumulable…) restent inchangés et s'appliquent donc **dès l'import**, pas seulement après une activation manuelle. C'est désormais le seul moment où le restaurateur peut rattraper une mauvaise lecture avant qu'elle ne s'applique à une vraie commande : la relecture (`Notes` par promotion, texte de la carte, case `excluded_promotions`) est donc la seule vérification qui reste avant effet réel.
 
+**Correctif lié (2026-10-19)** : le back-office n'envoyait pas `excluded_promotions` au commit, donc une promotion décochée était créée quand même, et active depuis D32. Corrigé dans `buildImportDecisions`, voir [composition-ia.md § 6](composition-ia.md). Le même jour, la case « Lire aussi les ingrédients » a été branchée dans le back-office (l'API la gérait déjà).
+
 ### Fichiers
 `import_commit_repository.go` (`Available: true`), `importer/ai_promotions.go` (commentaires de tête, `PlannedPromotion`, `Notes`), `importer/preview.go` (commentaire `PromotionsToCreate`), `import_commit_postgres_integration_test.go` (`TestImportCommit_Postgres_AIPhotoPromotions` mis à jour).
 

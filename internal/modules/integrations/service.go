@@ -419,25 +419,22 @@ func (s *Service) CreateStripeOnboardingLink(ctx context.Context, merchantID str
 
 // CreateScanNOrderOnboarding creates a Stripe Express account when missing and returns
 // an onboarding account link for ScanNOrder activation.
+//
+// Le compte porte le nom de l'établissement : pré-rempli à la création,
+// réaligné sur un compte existant à chaque relance de l'onboarding.
 func (s *Service) CreateScanNOrderOnboarding(ctx context.Context, user *auth.UserLoginRow) (string, error) {
-	accountID, err := s.repo.GetStripeAccountID(ctx, user.MerchantID)
+	profile, err := s.stripeAccountProfile(ctx, user)
 	if err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
-			return "", err
-		}
+		return "", err
+	}
 
-		accountID, err = s.stripeManager.CreateExpressAccount(ctx, user)
-		if err != nil {
-			return "", err
-		}
-
-		if err := s.repo.UpsertStripeAccountID(ctx, user.MerchantID, accountID); err != nil {
-			return "", err
-		}
+	accountID, err := s.repo.GetStripeAccountID(ctx, user.MerchantID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", err
 	}
 
 	if strings.TrimSpace(accountID) == "" {
-		accountID, err = s.stripeManager.CreateExpressAccount(ctx, user)
+		accountID, err = s.stripeManager.CreateExpressAccount(ctx, profile)
 		if err != nil {
 			return "", err
 		}
@@ -445,6 +442,13 @@ func (s *Service) CreateScanNOrderOnboarding(ctx context.Context, user *auth.Use
 		if err := s.repo.UpsertStripeAccountID(ctx, user.MerchantID, accountID); err != nil {
 			return "", err
 		}
+	} else if err := s.stripeManager.UpdateAccountProfile(ctx, accountID, profile); err != nil {
+		// Le nom n'est pas bloquant pour l'onboarding : on journalise et on continue.
+		logger.FromContext(ctx).Warn("stripe connect: account profile sync failed",
+			zap.String("merchant_id", user.MerchantID),
+			zap.String("account_id", accountID),
+			zap.Error(err),
+		)
 	}
 
 	refreshURL := s.stripeRefreshURL
@@ -453,6 +457,29 @@ func (s *Service) CreateScanNOrderOnboarding(ctx context.Context, user *auth.Use
 	}
 
 	return s.stripeManager.CreateOnboardingLink(accountID, s.stripeReturnURL, refreshURL)
+}
+
+// stripeAccountProfile builds the establishment profile pre-filled on the Stripe account.
+// L'email de l'établissement est préféré à celui de l'utilisateur connecté,
+// qui peut être un employé : c'est l'identifiant du dashboard Express.
+func (s *Service) stripeAccountProfile(ctx context.Context, user *auth.UserLoginRow) (stripeclient.ConnectAccountProfile, error) {
+	m, err := s.repo.GetStripeAccountMerchant(ctx, user.MerchantID)
+	if err != nil {
+		return stripeclient.ConnectAccountProfile{}, err
+	}
+
+	profile := stripeclient.ConnectAccountProfile{
+		MerchantID:   user.MerchantID,
+		BusinessName: m.Name,
+		Email:        m.Email,
+	}
+	if strings.TrimSpace(profile.Email) == "" {
+		profile.Email = user.Email
+	}
+	if url := buildScanNOrderAccessURL(s.scannorderBaseURL, m.Slug); url != nil {
+		profile.URL = *url
+	}
+	return profile, nil
 }
 
 // GetStripeBankAccounts lists the bank accounts linked to the merchant's Stripe Connect account.

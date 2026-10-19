@@ -4,9 +4,10 @@ import (
 	"context"
 	"io"
 	"strings"
-	"welloresto-api/internal/modules/auth"
+	"unicode"
 
 	"github.com/stripe/stripe-go/v84"
+	"golang.org/x/text/unicode/norm"
 )
 
 // BankAccountInfo represents a bank account linked to a Stripe Connect account.
@@ -56,18 +57,63 @@ func (s *StripeManager) CreateOnboardingLink(accountID, returnURL, refreshURL st
 	return link.URL, nil
 }
 
-// CreateExpressAccount creates a Stripe Connect Express account with required capabilities.
-func (s *StripeManager) CreateExpressAccount(ctx context.Context, user *auth.UserLoginRow) (string, error) {
+// mccRestaurants est le code d'activité Stripe "Eating Places, Restaurants".
+const mccRestaurants = "5812"
+
+// ConnectAccountProfile regroupe les informations de l'établissement
+// pré-remplies sur son compte Stripe Connect : le nom affiché du compte (dans
+// le dashboard Connect, sur Checkout et sur les relevés bancaires des clients)
+// est celui de l'établissement, pas la raison sociale saisie à l'onboarding.
+type ConnectAccountProfile struct {
+	MerchantID   string
+	BusinessName string // nom de l'établissement (merchant.fullName)
+	Email        string // utilisé seulement à la création : c'est l'identifiant du dashboard Express
+	URL          string // boutique ScanNOrder publique, "" si inconnue
+}
+
+func (p ConnectAccountProfile) businessProfileParams() *stripe.AccountBusinessProfileParams {
+	bp := &stripe.AccountBusinessProfileParams{MCC: stripe.String(mccRestaurants)}
+	if name := strings.TrimSpace(p.BusinessName); name != "" {
+		bp.Name = stripe.String(name)
+	}
+	if p.URL != "" {
+		bp.URL = stripe.String(p.URL)
+	}
+	return bp
+}
+
+// settingsParams renvoie nil quand le nom ne donne pas de libellé de relevé
+// valide : Stripe le demandera alors au marchand pendant l'onboarding.
+func (p ConnectAccountProfile) settingsParams() *stripe.AccountSettingsParams {
+	descriptor := StatementDescriptor(p.BusinessName)
+	if descriptor == "" {
+		return nil
+	}
+	return &stripe.AccountSettingsParams{
+		Payments: &stripe.AccountSettingsPaymentsParams{StatementDescriptor: stripe.String(descriptor)},
+	}
+}
+
+// CreateExpressAccount creates a Stripe Connect Express account with required capabilities,
+// pre-filled with the establishment's profile.
+//
+// Le type d'entreprise n'est pas imposé : le marchand le choisit à
+// l'onboarding (société, ou entreprise individuelle pour un auto-entrepreneur).
+func (s *StripeManager) CreateExpressAccount(ctx context.Context, profile ConnectAccountProfile) (string, error) {
 	params := &stripe.AccountParams{
 		Type:    stripe.String(string(stripe.AccountTypeExpress)),
-		Email:   stripe.String(user.Email),
 		Country: stripe.String("FR"),
 		Capabilities: &stripe.AccountCapabilitiesParams{
 			CardPayments: &stripe.AccountCapabilitiesCardPaymentsParams{Requested: stripe.Bool(true)},
 			Transfers:    &stripe.AccountCapabilitiesTransfersParams{Requested: stripe.Bool(true)},
 		},
-		BusinessType: stripe.String("company"),
+		BusinessProfile: profile.businessProfileParams(),
+		Settings:        profile.settingsParams(),
 	}
+	if email := strings.TrimSpace(profile.Email); email != "" {
+		params.Email = stripe.String(email)
+	}
+	params.AddMetadata("merchant_id", profile.MerchantID)
 	params.Context = ctx
 
 	acc, err := s.client.Accounts.New(params)
@@ -76,6 +122,60 @@ func (s *StripeManager) CreateExpressAccount(ctx context.Context, user *auth.Use
 	}
 
 	return acc.ID, nil
+}
+
+// UpdateAccountProfile réaligne le nom, l'activité, l'URL et le libellé de
+// relevé d'un compte existant sur l'établissement (comptes créés avant le
+// pré-remplissage, ou nom modifié par le marchand). L'email n'est pas touché.
+func (s *StripeManager) UpdateAccountProfile(ctx context.Context, accountID string, profile ConnectAccountProfile) error {
+	params := &stripe.AccountParams{
+		BusinessProfile: profile.businessProfileParams(),
+		Settings:        profile.settingsParams(),
+	}
+	params.Context = ctx
+
+	_, err := s.client.Accounts.Update(accountID, params)
+	return err
+}
+
+// statementDescriptorReplacer replie les ligatures que la décomposition
+// Unicode ne traite pas.
+var statementDescriptorReplacer = strings.NewReplacer("œ", "oe", "Œ", "OE", "æ", "ae", "Æ", "AE", "ß", "ss")
+
+// StatementDescriptor dérive du nom de l'établissement un libellé de relevé
+// bancaire conforme à Stripe : 5 à 22 caractères latins, au moins une lettre,
+// sans < > \ ' " *. Accents retirés, majuscules, ponctuation réduite à
+// l'espace, au point et au tiret. Renvoie "" si le résultat n'est pas valide.
+func StatementDescriptor(name string) string {
+	decomposed := norm.NFD.String(statementDescriptorReplacer.Replace(name))
+
+	var b strings.Builder
+	pendingSpace := false
+	hasLetter := false
+	for _, r := range decomposed {
+		switch {
+		case unicode.Is(unicode.Mn, r):
+			continue // accent détaché par NFD
+		case r < unicode.MaxASCII && (unicode.IsLetter(r) || unicode.IsDigit(r) || r == '.' || r == '-'):
+			if pendingSpace && b.Len() > 0 {
+				b.WriteByte(' ')
+			}
+			pendingSpace = false
+			hasLetter = hasLetter || unicode.IsLetter(r)
+			b.WriteRune(unicode.ToUpper(r))
+		default:
+			pendingSpace = true
+		}
+	}
+
+	descriptor := b.String()
+	if len(descriptor) > 22 {
+		descriptor = strings.TrimSpace(descriptor[:22])
+	}
+	if len(descriptor) < 5 || !hasLetter {
+		return ""
+	}
+	return descriptor
 }
 
 // GetBankAccounts lists all external bank accounts for a Stripe Connect account.
@@ -112,9 +212,31 @@ func (s *StripeManager) GetBankAccounts(accountID string) ([]BankAccountInfo, er
 	return accounts, nil
 }
 
-// CreateBankAccountLink generates an AccountLink (type: account_update) to allow the merchant
-// to configure their IBAN/bank account on the Stripe Connect dashboard.
+// CreateBankAccountLink returns the URL where the merchant manages their IBAN/bank account.
+//
+// Un AccountLink account_update n'est accepté que si la plateforme collecte
+// elle-même les informations (requirement_collection = application, comptes
+// Custom). Les comptes Express créés par CreateExpressAccount sont collectés
+// par Stripe : le compte bancaire s'y gère depuis le dashboard Express (login
+// link), qui n'existe qu'une fois l'onboarding soumis — avant, c'est
+// l'onboarding lui-même qui demande l'IBAN.
 func (s *StripeManager) CreateBankAccountLink(accountID, returnURL, refreshURL string) (string, error) {
+	acc, err := s.client.Accounts.GetByID(accountID, nil)
+	if err != nil {
+		return "", err
+	}
+
+	if acc.Controller == nil || acc.Controller.RequirementCollection != stripe.AccountControllerRequirementCollectionApplication {
+		if !acc.DetailsSubmitted {
+			return s.CreateOnboardingLink(accountID, returnURL, refreshURL)
+		}
+		login, err := s.client.LoginLinks.New(&stripe.LoginLinkParams{Account: stripe.String(accountID)})
+		if err != nil {
+			return "", err
+		}
+		return login.URL, nil
+	}
+
 	params := &stripe.AccountLinkParams{
 		Account:    stripe.String(accountID),
 		RefreshURL: stripe.String(refreshURL),

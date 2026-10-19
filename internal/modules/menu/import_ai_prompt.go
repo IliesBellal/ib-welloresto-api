@@ -79,10 +79,7 @@ Couleur (color_groups, color_group_ref) :
 
 Ingrédients (ingredients) — seulement si le message de la photo les demande ; sinon ingredients est une liste vide pour chaque produit :
 - Reprends uniquement les ingrédients écrits dans la description du produit sur la carte. N'en déduis aucun du nom du produit ni de la recette habituelle : une « Margherita » sans description n'a aucun ingrédient.
-- Un ingrédient par élément cité, au singulier, première lettre en majuscule, sans quantité, sans mode de préparation ni adjectif de présentation : « tomates fraîches confites » → « Tomate » ; « 2 œufs bio » → « Œuf » ; « crème fraîche » reste « Crème fraîche ». Écris le même ingrédient de la même façon dans tous les produits.
-- Ignore le sel, le poivre, l'huile et l'eau de cuisson, sauf s'ils sont un élément distinctif du plat (« huile de truffe »).
-- category : meat (viandes, charcuterie), fish (poissons, fruits de mer), dairy (fromages, lait, crème, beurre, œufs), vegetables (légumes, herbes, champignons), fruits, grocery (féculents, pâtes, riz, farine, épices, sucre, chocolat), sauces (sauces, condiments, vinaigrettes), bakery (pains, pâtes à pizza, viennoiseries), other.
-- unit : l'unité naturelle de stock de l'ingrédient — G pour ce qui se pèse (fromage, viande, légumes, farine), CL ou ML pour un liquide (crème, sauce liquide, lait), PCE pour ce qui se compte (œuf, pain burger, tranche, galette).
+` + aiIngredientFormatRules + `
 
 Qualité :
 - confidence : high si la ligne est parfaitement lisible, medium en cas de doute léger, low si le nom ou le prix est incertain.

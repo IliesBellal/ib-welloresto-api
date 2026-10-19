@@ -62,10 +62,15 @@ func (r *AIDraftRepository) CreateDraft(ctx context.Context, d *AIDraft) error {
 	return err
 }
 
-// GetDraft lit un brouillon du marchand.
+// aiDraftPhotoSource restreint les lectures de brouillon à l'import photo :
+// la table compte aussi les générations de composition (source
+// ai_composition), qui ne sont que des lignes de décompte de crédit.
+const aiDraftPhotoSource = `source = 'ai_photo'`
+
+// GetDraft lit un brouillon photo du marchand.
 func (r *AIDraftRepository) GetDraft(ctx context.Context, merchantID, id string) (*AIDraft, error) {
 	d, err := scanAIDraft(dbx.GetDB(ctx, r.db).QueryRowContext(ctx,
-		`SELECT `+aiDraftColumns+` FROM menu_import_drafts WHERE id::text = ? AND merchant_id = ?`, id, merchantID))
+		`SELECT `+aiDraftColumns+` FROM menu_import_drafts WHERE id::text = ? AND merchant_id = ? AND `+aiDraftPhotoSource, id, merchantID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrAIDraftNotFound
 	}
@@ -77,7 +82,7 @@ func (r *AIDraftRepository) GetDraft(ctx context.Context, merchantID, id string)
 func (r *AIDraftRepository) ListOpenDrafts(ctx context.Context, merchantID string) ([]AIDraft, error) {
 	rows, err := dbx.GetDB(ctx, r.db).QueryContext(ctx, `
 		SELECT `+aiDraftColumns+` FROM menu_import_drafts
-		WHERE merchant_id = ? AND status IN ('pending', 'processing', 'ready', 'failed') AND expires_at > now()
+		WHERE merchant_id = ? AND `+aiDraftPhotoSource+` AND status IN ('pending', 'processing', 'ready', 'failed') AND expires_at > now()
 		ORDER BY created_at DESC`, merchantID)
 	if err != nil {
 		return nil, err
@@ -146,7 +151,7 @@ func (r *AIDraftRepository) MarkCommitted(ctx context.Context, merchantID, id st
 func (r *AIDraftRepository) AbandonDraft(ctx context.Context, merchantID, id string) (bool, error) {
 	res, err := dbx.GetDB(ctx, r.db).ExecContext(ctx, `
 		UPDATE menu_import_drafts SET status = 'expired', expires_at = now(), updated_at = now()
-		WHERE id::text = ? AND merchant_id = ? AND status IN ('pending', 'ready', 'failed')`, id, merchantID)
+		WHERE id::text = ? AND merchant_id = ? AND `+aiDraftPhotoSource+` AND status IN ('pending', 'ready', 'failed')`, id, merchantID)
 	if err != nil {
 		return false, err
 	}
@@ -154,7 +159,8 @@ func (r *AIDraftRepository) AbandonDraft(ctx context.Context, merchantID, id str
 	return n == 1, err
 }
 
-// CountUsedCredits compte les extractions décomptées du marchand.
+// CountUsedCredits compte les extractions décomptées du marchand, photos et
+// générations de composition confondues (un seul solde).
 func (r *AIDraftRepository) CountUsedCredits(ctx context.Context, merchantID string) (int, error) {
 	var n int
 	err := dbx.GetDB(ctx, r.db).QueryRowContext(ctx,

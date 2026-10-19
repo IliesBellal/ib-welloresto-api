@@ -59,6 +59,18 @@ func loadAIConfig() ai.AIConfig {
 				// Fermé par défaut : ouvert d'abord sur staging pour les tests.
 				Enabled: parseBool(os.Getenv("AI_TASK_MENU_OCR_ENABLED"), false),
 			},
+			// Composition d'un produit existant à partir de sa description :
+			// texte seul, par lots de produits. Consomme un crédit d'import photo
+			// par génération. Voir docs/composition-ia.md.
+			"menu_composition": {
+				Provider:  getEnv("AI_TASK_MENU_COMPOSITION_PROVIDER", "anthropic"),
+				Model:     getEnv("AI_TASK_MENU_COMPOSITION_MODEL", "claude-opus-5-5"),
+				Effort:    parseEffort(getEnv("AI_TASK_MENU_COMPOSITION_EFFORT", "low")),
+				MaxTokens: parseInt(os.Getenv("AI_TASK_MENU_COMPOSITION_MAX_TOKENS"), 8000),
+				Timeout:   parseDuration(os.Getenv("AI_TASK_MENU_COMPOSITION_TIMEOUT_MS"), 90*time.Second),
+				// Fermé par défaut, comme menu_ocr.
+				Enabled: parseBool(os.Getenv("AI_TASK_MENU_COMPOSITION_ENABLED"), false),
+			},
 		},
 	}
 }

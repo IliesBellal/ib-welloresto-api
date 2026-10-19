@@ -794,6 +794,41 @@ func (r *Repository) GetStripeAccountID(ctx context.Context, merchantID string) 
 	return accountID, err
 }
 
+// stripeAccountMerchant holds the establishment data pre-filled on its Stripe Connect account.
+type stripeAccountMerchant struct {
+	Name  string
+	Email string
+	Slug  string // code du QR principal, "" si absent
+}
+
+// GetStripeAccountMerchant reads the establishment name, email and main QR code
+// (same main QR as GetScanNOrderIntegration) used to pre-fill the Stripe account.
+func (r *Repository) GetStripeAccountMerchant(ctx context.Context, merchantID string) (*stripeAccountMerchant, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	const q = `
+		SELECT COALESCE(m.fullName, ''),
+		       COALESCE(m.email, ''),
+		       COALESCE((
+		           SELECT qr.code
+		           FROM   qrcodes qr
+		           WHERE  qr.merchant_id = m.id::text
+		             AND  qr.location_id IS NULL
+		             AND  qr.user_id     IS NULL
+		             AND  qr.deleted     = false
+		           ORDER  BY qr.qr_id
+		           LIMIT  1
+		       ), '')
+		FROM   merchant m
+		WHERE  m.id::text = ?`
+
+	var m stripeAccountMerchant
+	if err := db.QueryRowContext(ctx, q, merchantID).Scan(&m.Name, &m.Email, &m.Slug); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
 // UpsertStripeAccountID stores the Stripe connected account ID for a merchant.
 // It updates an existing stripe_accounts row first; if none exists, it inserts one.
 func (r *Repository) UpsertStripeAccountID(ctx context.Context, merchantID, accountID string) error {

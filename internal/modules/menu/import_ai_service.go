@@ -126,15 +126,26 @@ func (s *AIImportService) provider() (ai.LLMProvider, error) {
 
 // Credits rend le solde de crédits d'import photo du marchand.
 func (s *AIImportService) Credits(ctx context.Context, merchantID string) (AICredits, error) {
-	total := s.defaultCredits
-	override, ok, err := s.drafts.GetCreditsOverride(ctx, merchantID)
+	return aiCredits(ctx, s.drafts, merchantID, s.defaultCredits)
+}
+
+type aiCreditReader interface {
+	CountUsedCredits(ctx context.Context, merchantID string) (int, error)
+	GetCreditsOverride(ctx context.Context, merchantID string) (int, bool, error)
+}
+
+// aiCredits calcule le solde partagé par l'import photo et la composition par
+// IA : total (surcharge du staff, sinon défaut) − lectures décomptées.
+func aiCredits(ctx context.Context, store aiCreditReader, merchantID string, defaultCredits int) (AICredits, error) {
+	total := defaultCredits
+	override, ok, err := store.GetCreditsOverride(ctx, merchantID)
 	if err != nil {
 		return AICredits{}, err
 	}
 	if ok {
 		total = override
 	}
-	used, err := s.drafts.CountUsedCredits(ctx, merchantID)
+	used, err := store.CountUsedCredits(ctx, merchantID)
 	if err != nil {
 		return AICredits{}, err
 	}

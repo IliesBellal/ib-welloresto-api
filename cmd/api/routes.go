@@ -694,12 +694,18 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	if aiRegistry != nil {
 		menuAIRegistry = aiRegistry
 	}
+	menuAIDrafts := menuModule.NewAIDraftRepository(selectedDB)
 	menuAIImportService := menuModule.NewAIImportService(
-		menuModule.NewAIDraftRepository(selectedDB), menuAIPhotos, menuAIRegistry, menuImportService,
+		menuAIDrafts, menuAIPhotos, menuAIRegistry, menuImportService,
 		log.Named("menu_import_ai"), cfg.ImportAI.DefaultCredits,
 	)
 	menuAIImportService.StartMaintenance(context.Background())
 	menuAIImportH := menuModule.NewAIImportHandler(menuAIImportService)
+	// Composition par IA d'un produit existant (tâche menu_composition, fermée
+	// par défaut) : même solde de crédits que l'import photo.
+	menuCompositionAIH := menuModule.NewCompositionAIHandler(menuModule.NewCompositionAIService(
+		menuAIDrafts, menuRepoLegacy, menuAIRegistry, log.Named("menu_composition_ai"), cfg.ImportAI.DefaultCredits,
+	))
 	allergensH := allergensModule.NewHandler(allergensService)
 	tagsH := tagsModule.NewHandler(tagsService)
 	printersH := printersModule.NewHandler(printersService)
@@ -1366,6 +1372,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			Patch("/products/bulk/attributes", menuH.BulkSetProductsAttributes) // used by: back-office
 		r.With(middleware.RequirePermission(permission.CatalogManage)).
 			Patch("/products/bulk/components", menuH.BulkSetProductsComponents) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Post("/products/composition/ai/preview", menuCompositionAIH.PreviewCompositions) // used by: back-office
+		r.With(middleware.RequirePermission(permission.CatalogManage)).
+			Post("/products/composition/ai/apply", menuCompositionAIH.ApplyCompositions) // used by: back-office
 		r.With(middleware.RequirePermission(permission.CatalogManage)).
 			Post("/products/bulk/delete", menuH.BulkDeleteProducts) // used by: back-office
 		r.With(middleware.RequirePermission(permission.CatalogManage)).
