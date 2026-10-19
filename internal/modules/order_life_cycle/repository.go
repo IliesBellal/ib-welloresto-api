@@ -1416,6 +1416,11 @@ func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models
 	// leur propre TTC/HT/TVA.
 	r.setOrderDefaults(ctx, req)
 
+	if err := r.resolveLegacyDiscountIDs(ctx, req.MerchantID, req.Order.Products); err != nil {
+		log.Error("resolveLegacyDiscountIDs failure " + err.Error())
+		return nil, err
+	}
+
 	orderID, err := r.insertOrderBase(ctx, req)
 	if err != nil {
 		log.Error("insertOrderBase failure" + err.Error())
@@ -1687,6 +1692,10 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 
 	if len(req.Order.Products) == 0 {
 		return models.ErrCartEmpty
+	}
+
+	if err := r.resolveLegacyDiscountIDs(ctx, req.MerchantID, req.Order.Products); err != nil {
+		return err
 	}
 
 	// 2. Suppression des items retirés du panier et de tous leurs sous-éléments.
@@ -2639,6 +2648,56 @@ func (r *OrdersLifeCycleRepository) upsertOrderItemDiscountRedemption(ctx contex
 	`, discountIDNew, orderID, orderItemID, merchantID, basePrice-price); err != nil {
 		log.Warn("discount_redemptions upsert failed", zap.String("order_item_id", orderItemID), zap.Error(err))
 	}
+}
+
+// resolveLegacyDiscountIDs remplace, dans les lignes du payload, un
+// discount_id au format legacy "discount-<uuid>" par la clé entière
+// discounts.discount_id_new avant toute écriture dans orderitems.discount_id
+// (colonne integer). Hotfix 2026-10-19 : le pricing (orders.GetDiscounts)
+// renvoie encore discounts.discount_id (varchar), donc "discount-<uuid>" pour
+// toute promotion créée depuis le Sprint 2 — la création/édition de commande
+// échouait en 22P02. Voir docs/decisions.md.
+//
+// Un discount_id déjà numérique n'est jamais touché. Une valeur introuvable
+// pour ce merchant (ou vide) est remise à nil : la ligne garde le prix
+// envoyé, seule l'attribution de la remise est perdue — plutôt que de
+// bloquer la vente en caisse. Une erreur SQL est remontée : on est dans la
+// transaction de la commande, qui serait de toute façon invalide ensuite.
+func (r *OrdersLifeCycleRepository) resolveLegacyDiscountIDs(ctx context.Context, merchantID string, products []models.OrderProductPayload) error {
+	db := dbx.GetDB(ctx, r.database)
+	log := logger.FromContext(ctx)
+
+	resolved := map[string]*string{}
+	for i := range products {
+		p := &products[i]
+		if p.DiscountID == nil {
+			continue
+		}
+		legacyID := strings.TrimSpace(*p.DiscountID)
+		if _, err := strconv.Atoi(legacyID); err == nil {
+			continue
+		}
+
+		newID, ok := resolved[legacyID]
+		if !ok && legacyID != "" {
+			var discountIDNew int64
+			err := db.QueryRowContext(ctx, `
+				SELECT discount_id_new FROM discounts WHERE discount_id = ? AND merchant_id = ?
+			`, legacyID, merchantID).Scan(&discountIDNew)
+			switch {
+			case err == nil:
+				newID = helpers.Int64ToStringPtr(discountIDNew)
+			case errors.Is(err, sql.ErrNoRows):
+				log.Warn("legacy discount_id not found, discount attribution dropped",
+					zap.String("discount_id", legacyID), zap.String("product_id", p.ProductID))
+			default:
+				return fmt.Errorf("resolve legacy discount_id %q: %w", legacyID, err)
+			}
+		}
+		resolved[legacyID] = newID
+		p.DiscountID = newID
+	}
+	return nil
 }
 
 // insertExtrasWithoutsConfigs does bulk inserts for extras, withouts, configurations

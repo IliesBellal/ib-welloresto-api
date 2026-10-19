@@ -445,7 +445,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		INNER JOIN tva_categories tva_in ON tva_in.tva_id = p.tva_in_id
 		INNER JOIN tva_categories tva_delivery ON tva_delivery.tva_id = p.tva_delivery_id
 		INNER JOIN tva_categories tva_take_away ON tva_take_away.tva_id = p.tva_take_away_id
-		LEFT JOIN discounts d ON d.discount_id = ` + castChar("oi.discount_id") + `
+		LEFT JOIN discounts d ON d.discount_id_new = oi.discount_id
 		LEFT JOIN order_comments oc ON oc.order_id = o.order_id AND oc.order_item_id = oi.order_item_id
 		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
 		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
