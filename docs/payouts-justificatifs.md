@@ -47,7 +47,8 @@ Stripe ── payout.paid ──► webhook ──► payout_documents (pending)
    la facture, elle, n'est jamais émise deux fois (une par `payout_id`).
 4. **Rien d'indéfini ne bloque l'envoi** : une mention légale inconnue est omise
    du PDF, un compte Stripe sans restaurateur est identifié par son numéro de
-   compte, un restaurateur sans e-mail est remplacé par `testRecipient`.
+   compte, un restaurateur sans aucune adresse connue est remplacé par
+   `testRecipient` (voir « Destinataire »).
 
 Code : [internal/modules/payouts/](../internal/modules/payouts/).
 
@@ -71,7 +72,7 @@ plutôt que de faire échouer le relevé.
 | Commission négative | `log.Error`, aucune facture, le relevé part seul. Commission nulle : pas de facture, sans bruit. |
 | Numérotation | `<série>-<année>-<n°6 chiffres>`, compteur `invoice_counters` incrémenté dans la transaction de l'insertion de la facture : jamais de trou. |
 | Mentions légales, série | En dur dans [legal.go](../internal/modules/payouts/legal.go), sans variable d'environnement. |
-| Phase de test, destinataire | En dur, interrupteur unique [internal/docsmode](../internal/docsmode/docsmode.go). |
+| Phase de test, destinataire | En dur dans [internal/docsmode](../internal/docsmode/docsmode.go) : un interrupteur pour les relevés, un pour les factures ; règle du destinataire commune (voir « Destinataire »). |
 | Émetteur | Wello Resto, exploité par BINYA SAS (capital 1 000 €, SIREN 103020558, 13 rue Principale, 57450 Theding). RCS et n° de TVA inconnus : lignes omises de la facture. |
 | Mail | Un seul mail, deux pièces jointes (une seule si pas de facture). |
 
@@ -130,18 +131,59 @@ Stripe ── invoice.paid ──► webhook ──► subscription_invoice_docu
 Vérifié en mode test sur une vraie facture d'abonnement (79 €) : lecture de la
 facture, période, téléchargement du PDF (39 Ko) et rattachement à l'établissement.
 
+## Destinataire
+
+Les trois documents (relevé de versement, facture de commission, facture
+d'abonnement) suivent la même règle, dans `docsmode.Recipient`
+([internal/docsmode](../internal/docsmode/docsmode.go)) :
+
+1. le **responsable** de l'établissement : le premier admin actif
+   (`users_rights.admin = TRUE AND enabled = TRUE`, utilisateur le plus ancien) ;
+2. à défaut, l'adresse de l'**établissement** (`merchant.email`) ;
+3. à défaut, `docsmode.TestRecipient`, avec une note dans le mail.
+
+C'est la règle déjà utilisée pour les rappels de fin d'essai et les relances
+d'impayés (`GetMerchantOwnerContact` dans `subscriptions`, `billing`,
+`dunning`). Décidé le 2026-10-20 : `merchant.email` est saisi à la création
+de l'établissement (`POST /v1/signup` ou `POST /pos/create`) et est souvent vide
+(constaté sur staging).
+
+Depuis le 2026-10-20, `merchant.email` se modifie dans le back-office :
+**Paramètres → Établissement → Général**, champ « E-mail de l'établissement ».
+Côté API, c'est `info.email` de `GET` / `PATCH /pos/settings`. La valeur est
+nettoyée de ses espaces, peut être vide, et doit être une adresse seule avec un
+domaine : sinon 400 `invalid input` (`validMerchantEmail` dans
+`internal/modules/pos/service.go`). L'écran fait la même vérification avant
+l'envoi. Ce champ reste un **repli** : tant que l'établissement a un admin actif
+avec une adresse, c'est le responsable qui reçoit les documents.
+
+**À faire plus tard : compte propriétaire d'établissement.** Il n'existe pas
+aujourd'hui de notion de propriétaire : « premier admin actif » est une
+approximation (un admin ajouté par erreur, ou le compte d'un associé, peut être
+le plus ancien). Quand un compte propriétaire sera créé (un utilisateur désigné
+comme propriétaire de l'établissement, distinct des droits admin), son adresse
+**primera sur cette règle** pour tous les documents financiers, ainsi que pour
+les rappels d'essai et les relances d'impayés. Il suffira de le lire en premier
+dans `docsmode.Recipient` et dans les `GetMerchantOwnerContact`.
+
 ## Phase de test (état actuel)
 
-`docsmode.TestMode = true` ([internal/docsmode](../internal/docsmode/docsmode.go),
-interrupteur **commun** aux justificatifs de versement et aux factures
-d'abonnement) :
+Deux interrupteurs dans [internal/docsmode](../internal/docsmode/docsmode.go) :
 
-- **tous** les documents partent à `iliesbellal@gmail.com` (objet préfixé
-  `[TEST] <restaurateur>`, bandeau « phase de test » dans le corps) ;
-- les factures de commission sont numérotées `TEST-2026-000001…`, bandeau
-  « SPÉCIMEN » sur le PDF, compteur séparé : la série légale `WR-` n'est pas
-  consommée (les factures d'abonnement sont celles de Stripe, non concernées) ;
-- le mail « Virement en cours » existant continue de partir aux restaurateurs.
+- `StatementsTestMode = false` : les **relevés de versement sont en réel**
+  depuis le 2026-10-20. Ils partent au responsable (voir « Destinataire »), sans
+  bandeau « SPÉCIMEN ». Les relevés déjà envoyés en test ne sont pas renvoyés
+  (payouts déjà `done`). Le relevé ne contient plus la phrase sur la facturation
+  mensuelle de la commission, ni dans le PDF ni dans le mail.
+- `TestMode = true` : les **factures** (commission et abonnement) restent en
+  test :
+  - elles partent à `iliesbellal@gmail.com` (objet préfixé
+    `[TEST] <restaurateur>`, bandeau « phase de test » dans le corps) ;
+  - les factures de commission sont numérotées `TEST-2026-000001…`, avec un bandeau
+    « SPÉCIMEN » sur le PDF et un compteur séparé : la série légale `WR-` n'est pas
+    consommée (les factures d'abonnement sont celles de Stripe, non concernées).
+
+Le mail « Virement en cours » existant continue de partir aux restaurateurs.
 
 ## Passage en production
 
@@ -152,7 +194,9 @@ d'abonnement) :
    aujourd'hui : une facture avec ligne de TVA doit porter le n° de TVA de
    l'émetteur). Rien ne bloque s'ils restent vides, mais les factures réelles
    seraient alors incomplètes.
-3. Passer `docsmode.TestMode` à `false` : destinataire = `merchant.email`, série `WR-`.
+3. Passer `docsmode.TestMode` à `false` pour les factures : envoi au responsable
+   (voir « Destinataire »), série `WR-`. Les relevés y sont déjà
+   (`StatementsTestMode = false`).
 4. Décider du sort de l'ancien mail « Virement en cours » (`SendPayoutPaidNotification`) :
    il fait doublon avec le nouveau mail ; à retirer de `HandlePayoutPaid`.
 5. Régénérer les documents des payouts passés avec la commande de rattrapage
@@ -194,3 +238,5 @@ live n'existe pas avec une clé `sk_test_`.
   différente de l'identité de la facture (BINYA SAS, Theding) ; à harmoniser quand
   ce mail sera retiré.
 - **Renvoi d'un justificatif** par mail depuis le back-office : non fait.
+- **Compte propriétaire d'établissement** : à créer, il primera sur la règle du
+  destinataire (voir « Destinataire »).

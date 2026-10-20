@@ -210,11 +210,23 @@ func (r *Repository) hasMultiMerchantOwner(ctx context.Context, merchantID strin
 type OwnerContact struct {
 	Name  string
 	Email string
+	// MerchantName/MerchantAddress identifient l'établissement dans les mails
+	// (Name est celui de l'admin quand il y en a un) : une même adresse peut
+	// recevoir les mails de plusieurs établissements d'un groupe.
+	MerchantName    string
+	MerchantAddress string
 }
 
 func (r *Repository) GetMerchantOwnerContact(ctx context.Context, merchantID string) (OwnerContact, error) {
 	db := dbx.GetDB(ctx, r.database)
 	var c OwnerContact
+	var merchantEmail string
+	if err := db.QueryRowContext(ctx, `
+		SELECT COALESCE(fullname, ''), COALESCE(address, ''), COALESCE(email, '')
+		FROM merchant WHERE id::text = ?
+	`, merchantID).Scan(&c.MerchantName, &c.MerchantAddress, &merchantEmail); err != nil {
+		return c, err
+	}
 	err := db.QueryRowContext(ctx, `
 		SELECT u.name, u.email
 		FROM users_rights ur
@@ -224,7 +236,7 @@ func (r *Repository) GetMerchantOwnerContact(ctx context.Context, merchantID str
 		LIMIT 1
 	`, merchantID).Scan(&c.Name, &c.Email)
 	if err == sql.ErrNoRows {
-		err = db.QueryRowContext(ctx, `SELECT fullname, email FROM merchant WHERE id::text = ?`, merchantID).Scan(&c.Name, &c.Email)
+		c.Name, c.Email, err = c.MerchantName, merchantEmail, nil
 	}
 	return c, err
 }

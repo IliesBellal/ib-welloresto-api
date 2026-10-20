@@ -28,8 +28,10 @@ type Payout struct {
 
 // Model léger pour le Merchant dans le contexte du Payout
 type PayoutMerchant struct {
+	ID           string
 	Email        string
 	BusinessName string
+	Address      string
 }
 
 type Payment struct {

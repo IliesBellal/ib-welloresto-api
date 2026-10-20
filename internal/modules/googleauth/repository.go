@@ -21,10 +21,9 @@ func NewRepository(db *sql.DB) *Repository {
 }
 
 // FindTokenByGoogleSub returns the users_rights.token for the user whose
-// google_sub matches, or "" if no such user exists. Same arbitrary-first-match
-// convention as auth.AuthRepository.Login when a user holds several
-// users_rights links (no ORDER BY there either) — not something this
-// chantier changes.
+// google_sub matches, or "" if no such user exists or none of their links is
+// active. Same link filter and pick order as auth.AuthRepository.Login:
+// enabled and login_enabled links only, oldest first.
 func (r *Repository) FindTokenByGoogleSub(ctx context.Context, googleSub string) (string, error) {
 	db := dbx.GetDB(ctx, r.database)
 
@@ -34,6 +33,9 @@ func (r *Repository) FindTokenByGoogleSub(ctx context.Context, googleSub string)
 		FROM users u
 		INNER JOIN users_rights ur ON ur.user_id = u.user_id
 		WHERE u.google_sub = ?
+		  AND ur.enabled = TRUE
+		  AND ur.login_enabled = TRUE
+		ORDER BY ur.id ASC
 		LIMIT 1
 	`, googleSub).Scan(&token)
 	if err == sql.ErrNoRows {

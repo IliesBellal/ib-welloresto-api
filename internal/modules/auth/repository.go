@@ -336,6 +336,12 @@ WHERE
         OR (lower(u.email)=lower(?) AND u.email <> '' AND u.email IS NOT NULL)
         OR ur.token = ?
     )
+  -- Same link filter as GetUserByToken: a link unlinked from the back office
+  -- (enabled = FALSE) must never be handed out as the session token.
+  AND ur.enabled = TRUE
+  AND ur.login_enabled = TRUE
+-- Deterministic pick for a user linked to several merchants: oldest link first.
+ORDER BY ur.id ASC
 LIMIT 1;
 `, joinCast)
 
@@ -397,6 +403,11 @@ LIMIT 1;
 	)
 
 	if err == sql.ErrNoRows {
+		if token == "" {
+			if noLinkErr := r.credentialsWithoutActiveLink(ctx, username, plainPwd); noLinkErr != nil {
+				return nil, noLinkErr
+			}
+		}
 		logger.FromContext(ctx).Warn("No user found for '" + username + "' with token '" + token + "'")
 		return nil, models.ErrUserNotFound
 	}
@@ -429,6 +440,47 @@ LIMIT 1;
 	}
 
 	return data, nil
+}
+
+// credentialsWithoutActiveLink runs only after Login found no row for a
+// username/password attempt. It tells "wrong credentials" apart from "right
+// credentials, but every users_rights link is disabled": the latter returns
+// ErrNoActiveMerchant (or ErrAccountDisabled when users.enabled is false
+// too). The password is always checked first, so a wrong password still
+// yields nil and never reveals that the account exists.
+func (r *AuthRepository) credentialsWithoutActiveLink(ctx context.Context, username, plainPwd string) error {
+	if strings.TrimSpace(username) == "" || plainPwd == "" {
+		return nil
+	}
+	db := dbx.GetDB(ctx, r.database)
+	rows, err := db.QueryContext(ctx, `
+SELECT u.password, u.enabled
+FROM users u
+WHERE (UPPER(u.name)=UPPER(?) AND u.name <> '' AND u.name IS NOT NULL)
+   OR (lower(u.email)=lower(?) AND u.email <> '' AND u.email IS NOT NULL)
+`, username, username)
+	if err != nil {
+		logger.FromContext(ctx).Error("credentialsWithoutActiveLink query failed " + err.Error())
+		return nil
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var password sql.NullString
+		var enabled bool
+		if err := rows.Scan(&password, &enabled); err != nil {
+			logger.FromContext(ctx).Error("credentialsWithoutActiveLink scan failed " + err.Error())
+			return nil
+		}
+		if !password.Valid || password.String == "" || !helpers.PasswordMatches(plainPwd, password.String) {
+			continue
+		}
+		if !enabled {
+			return models.ErrAccountDisabled
+		}
+		return models.ErrNoActiveMerchant
+	}
+	return nil
 }
 
 // attachRolePermissions loads role_permissions.permission_key for data's role
@@ -887,6 +939,11 @@ SELECT
 FROM merchant m
 INNER JOIN users_rights ur ON ur.merchant_id = %s
 WHERE ur.user_id IS NOT NULL AND ur.user_id = ?
+  -- Only links the user can actually open a session on (same filter as
+  -- GetUserByToken): a merchant they were unlinked from is not offered.
+  AND ur.enabled = TRUE
+  AND ur.login_enabled = TRUE
+ORDER BY ur.id ASC
 `, authMerchantJoinCast())
 	rows, err := db.QueryContext(ctx, query, userID)
 	if err != nil {

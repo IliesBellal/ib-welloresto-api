@@ -168,7 +168,9 @@ func (m *mailer) send(from, to, subject string, templateName string, data interf
 // RenderTemplate is a public helper function to render templates from the embedded FS
 // This allows other services (like BrevoMailer) to reuse the same templates
 func RenderTemplate(templateName string, data interface{}) (string, error) {
-	tmpl, err := template.ParseFS(templateFS, "templates/"+templateName)
+	// Le template demandé en premier (c'est lui qui est exécuté), puis les blocs
+	// partagés (partial_*.html, ex. "establishment").
+	tmpl, err := template.ParseFS(templateFS, "templates/"+templateName, "templates/partial_*.html")
 	if err != nil {
 		return "", fmt.Errorf("failed to parse template %s: %w", templateName, err)
 	}

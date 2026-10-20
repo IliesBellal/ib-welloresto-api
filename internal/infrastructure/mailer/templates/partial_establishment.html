@@ -1,0 +1,12 @@
+{{/* Bloc « établissement » des mails adressés au restaurateur : plusieurs
+établissements d'un même groupe peuvent recevoir leurs mails à la même adresse.
+Appel : {{ template "establishment" .Establishment }} (mailer.Establishment). */}}
+{{ define "establishment" }}{{ if .Name }}
+<table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 20px 0;">
+    <tr>
+        <td style="font-size:13px; color:#333; background-color:#f4f4f5; border-radius:6px; padding:10px 12px; line-height:20px;">
+            Établissement : <strong>{{ .Name }}</strong>{{ if .Address }}<br>{{ .Address }}{{ end }}{{ if .ID }}<br>Identifiant Wello Resto : {{ .ID }}{{ end }}
+        </td>
+    </tr>
+</table>
+{{ end }}{{ end }}

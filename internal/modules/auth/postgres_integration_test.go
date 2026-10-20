@@ -4,12 +4,14 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"testing"
 	"time"
 
 	"welloresto-api/internal/database/dbx/pgtest"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/models"
 )
 
 func TestAuthRepository_Postgres(t *testing.T) {
@@ -183,6 +185,28 @@ func TestAuthRepository_Postgres(t *testing.T) {
 	}
 	if loginRow.UserID != userID {
 		t.Fatalf("unexpected login-by-email row: %+v", loginRow)
+	}
+
+	// Unlinked from the back office (users_rights.enabled = false): the link is
+	// neither offered by GetMerchants nor usable by Login, and a correct
+	// password reports no_active_merchant instead of a bogus session.
+	if _, err := db.ExecContext(ctx, `UPDATE users_rights SET enabled = false WHERE user_id = $1`, userID); err != nil {
+		t.Fatalf("disable link: %v", err)
+	}
+	if _, err := repo.Login(ctx, "itest-auth@example.com", "itest-password", ""); !errors.Is(err, models.ErrNoActiveMerchant) {
+		t.Fatalf("Login (all links disabled) err = %v, want ErrNoActiveMerchant", err)
+	}
+	if _, err := repo.Login(ctx, "itest-auth@example.com", "wrong-password", ""); !errors.Is(err, models.ErrUserNotFound) {
+		t.Fatalf("Login (all links disabled, wrong password) err = %v, want ErrUserNotFound", err)
+	}
+	if _, err := repo.Login(ctx, "", "", rightsToken); !errors.Is(err, models.ErrUserNotFound) {
+		t.Fatalf("Login (disabled token) err = %v, want ErrUserNotFound", err)
+	}
+	if merchants, err := repo.GetMerchants(ctx, userID); err != nil || len(merchants) != 0 {
+		t.Fatalf("GetMerchants (all links disabled) = %+v, %v; want none", merchants, err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE users_rights SET enabled = true WHERE user_id = $1`, userID); err != nil {
+		t.Fatalf("re-enable link: %v", err)
 	}
 
 	// GetUserByPIN: enabled/login_enabled boolean literal fix.

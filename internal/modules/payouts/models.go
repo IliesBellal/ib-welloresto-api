@@ -45,7 +45,10 @@ type Merchant struct {
 	Address   string
 	SIRET     string
 	VATNumber string
-	Email     string
+	Email     string // adresse de l'établissement (merchant.email)
+	// OwnerEmail : adresse du responsable (premier admin actif), destinataire
+	// prioritaire des documents (docsmode.Recipient).
+	OwnerEmail string
 }
 
 // ChannelTotal est le total des ventes d'un canal.

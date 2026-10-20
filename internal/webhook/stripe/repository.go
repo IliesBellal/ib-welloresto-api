@@ -137,14 +137,14 @@ func (r *mysqlRepo) GetMerchantByStripeAccountID(cdb context.Context, accountID 
 		joinCast = "CAST(m.id AS TEXT)"
 	}
 	query := fmt.Sprintf(`
-        SELECT m.email, m.fullName
+        SELECT %s, m.email, COALESCE(m.fullName, ''), COALESCE(m.address, '')
         FROM stripe_accounts sa
         INNER JOIN merchant m on sa.merchant_id = %s
         WHERE sa.account_id = ?
-        AND m.email IS NOT NULL
-    `, joinCast)
+        AND m.email IS NOT NULL AND m.email <> ''
+    `, joinCast, joinCast)
 
-	err := db.QueryRowContext(cdb, query, accountID).Scan(&pm.Email, &pm.BusinessName)
+	err := db.QueryRowContext(cdb, query, accountID).Scan(&pm.ID, &pm.Email, &pm.BusinessName, &pm.Address)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // Pas d'erreur, juste pas de résultat

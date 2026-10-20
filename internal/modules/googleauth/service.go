@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"welloresto-api/internal/models"
 	authModule "welloresto-api/internal/modules/auth"
 )
 
@@ -67,6 +68,14 @@ func (s *Service) authenticateClaims(ctx context.Context, claims *Claims) (Authe
 	} else if token != "" {
 		return s.sessionFromToken(ctx, token)
 	}
+	// google_sub known but every users_rights link is disabled (unlinked from
+	// the back office): the account exists, so never fall through to the
+	// email branches — they would send the client into the signup tunnel.
+	if userID, err := s.repo.FindUserIDByGoogleSub(ctx, claims.Sub); err != nil {
+		return AuthenticateResponse{}, err
+	} else if userID != "" {
+		return AuthenticateResponse{}, models.ErrNoActiveMerchant
+	}
 
 	// google_sub unknown: resolve by email.
 	existing, err := s.repo.FindUserByEmail(ctx, strings.TrimSpace(claims.Email))
@@ -94,7 +103,7 @@ func (s *Service) authenticateClaims(ctx context.Context, claims *Claims) (Authe
 		return AuthenticateResponse{}, err
 	}
 	if token == "" {
-		return AuthenticateResponse{}, errors.New("googleauth: linked google_sub but found no users_rights token")
+		return AuthenticateResponse{}, models.ErrNoActiveMerchant
 	}
 	return s.sessionFromToken(ctx, token)
 }

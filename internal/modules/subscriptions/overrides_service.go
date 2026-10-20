@@ -200,8 +200,12 @@ func (s *Service) sendTrialReminder(ctx context.Context, o Override, deadline ti
 	if err != nil {
 		return err
 	}
-	s.mailer.SendAsync("Wello Resto", mailer.InvoiceEmail, contact.Email, "Votre accès gratuit se termine bientôt", "trial_expiry_reminder.html", map[string]interface{}{
-		"MerchantName":  contact.Name,
+	// Une même adresse peut recevoir les mails de plusieurs établissements d'un
+	// groupe : le bloc "establishment" du template les distingue.
+	est := mailer.Establishment{ID: o.MerchantID, Name: contact.MerchantName, Address: contact.MerchantAddress}
+	s.mailer.SendAsync("Wello Resto", mailer.InvoiceEmail, contact.Email, "Votre accès gratuit se termine bientôt"+est.SubjectSuffix(), "trial_expiry_reminder.html", map[string]interface{}{
+		"MerchantName":  contact.MerchantName,
+		"Establishment": est,
 		"DaysRemaining": daysRemaining,
 		"TrialEndsAt":   deadline.Format("02/01/2006"),
 	})

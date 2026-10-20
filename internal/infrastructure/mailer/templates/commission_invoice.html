@@ -14,6 +14,7 @@
             <p style="font-size:12px; color:#8a5a00; background-color:#fff4d6; border-radius:6px; padding:10px 12px; line-height:18px;">{{ .TestNotice }}</p>
             {{ end }}
             <h1 style="font-size:24px; color:#000; margin:0 0 16px 0;">Votre facture de commission — {{ .Month }}</h1>
+            {{ template "establishment" .Establishment }}
             <p style="font-size:14px; color:#333; line-height:22px;">
                 Bonjour l'équipe {{ .MerchantName }},<br>
                 La commission Wello Resto prélevée sur vos encaissements de {{ .Month }} s'élève à

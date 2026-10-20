@@ -136,7 +136,7 @@ func (s *Service) Process(ctx context.Context, p Pending) error {
 	}
 	if merchant == nil {
 		// Le relevé part quand même : identifié par le compte Stripe, il arrive
-		// chez testRecipient.
+		// chez testRecipient (aucune adresse connue).
 		s.log.Error("[payouts] aucun restaurateur pour ce compte Stripe",
 			zap.String("payout_id", p.PayoutID), zap.String("account_id", p.AccountID))
 		merchant = &Merchant{Name: p.AccountID}
@@ -175,7 +175,7 @@ func (s *Service) Process(ctx context.Context, p Pending) error {
 	statementName := "releve-versement-" + p.ArrivalDate.In(parisLocation).Format("2006-01-02") + ".pdf"
 
 	// L'archivage est un plus : son échec n'empêche pas d'envoyer le relevé.
-	recipient, notice := recipientFor(merchant)
+	recipient, notice := recipientFor(merchant, statementsTestMode)
 	done := Done{
 		MerchantID:   merchant.ID,
 		Recipient:    recipient,
@@ -193,6 +193,7 @@ func (s *Service) Process(ctx context.Context, p Pending) error {
 	}
 
 	data := mailer.PayoutDocumentsData{
+		Establishment: merchant.establishment(),
 		MerchantName:  merchant.Name,
 		PayoutID:      p.PayoutID,
 		Amount:        formatEUR(p.Amount),
@@ -354,7 +355,7 @@ func (s *Service) deliverInvoice(ctx context.Context, inv Invoice) error {
 	invoiceName := "facture-" + inv.Number + ".pdf"
 	recapName := "recapitulatif-commissions-" + inv.PeriodMonth.Format("2006-01") + ".pdf"
 
-	recipient, notice := recipientFor(merchant)
+	recipient, notice := recipientFor(merchant, invoicesTestMode)
 	sent := InvoiceSent{
 		Recipient:  recipient,
 		InvoiceKey: s.archive(ctx, merchant.ID, "invoices/"+inv.Number, invoiceName, invoicePDF),
@@ -362,6 +363,7 @@ func (s *Service) deliverInvoice(ctx context.Context, inv Invoice) error {
 	}
 
 	data := mailer.CommissionInvoiceData{
+		Establishment: merchant.establishment(),
 		MerchantName:  merchant.Name,
 		InvoiceNumber: inv.Number,
 		Month:         monthLabel(inv.PeriodMonth),

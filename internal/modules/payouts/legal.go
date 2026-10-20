@@ -14,15 +14,20 @@ import (
 // justificatifs : une mention vide est simplement omise du document.
 
 const (
-	// documentsTestMode : tant qu'il vaut true, les justificatifs ne partent PAS
-	// chez les restaurateurs mais à testRecipient, et les factures portent la
-	// série d'essai (TEST-…), qui ne consomme pas la numérotation légale. Le
-	// passage en réel (false) est décrit dans docs/payouts-justificatifs.md.
-	// L'interrupteur est partagé avec les factures d'abonnement : internal/docsmode.
-	documentsTestMode = docsmode.TestMode
+	// statementsTestMode : tant qu'il vaut true, les relevés de versement ne
+	// partent PAS chez les restaurateurs mais à testRecipient, avec un bandeau
+	// « SPÉCIMEN ». Ils sont en réel depuis le 2026-10-20.
+	statementsTestMode = docsmode.StatementsTestMode
 
-	// testRecipient reçoit tous les justificatifs en phase de test, et ceux
-	// d'un restaurateur sans adresse e-mail une fois en réel.
+	// invoicesTestMode : même chose pour les factures de commission, qui
+	// portent en plus la série d'essai (TEST-…), qui ne consomme pas la
+	// numérotation légale. Le passage en réel (false) est décrit dans
+	// docs/payouts-justificatifs.md. L'interrupteur est partagé avec les
+	// factures d'abonnement : internal/docsmode.
+	invoicesTestMode = docsmode.TestMode
+
+	// testRecipient reçoit tous les documents en phase de test, et ceux d'un
+	// restaurateur sans adresse e-mail une fois en réel.
 	testRecipient = docsmode.TestRecipient
 
 	// vatRatePercent : TVA appliquée à la commission de la plateforme.
@@ -85,20 +90,21 @@ func (i issuerIdentity) lines() []string {
 
 // invoiceSeries renvoie la série de numérotation en vigueur.
 func invoiceSeries() string {
-	if documentsTestMode {
+	if invoicesTestMode {
 		return seriesTest
 	}
 	return seriesLive
 }
 
-// recipientFor renvoie l'adresse qui reçoit les justificatifs d'un marchand, et
-// une note à afficher dans le mail quand ce n'est pas lui qui les reçoit.
-func recipientFor(m *Merchant) (to, notice string) {
-	switch {
-	case documentsTestMode:
-		return testRecipient, "Phase de test : ce mail est destiné à " + m.Name + " (" + m.Email + ") et vous est adressé à sa place."
-	case strings.TrimSpace(m.Email) == "":
-		return testRecipient, "Aucune adresse e-mail n'est renseignée pour " + m.Name + " : ses justificatifs vous sont adressés."
-	}
-	return m.Email, ""
+// recipientFor renvoie l'adresse qui reçoit un document d'un marchand (son
+// responsable, voir docsmode.Recipient), et une note à afficher dans le mail
+// quand ce n'est pas lui qui le reçoit.
+func recipientFor(m *Merchant, testMode bool) (to, notice string) {
+	return docsmode.Recipient(testMode, m.Name, m.OwnerEmail, m.Email)
+}
+
+// establishment identifie le marchand dans les mails (nom, adresse,
+// merchant_id) : une même adresse peut recevoir ceux de plusieurs établissements.
+func (m *Merchant) establishment() mailer.Establishment {
+	return mailer.Establishment{ID: m.ID, Name: m.Name, Address: m.Address}
 }

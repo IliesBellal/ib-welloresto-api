@@ -170,9 +170,11 @@ func TestIssuerLinesOmitUnknownMentions(t *testing.T) {
 }
 
 func TestRecipientFor(t *testing.T) {
-	m := &Merchant{Name: "Chez Camille", Email: "camille@example.com"}
-	to, notice := recipientFor(m)
-	if to != testRecipient || !strings.Contains(notice, "Chez Camille") {
+	m := &Merchant{Name: "Chez Camille", Email: "camille@example.com", OwnerEmail: "patron@example.com"}
+	if to, notice := recipientFor(m, false); to != "patron@example.com" || notice != "" {
+		t.Errorf("recipientFor = %q, %q : en réel, le responsable", to, notice)
+	}
+	if to, notice := recipientFor(m, true); to != testRecipient || !strings.Contains(notice, "Chez Camille") {
 		t.Errorf("recipientFor = %q, %q (phase de test : tout part chez %s)", to, notice, testRecipient)
 	}
 }
@@ -337,7 +339,7 @@ func (f *fakeStore) GenerateSignedURL(_ context.Context, key string, _ time.Dura
 
 func newFixture(txs []stripeclient.PayoutTransaction, amount int64) (*Service, *fakeRepo, *fakeMail, Pending) {
 	repo := &fakeRepo{
-		merchant: &Merchant{ID: "212", Name: "Chez Camille", Address: "1 rue de la Gare, 57000 Metz", SIRET: "12345678900012", Email: "camille@example.com"},
+		merchant: &Merchant{ID: "212", Name: "Chez Camille", Address: "1 rue de la Gare, 57000 Metz", SIRET: "12345678900012", Email: "camille@example.com", OwnerEmail: "patron@example.com"},
 		channels: map[string]Channel{"pi_online": ChannelScanNOrder, "pi_kiosk": ChannelKiosk},
 		done:     map[string]Done{}, failures: map[string]string{},
 		listed: map[string][]Listed{}, lines: map[string][]Line{},
@@ -361,8 +363,9 @@ func TestProcess_SendsStatementWithBackOfficeLink(t *testing.T) {
 	if err != nil || res.Done != 1 {
 		t.Fatalf("ProcessPending = %+v, %v", res, err)
 	}
-	if mail.to != testRecipient {
-		t.Errorf("destinataire = %q, want %q (phase de test)", mail.to, testRecipient)
+	// les relevés sont en réel : ils partent chez le responsable, sans bandeau
+	if mail.to != "patron@example.com" {
+		t.Errorf("destinataire = %q, want le responsable", mail.to)
 	}
 	if len(mail.attachments) != 1 || !strings.HasPrefix(mail.attachments[0].Name, "releve-versement-2026-10-07") || !strings.HasPrefix(string(mail.attachments[0].Content), "%PDF") {
 		t.Errorf("pièces jointes = %v : un seul PDF, le relevé", mail.attachments)
@@ -370,13 +373,13 @@ func TestProcess_SendsStatementWithBackOfficeLink(t *testing.T) {
 	if want := docsmode.BackOfficeURL + docsmode.TabVirementsPath; mail.data.BackOfficeURL != want {
 		t.Errorf("lien = %q, want %q", mail.data.BackOfficeURL, want)
 	}
-	if mail.data.TestNotice == "" {
-		t.Error("bandeau de test absent")
+	if mail.data.TestNotice != "" {
+		t.Errorf("bandeau de test présent : %q", mail.data.TestNotice)
 	}
 
 	// les totaux du virement sont gardés : c'est de quoi construire le récapitulatif mensuel
 	d := repo.done["po_1"]
-	if d.MerchantID != "212" || d.Recipient != testRecipient {
+	if d.MerchantID != "212" || d.Recipient != "patron@example.com" {
 		t.Errorf("done = %+v", d)
 	}
 	want := Line{ScanNOrder: 1000, Kiosk: 1000, Commission: 40, StripeFees: 62}

@@ -81,3 +81,19 @@ func TestBroadcastPOSStatus_IgnoresNoListener(t *testing.T) {
 		t.Fatalf("BroadcastToMerchant appelé %d fois, attendu 1", len(fake.calls))
 	}
 }
+
+func TestValidMerchantEmail(t *testing.T) {
+	for email, want := range map[string]bool{
+		"contact@chez-camille.fr":        true,
+		"a.b+compta@resto.example.com":   true,
+		"contact@localhost":              false,
+		"Camille <contact@camille.fr>":   false,
+		"contact@camille.fr, autre@x.fr": false,
+		"pas-une-adresse":                false,
+		"@camille.fr":                    false,
+	} {
+		if got := validMerchantEmail(email); got != want {
+			t.Errorf("validMerchantEmail(%q) = %v, want %v", email, got, want)
+		}
+	}
+}

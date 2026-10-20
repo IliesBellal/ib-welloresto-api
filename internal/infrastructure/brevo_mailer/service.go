@@ -151,7 +151,7 @@ func (b *BrevoMailer) SendPayoutPaidNotification(email string, name string, payo
 			return
 		}
 
-		_, err := b.sendEmailViaBrevo("Wello Resto", mailer.InvoiceEmail, email, "WR ScanNOrder - Virement en cours", html)
+		_, err := b.sendEmailViaBrevo("Wello Resto", mailer.InvoiceEmail, email, "WR ScanNOrder - Virement en cours"+payout.Establishment.SubjectSuffix(), html)
 		if err != nil {
 			log.Printf("ERROR sending payout email via Brevo to %s: %v", email, err)
 		} else {
@@ -198,6 +198,8 @@ func (b *BrevoMailer) SendPayoutDocuments(to string, data mailer.PayoutDocuments
 	subject := "Votre relevé de versement du " + data.ArrivalDate
 	if data.TestNotice != "" {
 		subject = "[TEST] " + data.MerchantName + " — " + subject
+	} else {
+		subject += data.Establishment.SubjectSuffix()
 	}
 	return b.sendEmailViaBrevoWithAttachments("Wello Resto", mailer.InvoiceEmail, to, subject, html, attachments)
 }
@@ -216,6 +218,8 @@ func (b *BrevoMailer) SendCommissionInvoice(to string, data mailer.CommissionInv
 	subject := "Votre facture de commission Wello Resto — " + data.Month
 	if data.TestNotice != "" {
 		subject = "[TEST] " + data.MerchantName + " — " + subject
+	} else {
+		subject += data.Establishment.SubjectSuffix()
 	}
 	return b.sendEmailViaBrevoWithAttachments("Wello Resto", mailer.InvoiceEmail, to, subject, html, attachments)
 }
@@ -234,6 +238,8 @@ func (b *BrevoMailer) SendSubscriptionInvoice(to string, data mailer.Subscriptio
 	subject := "Votre facture Wello Resto n° " + data.InvoiceNumber
 	if data.TestNotice != "" {
 		subject = "[TEST] " + data.MerchantName + " — " + subject
+	} else {
+		subject += data.Establishment.SubjectSuffix()
 	}
 	return b.sendEmailViaBrevoWithAttachments("Wello Resto", mailer.InvoiceEmail, to, subject, html, []mailer.Attachment{attachment})
 }

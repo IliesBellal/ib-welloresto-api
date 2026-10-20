@@ -28,9 +28,13 @@ type Pending struct {
 
 // Merchant est le destinataire de la facture (table merchant).
 type Merchant struct {
-	ID    string
-	Name  string
-	Email string
+	ID      string
+	Name    string
+	Address string
+	Email   string // adresse de l'établissement (merchant.email)
+	// OwnerEmail : adresse du responsable (premier admin actif), destinataire
+	// prioritaire de la facture (docsmode.Recipient).
+	OwnerEmail string
 }
 
 // Listed est une facture envoyée, vue du back-office.

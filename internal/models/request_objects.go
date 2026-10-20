@@ -734,6 +734,9 @@ type POSSettingsInfo struct {
 	Name         string  `json:"name"`
 	Phone        string  `json:"phone"`
 	SIRET        string  `json:"siret"`
+	// Email : adresse de l'établissement (merchant.email), destinataire de
+	// repli des documents financiers (docsmode.Recipient).
+	Email        string  `json:"email"`
 	Address      string  `json:"address"`
 	Street       string  `json:"street"`
 	City         string  `json:"city"`
@@ -752,6 +755,7 @@ type POSSettingsInfoPatch struct {
 	Name         *string  `json:"name,omitempty"`
 	Phone        *string  `json:"phone,omitempty"`
 	SIRET        *string  `json:"siret,omitempty"`
+	Email        *string  `json:"email,omitempty"`
 	Address      *string  `json:"address,omitempty"`
 	Street       *string  `json:"street,omitempty"`
 	City         *string  `json:"city,omitempty"`
@@ -796,6 +800,9 @@ type POSSettingsOrdering struct {
 	// (le POS et l'app serveur sont le meme binaire, distingues par la classe
 	// d'appareil). Le nom expose dit ce que le reglage fait aujourd'hui.
 	MobilePaymentEnabled bool `json:"mobile_payment_enabled"`
+	// Persiste dans merchant_parameters.warning_new_order_not_paid : le POS
+	// demande confirmation avant de creer une commande sans paiement.
+	UnpaidOrderWarning bool `json:"unpaid_order_warning"`
 	CustomerFormRequirements *json.RawMessage `json:"customer_form_requirements,omitempty"`
 	ProductionDisplayMode string `json:"production_display_mode"`
 }
@@ -812,6 +819,7 @@ type POSSettingsOrderingPatch struct {
 	UpsellEnabled      *bool   `json:"upsell_enabled,omitempty"`
 	CoversCountRequired  *bool `json:"covers_count_required,omitempty"`
 	MobilePaymentEnabled *bool `json:"mobile_payment_enabled,omitempty"`
+	UnpaidOrderWarning   *bool `json:"unpaid_order_warning,omitempty"`
 	ProductionDisplayMode *string `json:"production_display_mode,omitempty"`
 }
 

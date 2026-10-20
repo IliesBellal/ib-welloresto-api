@@ -1132,6 +1132,9 @@ func (s *StripeWebhookService) HandlePayoutPaid(ctx context.Context, data json.R
 	amount := fmt.Sprintf("%.2f %s", float64(payout.Amount)/100.0, "€") // Assumant EUR pour simplifier, sinon mapper currency
 
 	emailData := mailer.PayoutData{
+		// Une même adresse peut recevoir les virements de plusieurs établissements.
+		Establishment: mailer.Establishment{ID: merchant.ID, Name: merchant.BusinessName, Address: merchant.Address},
+		MerchantName:  merchant.BusinessName,
 		PayoutID:     payout.ID,
 		Amount:       amount,
 		ArrivalDate:  arrivalDate,

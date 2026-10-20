@@ -196,9 +196,18 @@ func channelOf(orderSource string, hasKiosk bool) Channel {
 	}
 }
 
+// merchantSelect lit l'établissement et l'adresse de son responsable : le
+// premier admin actif, comme subscriptions.GetMerchantOwnerContact.
 const merchantSelect = `
 	SELECT m.id::text, COALESCE(m.fullname, ''), COALESCE(m.address, ''),
-	       COALESCE(m.siret, ''), COALESCE(m.vat_number, ''), COALESCE(m.email, '')
+	       COALESCE(m.siret, ''), COALESCE(m.vat_number, ''), COALESCE(m.email, ''),
+	       COALESCE((
+	           SELECT u.email
+	           FROM users_rights ur
+	           JOIN users u ON u.user_id = ur.user_id
+	           WHERE ur.merchant_id = m.id::text AND ur.admin = TRUE AND ur.enabled = TRUE
+	           ORDER BY u.created_at ASC
+	           LIMIT 1), '')
 	FROM merchant m`
 
 func (r *sqlRepository) MerchantByStripeAccount(ctx context.Context, accountID string) (*Merchant, error) {
@@ -206,7 +215,7 @@ func (r *sqlRepository) MerchantByStripeAccount(ctx context.Context, accountID s
 	err := r.db.QueryRowContext(ctx, merchantSelect+`
 		JOIN stripe_accounts sa ON sa.merchant_id = m.id::text
 		WHERE sa.account_id = $1
-		LIMIT 1`, accountID).Scan(&m.ID, &m.Name, &m.Address, &m.SIRET, &m.VATNumber, &m.Email)
+		LIMIT 1`, accountID).Scan(&m.ID, &m.Name, &m.Address, &m.SIRET, &m.VATNumber, &m.Email, &m.OwnerEmail)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -219,7 +228,7 @@ func (r *sqlRepository) MerchantByStripeAccount(ctx context.Context, accountID s
 func (r *sqlRepository) MerchantByID(ctx context.Context, merchantID string) (*Merchant, error) {
 	var m Merchant
 	err := r.db.QueryRowContext(ctx, merchantSelect+` WHERE m.id::text = $1 LIMIT 1`, merchantID).
-		Scan(&m.ID, &m.Name, &m.Address, &m.SIRET, &m.VATNumber, &m.Email)
+		Scan(&m.ID, &m.Name, &m.Address, &m.SIRET, &m.VATNumber, &m.Email, &m.OwnerEmail)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

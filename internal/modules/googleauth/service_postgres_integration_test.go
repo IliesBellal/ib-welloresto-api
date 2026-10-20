@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"testing"
 
+	"welloresto-api/internal/models"
 	authModule "welloresto-api/internal/modules/auth"
 
 	"welloresto-api/internal/database/dbx/pgtest"
@@ -100,6 +101,18 @@ func TestGoogleAuth_FiveBranches_Postgres(t *testing.T) {
 		}
 		if resp.Token != rightsToken {
 			t.Fatalf("returned token %q != users_rights.token %q", resp.Token, rightsToken)
+		}
+	})
+
+	t.Run("google_sub known, every link disabled -> no_active_merchant, never the signup tunnel", func(t *testing.T) {
+		seedUser(t, "itest-gauth-unlinked", "itest-gauth-unlinked@example.com", "", "google-sub-unlinked")
+		if _, err := db.ExecContext(ctx, `UPDATE users_rights SET enabled = false WHERE user_id = $1`, "itest-gauth-unlinked"); err != nil {
+			t.Fatalf("disable link: %v", err)
+		}
+
+		_, err := svc.authenticateClaims(ctx, &Claims{Sub: "google-sub-unlinked", Email: "itest-gauth-unlinked@example.com", EmailVerified: true})
+		if !errors.Is(err, models.ErrNoActiveMerchant) {
+			t.Fatalf("err = %v, want ErrNoActiveMerchant", err)
 		}
 	})
 

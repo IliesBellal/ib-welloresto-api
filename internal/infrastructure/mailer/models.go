@@ -1,5 +1,7 @@
 package mailer
 
+import "strings"
+
 const (
 	BrandLogoURL  = "https://scannorder.welloresto.fr/src/tracking-preview.png"
 	SupportEmail  = "support@welloresto.fr"
@@ -25,7 +27,27 @@ type RefundData struct {
 }
 
 // PayoutData pour payout.paid
+// Establishment identifie l'établissement concerné par un mail adressé au
+// restaurateur : plusieurs établissements d'un même groupe peuvent recevoir
+// leurs mails à la même adresse. Affiché par le bloc partagé "establishment"
+// (templates/partial_establishment.html) ; ID est le merchant_id.
+type Establishment struct {
+	ID      string
+	Name    string
+	Address string
+}
+
+// SubjectSuffix renvoie " — <nom>" à ajouter à l'objet d'un mail, pour
+// distinguer les établissements dans une même boîte ("" si le nom est inconnu).
+func (e Establishment) SubjectSuffix() string {
+	if strings.TrimSpace(e.Name) == "" {
+		return ""
+	}
+	return " — " + e.Name
+}
+
 type PayoutData struct {
+	Establishment Establishment
 	MerchantName string
 	MerchantLogo string
 	Destination  string
@@ -105,6 +127,7 @@ type Attachment struct {
 
 // PayoutDocumentsData pour le mail « relevé de versement + facture de commission ».
 type PayoutDocumentsData struct {
+	Establishment Establishment
 	MerchantName  string
 	PayoutID      string
 	Amount        string // ex : "1450,00 €"
@@ -119,6 +142,7 @@ type PayoutDocumentsData struct {
 // CommissionInvoiceData pour le mail mensuel « facture de commission +
 // récapitulatif » (deux PDF en pièces jointes).
 type CommissionInvoiceData struct {
+	Establishment Establishment
 	MerchantName  string
 	InvoiceNumber string
 	Month         string // ex : "octobre 2026"
@@ -133,6 +157,7 @@ type CommissionInvoiceData struct {
 
 // SubscriptionInvoiceData pour le mail « facture d'abonnement » (PDF Stripe en pièce jointe).
 type SubscriptionInvoiceData struct {
+	Establishment Establishment
 	MerchantName  string
 	InvoiceNumber string
 	Amount        string // ex : "79,00 €"

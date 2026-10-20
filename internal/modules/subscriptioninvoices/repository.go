@@ -106,9 +106,18 @@ func (r *sqlRepository) MarkDone(ctx context.Context, invoiceID string, done Don
 
 func (r *sqlRepository) Merchant(ctx context.Context, merchantID string) (*Merchant, error) {
 	var m Merchant
+	// Adresse du responsable : le premier admin actif, comme
+	// subscriptions.GetMerchantOwnerContact.
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id::text, COALESCE(fullname, ''), COALESCE(email, '')
-		FROM merchant WHERE id::text = $1 LIMIT 1`, merchantID).Scan(&m.ID, &m.Name, &m.Email)
+		SELECT m.id::text, COALESCE(m.fullname, ''), COALESCE(m.address, ''), COALESCE(m.email, ''),
+		       COALESCE((
+		           SELECT u.email
+		           FROM users_rights ur
+		           JOIN users u ON u.user_id = ur.user_id
+		           WHERE ur.merchant_id = m.id::text AND ur.admin = TRUE AND ur.enabled = TRUE
+		           ORDER BY u.created_at ASC
+		           LIMIT 1), '')
+		FROM merchant m WHERE m.id::text = $1 LIMIT 1`, merchantID).Scan(&m.ID, &m.Name, &m.Address, &m.Email, &m.OwnerEmail)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

@@ -145,6 +145,8 @@ func (s *Service) Process(ctx context.Context, p Pending) error {
 	done := Done{Number: number, Recipient: recipient, PDFKey: s.archive(ctx, p.MerchantID, p.InvoiceID, filename, pdf)}
 
 	data := mailer.SubscriptionInvoiceData{
+		// Une même adresse peut recevoir les factures de plusieurs établissements.
+		Establishment: mailer.Establishment{ID: merchant.ID, Name: merchant.Name, Address: merchant.Address},
 		MerchantName:  merchant.Name,
 		InvoiceNumber: number,
 		Amount:        formatEUR(p.AmountPaid),
@@ -236,16 +238,11 @@ func (s *Service) EnqueueSince(ctx context.Context, since time.Time) (int, error
 	return count, nil
 }
 
-// recipientFor renvoie l'adresse qui reçoit la facture d'un marchand, et une
-// note à afficher dans le mail quand ce n'est pas lui qui la reçoit.
+// recipientFor renvoie l'adresse qui reçoit la facture d'un marchand (son
+// responsable, voir docsmode.Recipient), et une note à afficher dans le mail
+// quand ce n'est pas lui qui la reçoit.
 func recipientFor(m *Merchant) (to, notice string) {
-	switch {
-	case docsmode.TestMode:
-		return docsmode.TestRecipient, "Phase de test : ce mail est destiné à " + m.Name + " (" + m.Email + ") et vous est adressé à sa place."
-	case strings.TrimSpace(m.Email) == "":
-		return docsmode.TestRecipient, "Aucune adresse e-mail n'est renseignée pour " + m.Name + " : sa facture vous est adressée."
-	}
-	return m.Email, ""
+	return docsmode.Recipient(docsmode.TestMode, m.Name, m.OwnerEmail, m.Email)
 }
 
 func firstNonEmpty(values ...string) string {

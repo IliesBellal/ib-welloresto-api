@@ -171,10 +171,19 @@ func (s *Service) sendFirstFailureNotice(ctx context.Context, merchantID string)
 	// "SANS réclamation — dit quoi vérifier côté banque... pas 'vous devez'"
 	// — informational tone lives in the Brevo template content itself, not
 	// in this call site; only the template NAME and data are Go's concern.
-	s.email.SendAsync("Wello Resto", mailer.InvoiceEmail, contact.Email, "Un point sur votre moyen de paiement", "dunning_first_notice.html", map[string]interface{}{
-		"MerchantName": contact.Name,
+	est := establishmentOf(merchantID, contact)
+	s.email.SendAsync("Wello Resto", mailer.InvoiceEmail, contact.Email, "Un point sur votre moyen de paiement"+est.SubjectSuffix(), "dunning_first_notice.html", map[string]interface{}{
+		"MerchantName":  contact.MerchantName,
+		"Establishment": est,
 	})
 	return nil
+}
+
+// establishmentOf identifie l'établissement dans un mail de relance (bloc
+// "establishment" des templates) : une même adresse peut recevoir les mails
+// de plusieurs établissements d'un groupe.
+func establishmentOf(merchantID string, c OwnerContact) mailer.Establishment {
+	return mailer.Establishment{ID: merchantID, Name: c.MerchantName, Address: c.MerchantAddress}
 }
 
 func (s *Service) sendSecondFailureNotice(ctx context.Context, merchantID string, deadline time.Time) error {
@@ -182,11 +191,13 @@ func (s *Service) sendSecondFailureNotice(ctx context.Context, merchantID string
 	if err != nil {
 		return err
 	}
+	est := establishmentOf(merchantID, contact)
 	data := map[string]interface{}{
-		"MerchantName":       contact.Name,
+		"MerchantName":       contact.MerchantName,
+		"Establishment":      est,
 		"SuspensionDeadline": deadline.Format("02/01/2006"),
 	}
-	s.email.SendAsync("Wello Resto", mailer.InvoiceEmail, contact.Email, "Action requise sur votre abonnement", "dunning_second_notice.html", data)
+	s.email.SendAsync("Wello Resto", mailer.InvoiceEmail, contact.Email, "Action requise sur votre abonnement"+est.SubjectSuffix(), "dunning_second_notice.html", data)
 	if contact.Tel != "" {
 		s.sms.SendSMSAsync("Wello Resto", contact.Tel, "Un second prélèvement a échoué. Régularisez avant le "+deadline.Format("02/01/2006")+" pour éviter la suspension de votre compte.")
 	}
@@ -198,8 +209,10 @@ func (s *Service) sendWeeklyReminder(ctx context.Context, merchantID string, rem
 	if err != nil {
 		return err
 	}
+	est := establishmentOf(merchantID, contact)
 	data := map[string]interface{}{
-		"MerchantName": contact.Name,
+		"MerchantName":  contact.MerchantName,
+		"Establishment": est,
 	}
 	// "à partir de la 2e relance, annonce la date de suspension" — only
 	// meaningful once the 14-day window is actually open (deadline != nil);
@@ -208,7 +221,7 @@ func (s *Service) sendWeeklyReminder(ctx context.Context, merchantID string, rem
 	if reminderNumber >= 2 && deadline != nil {
 		data["SuspensionDeadline"] = deadline.Format("02/01/2006")
 	}
-	s.email.SendAsync("Wello Resto", mailer.InvoiceEmail, contact.Email, "Rappel : votre moyen de paiement", "dunning_weekly_reminder.html", data)
+	s.email.SendAsync("Wello Resto", mailer.InvoiceEmail, contact.Email, "Rappel : votre moyen de paiement"+est.SubjectSuffix(), "dunning_weekly_reminder.html", data)
 	return nil
 }
 
@@ -217,11 +230,13 @@ func (s *Service) sendFinalNotice(ctx context.Context, merchantID string, deadli
 	if err != nil {
 		return err
 	}
+	est := establishmentOf(merchantID, contact)
 	data := map[string]interface{}{
-		"MerchantName":       contact.Name,
+		"MerchantName":       contact.MerchantName,
+		"Establishment":      est,
 		"SuspensionDeadline": deadline.Format("02/01/2006"),
 	}
-	s.email.SendAsync("Wello Resto", mailer.InvoiceEmail, contact.Email, "Dernier rappel avant suspension", "dunning_final_notice.html", data)
+	s.email.SendAsync("Wello Resto", mailer.InvoiceEmail, contact.Email, "Dernier rappel avant suspension"+est.SubjectSuffix(), "dunning_final_notice.html", data)
 	if contact.Tel != "" {
 		s.sms.SendSMSAsync("Wello Resto", contact.Tel, "Dernier rappel : votre compte sera suspendu le "+deadline.Format("02/01/2006")+" sans régularisation.")
 	}

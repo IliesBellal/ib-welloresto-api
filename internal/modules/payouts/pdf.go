@@ -126,7 +126,7 @@ func buildStatementPDF(m *Merchant, ref Ref, s *Summary) ([]byte, error) {
 
 	d.text("B", 16, "L", 9, "Relevé de versement")
 	d.text("", 9, "L", 5, "Document récapitulatif établi par Wello Resto. Il ne tient pas lieu de facture.")
-	if documentsTestMode {
+	if statementsTestMode {
 		d.specimen("SPÉCIMEN — document d'essai")
 	}
 
@@ -168,9 +168,6 @@ func buildStatementPDF(m *Merchant, ref Ref, s *Summary) ([]byte, error) {
 		d.lines(9, 5, "Attention : les lignes de ce versement n'expliquent pas entièrement son montant (écart ci-dessus). Contactez le support pour le faire vérifier.")
 		d.pdf.SetTextColor(0, 0, 0)
 	}
-
-	d.pdf.Ln(4)
-	d.lines(9, 5, "La commission de ce versement est facturée une fois par mois : la facture et le récapitulatif de toutes les commissions du mois vous sont envoyés en début de mois suivant.")
 
 	d.pdf.Ln(6)
 	d.text("I", 8, "R", 5, fmt.Sprintf("Document généré le %s", formatDate(time.Now())))

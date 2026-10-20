@@ -266,6 +266,12 @@ var (
 
 	ErrAccountDisabled = errors.New("account_disabled")
 
+	// ErrNoActiveMerchant : identifiants valides, mais plus aucun lien
+	// users_rights actif (tous déliés depuis le back office). Renvoyé
+	// uniquement après vérification du mot de passe, pour ne pas révéler
+	// l'existence d'un compte.
+	ErrNoActiveMerchant = errors.New("no_active_merchant")
+
 	ErrTooLateToDeleteOrder = errors.New("too_late_to_delete_order")
 
 	ErrOrderAlreadyAccepted = errors.New("order_already_accepted")
@@ -1491,6 +1497,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusForbidden
 		errorStatus = "account_disabled"
 		errorMsg = "User account disabled"
+
+	case errors.Is(err, ErrNoActiveMerchant):
+		status = http.StatusForbidden
+		errorStatus = "no_active_merchant"
+		errorMsg = "This account is not linked to any active establishment."
 
 	case errors.Is(err, ErrUserNotAllowed):
 		status = http.StatusForbidden

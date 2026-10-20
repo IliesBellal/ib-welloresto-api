@@ -1074,6 +1074,10 @@ func (r *POSRepository) UpdateMerchant(ctx context.Context, merchantID string, r
 		updates = append(updates, "merchantTel = ?")
 		args = append(args, *req.MerchantTel)
 	}
+	if req.Email != nil {
+		updates = append(updates, "email = ?")
+		args = append(args, *req.Email)
+	}
 	if req.IsActive != nil {
 		updates = append(updates, "is_active = ?")
 		args = append(args, *req.IsActive)

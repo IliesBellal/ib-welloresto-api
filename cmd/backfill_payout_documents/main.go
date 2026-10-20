@@ -8,8 +8,9 @@
 // idempotente : un payout déjà traité n'est jamais renvoyé, et la facture d'un
 // payout n'est émise qu'une fois.
 //
-// ATTENTION : hors phase de test (docsmode.TestMode = false dans
-// internal/docsmode), les mails partent chez les restaurateurs.
+// ATTENTION : les relevés de versement sont en réel
+// (docsmode.StatementsTestMode = false) : ils partent chez les restaurateurs.
+// Les factures de commission aussi une fois docsmode.TestMode = false.
 // Lancer d'abord sans --apply : la commande liste ce qu'elle traiterait.
 //
 // Usage (la clé STRIPE_API_KEY et la base doivent être celles de l'environnement visé) :

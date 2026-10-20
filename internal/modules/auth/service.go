@@ -342,8 +342,14 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 	username := payload.Username + payload.Email
 
 	user, err := s.repo.Login(ctx, username, payload.Password, token)
+	if errors.Is(err, models.ErrAccountDisabled) {
+		// Bons identifiants, compte désactivé et sans lien actif : même
+		// réponse que le cas !user.Enabled ci-dessous.
+		return newLoginStatusResponse("account_disabled", "false"), nil
+	}
 	if err != nil {
 		// On retourne une erreur propre si le mdp est faux ("invalid_credentials" renvoyé par le repo)
+		// ou no_active_merchant si tous ses liens users_rights ont été désactivés.
 		return nil, err
 	}
 	if user == nil {

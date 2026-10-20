@@ -3,6 +3,7 @@ package pos
 import (
 	"context"
 	"errors"
+	"net/mail"
 	"strconv"
 	"strings"
 	"time"
@@ -310,6 +311,16 @@ func (s *POSService) UpdateMerchantSettings(ctx context.Context, token string, r
 
 			// Intentionally ignore req.Info.SIRET: SIRET must not be updated from this endpoint.
 
+			if req.Info.Email != nil {
+				// Vide accepté : les documents financiers retombent alors sur
+				// le responsable seul (docsmode.Recipient).
+				email := strings.TrimSpace(*req.Info.Email)
+				if email != "" && !validMerchantEmail(email) {
+					return nil, models.ErrInvalidInput
+				}
+				req.Merchant.Email = &email
+			}
+
 			if req.Info.Currency != nil {
 				req.Parameters.Currency = req.Info.Currency
 			}
@@ -382,6 +393,9 @@ func (s *POSService) UpdateMerchantSettings(ctx context.Context, token string, r
 			// voir le commentaire sur models.POSSettingsOrdering.
 			if req.Ordering.MobilePaymentEnabled != nil {
 				req.Parameters.WaiterAppCanCashIn = req.Ordering.MobilePaymentEnabled
+			}
+			if req.Ordering.UnpaidOrderWarning != nil {
+				req.Parameters.WarningNewOrderNotPaid = req.Ordering.UnpaidOrderWarning
 			}
 			if req.Ordering.ProductionDisplayMode != nil {
 				req.Parameters.ProductionDisplayMode = req.Ordering.ProductionDisplayMode
@@ -503,6 +517,7 @@ func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*mo
 			Name:         stringVal(m.BusinessName),
 			Phone:        stringVal(m.MerchantTel),
 			SIRET:        stringVal(m.SIRET),
+			Email:        stringVal(m.Email),
 			Address:      stringVal(m.Address),
 			Street:       stringVal(m.Street),
 			City:         stringVal(m.City),
@@ -534,6 +549,7 @@ func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*mo
 			UpsellEnabled:            boolVal(params.POSUpsellEnabled),
 			CoversCountRequired:      boolVal(params.POSCoversCountRequired),
 			MobilePaymentEnabled:     boolVal(params.WaiterAppCanCashIn),
+			UnpaidOrderWarning:       boolVal(params.WarningNewOrderNotPaid),
 			CustomerFormRequirements: params.CustomerFormRequirements,
 			ProductionDisplayMode:    stringVal(params.ProductionDisplayMode),
 		},
@@ -598,6 +614,13 @@ func stringVal(v *string) string {
 		return ""
 	}
 	return *v
+}
+
+// validMerchantEmail accepte une adresse seule ("a@b.fr"), pas une adresse
+// nommée ("Nom <a@b.fr>") : elle sert telle quelle de destinataire.
+func validMerchantEmail(email string) bool {
+	addr, err := mail.ParseAddress(email)
+	return err == nil && addr.Address == email && strings.Contains(email[strings.LastIndex(email, "@"):], ".")
 }
 
 func floatVal(v *float64) float64 {

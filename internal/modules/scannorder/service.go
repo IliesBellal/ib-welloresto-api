@@ -637,6 +637,14 @@ func (s *Service) GetPricingSNO(ctx context.Context, req *models.PricingRequest)
 	req.Time = now.Format("2006-01-02 15:04:05")
 
 	pricing, err := s.orderingService.ComputePricing(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if pricing == nil {
+		// ComputePricing renvoie (nil, nil) quand les infos de pricing du
+		// marchand sont introuvables : erreur explicite plutôt que panique.
+		return nil, fmt.Errorf("pricing unavailable for merchant %s", merchant.MerchantID)
+	}
 
 	pricing.IsOrderable = pricing.OrderRequest.IsOrderable
 	if pricing.OrderRequest.Order != nil && pricing.OrderRequest.Order.OrderType == "DELIVERY" {
@@ -649,7 +657,7 @@ func (s *Service) GetPricingSNO(ctx context.Context, req *models.PricingRequest)
 	pricing.OrderRequest.Order.IsPaid = false
 
 	// 🔹 6. Appel module ORDERING (prices now sanitized)
-	return pricing, err
+	return pricing, nil
 }
 
 // outOfScheduleCartProducts liste les produits du panier hors créneau horaire,
@@ -1263,6 +1271,16 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest
 		}, nil
 	}
 
+	// Minimum de commande en livraison (cf. minimumCartNotReached).
+	if minimumCartNotReached(pricingResp) {
+		log.Warn("SNO order refused: minimum cart for delivery not reached",
+			zap.String("merchant_id", merchant.MerchantID),
+			zap.Int("ttc", pricingResp.OrderRequest.Order.TTC),
+			zap.Int("minimum", pricingResp.OrderRequest.MinimumCartForDeliveryOrder),
+		)
+		return models.CreateOrderResult{Status: StatusMinimumCartNotReached}, nil
+	}
+
 	orderReq := pricingResp.OrderRequest
 	order = orderReq.Order
 
@@ -1397,9 +1415,10 @@ func (s *Service) CheckDeliveryZone(ctx context.Context, qrCode string, req *Del
 	}
 
 	// 5️⃣ Extract minimum cart amount and delivery fees from merchant data
-	// Using the DeliveryFeesLimit as minimum order amount
-	// and DeliveryFees or EstimatedFee based on distance
-	minOrderAmount := merchant.DeliveryFeesLimit
+	// Minimum de commande = minimum_cart_for_delivery_order (même valeur que
+	// MinimumOrderAmount de la fiche marchand et que le contrôle du pricing).
+	// delivery_fees_limit est le seuil de livraison OFFERTE, pas un minimum.
+	minOrderAmount := merchant.MinimumCartForDeliveryOrder
 	deliveryFee := zoneResult.EstimatedFee
 
 	return &DeliveryCheckResponse{
