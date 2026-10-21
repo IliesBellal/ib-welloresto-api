@@ -9,7 +9,6 @@ import (
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 
-	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -28,7 +27,7 @@ func (h *UsersHandler) ListMerchantUsers(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *UsersHandler) GetMerchantUser(w http.ResponseWriter, r *http.Request) {
-	item, err := h.svc.GetMerchantUser(r.Context(), chi.URLParam(r, "id"))
+	item, err := h.svc.GetMerchantUser(r.Context(), h.userIDParam(r, "id"))
 	if err != nil {
 		models.SendErrorJSON(w, "users", "get", err)
 		return
@@ -51,7 +50,7 @@ func (h *UsersHandler) SearchLinkableUsers(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *UsersHandler) GetMerchantUserRights(w http.ResponseWriter, r *http.Request) {
-	rights, err := h.svc.GetMerchantUserRights(r.Context(), chi.URLParam(r, "id"))
+	rights, err := h.svc.GetMerchantUserRights(r.Context(), h.userIDParam(r, "id"))
 	if err != nil {
 		models.SendErrorJSON(w, "users", "get_rights", err)
 		return
@@ -60,7 +59,7 @@ func (h *UsersHandler) GetMerchantUserRights(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *UsersHandler) GetMerchantUserMember(w http.ResponseWriter, r *http.Request) {
-	member, err := h.svc.GetMerchantUserMember(r.Context(), chi.URLParam(r, "id"))
+	member, err := h.svc.GetMerchantUserMember(r.Context(), h.userIDParam(r, "id"))
 	if err != nil {
 		models.SendErrorJSON(w, "users", "get_member", err)
 		return
@@ -75,7 +74,7 @@ func (h *UsersHandler) PatchMerchantUserMember(w http.ResponseWriter, r *http.Re
 		logger.FromContext(r.Context()).Log(zapcore.ErrorLevel, err.Error())
 		return
 	}
-	member, err := h.svc.PatchMerchantUserMember(r.Context(), chi.URLParam(r, "id"), req)
+	member, err := h.svc.PatchMerchantUserMember(r.Context(), h.userIDParam(r, "id"), req)
 	if err != nil {
 		models.SendErrorJSON(w, "users", "patch_member", err)
 		return
@@ -89,7 +88,7 @@ func (h *UsersHandler) UpdateMerchantUserRights(w http.ResponseWriter, r *http.R
 		models.SendErrorJSON(w, "users", "update_rights", models.ErrInvalidRequestBody)
 		return
 	}
-	rights, err := h.svc.UpdateMerchantUserRights(r.Context(), chi.URLParam(r, "id"), req)
+	rights, err := h.svc.UpdateMerchantUserRights(r.Context(), h.userIDParam(r, "id"), req)
 	if err != nil {
 		models.SendErrorJSON(w, "users", "update_rights", err)
 		return
@@ -103,7 +102,7 @@ func (h *UsersHandler) LinkMerchantUser(w http.ResponseWriter, r *http.Request) 
 		models.SendErrorJSON(w, "users", "link_merchant", models.ErrInvalidRequestBody)
 		return
 	}
-	rights, err := h.svc.LinkMerchantUser(r.Context(), chi.URLParam(r, "id"), req)
+	rights, err := h.svc.LinkMerchantUser(r.Context(), h.userIDParam(r, "id"), req)
 	if err != nil {
 		models.SendErrorJSON(w, "users", "link_merchant", err)
 		return
@@ -117,7 +116,7 @@ func (h *UsersHandler) ForceResetPassword(w http.ResponseWriter, r *http.Request
 		models.SendErrorJSON(w, "users", "force_reset_password", models.ErrInvalidRequestBody)
 		return
 	}
-	if err := h.svc.ForceResetPassword(r.Context(), chi.URLParam(r, "id"), req); err != nil {
+	if err := h.svc.ForceResetPassword(r.Context(), h.userIDParam(r, "id"), req); err != nil {
 		models.SendErrorJSON(w, "users", "force_reset_password", err)
 		return
 	}
@@ -125,7 +124,7 @@ func (h *UsersHandler) ForceResetPassword(w http.ResponseWriter, r *http.Request
 }
 
 func (h *UsersHandler) UnlinkMerchantUser(w http.ResponseWriter, r *http.Request) {
-	result, err := h.svc.UnlinkMerchantUser(r.Context(), chi.URLParam(r, "id"))
+	result, err := h.svc.UnlinkMerchantUser(r.Context(), h.userIDParam(r, "id"))
 	if err != nil {
 		models.SendErrorJSON(w, "users", "unlink_merchant", err)
 		return

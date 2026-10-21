@@ -499,7 +499,11 @@ func TestGetDiscounts_SQLFilters(t *testing.T) {
 			// Dates de validité en dates calendaires locales, fin incluse.
 			dbx.UTCDate("d.valid_from") + " <= ?",
 			"(d.valid_to IS NULL OR " + dbx.UTCDate("d.valid_to") + " >= ?)",
-			"ORDER BY d.prefered_order ASC, d.discount_id ASC",
+			"ORDER BY d.prefered_order ASC, d.discount_id_new ASC",
+			// Clé entière renvoyée au POS, jamais l'ancien varchar
+			// "discount-<uuid>" (chantier ids entiers, étape 2).
+			"SELECT d.discount_id_new::text,",
+			"ds.discount_id_new = d.discount_id_new",
 		} {
 			if !strings.Contains(sql, fragment) {
 				return &missingFragmentError{fragment: fragment}

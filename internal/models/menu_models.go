@@ -90,6 +90,7 @@ type ProductEntry struct {
 	IsDistributed                *bool                  `json:"isDistributed,omitempty"`
 	IsUpsell                     bool                   `json:"is_upsell,omitempty"` // orderitems.is_upsell ; absent quand false, donc jamais dans les réponses menu
 	DiscountID                   *int64                 `json:"discount_id,omitempty"`
+	RewardID                     *int64                 `json:"reward_id,omitempty"` // orderitems.reward_id : récompense « produit offert » de la ligne
 	DiscountName                 *string                `json:"discount_name,omitempty"`
 	DiscountedPrice              *int64                 `json:"discounted_price,omitempty"`
 	ProductionColor              *string                `json:"production_color,omitempty"`

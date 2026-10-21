@@ -498,7 +498,7 @@ Page de suivi **client final**, publique (pas de `authMiddleware`). Documentée 
 | `.../stops/{id}/failed` (transition 4) | `[ABSENT]` | **CRÉER** | nouvelle valeur `brand_status='DELIVERY_FAILED'` (§0.4) |
 | `.../stops/{id}/cancel` (transition 5, NOUVEAU) | `[ABSENT]` | **CRÉER** | chemin d'annulation `[A VERIFIER]` — §1.3 #5 |
 | `PATCH /delivery_sessions/me/close` (NOUVEAU) | `[ABSENT]` | **CRÉER** | §1.5/§3.8 ; écrit `delivery_session.status='done'` — risque de 7ᵉ valeur, §0.5 |
-| Réassignation paiement au livreur | `[EXISTE]` (au close de session, bulk) | **RÉUTILISER** le pattern SQL de `CloseDeliverySession` step 3 (`repository.go:391-401`), appliqué par commande dès "livré" | |
+| Réassignation paiement au livreur | `[CORRIGÉ 2026-10-21]` | Ne réécrit plus `payments.user_id` (champ signé, fiscal). `FinalizeDeliveredStop` inscrit le livreur dans `payments.collected_by`, pour les seuls paiements en main propre (`models.HandCollectedMOPs`). Voir `ids-entiers-users-discounts-chantier.md` §9.1 | |
 | `PATCH /users/location` (heading + historique) | `[EXISTE]` (lat/lng, via `user_status_view`) | **ADAPTER** : `UpdateLocationRequest` (`internal/models/request_objects.go:807-811`), `SetUserLocation` (`internal/modules/users/repository.go:22-35`, `service.go:54-65`) — écriture désormais directe sur `users` (§0.2) | + écriture `delivery_position` + geofence |
 | `delivery_session_order.status/arrived_at/delivered_at/failed_at/canceled_at/fail_reason` | `[ABSENT]` | **CRÉER** (migration 032) | |
 | `delivery_session.current_order_id` | `[ABSENT]` | **CRÉER** (migration 032) | type `[À VÉRIFIER EN BASE]`, §0 |

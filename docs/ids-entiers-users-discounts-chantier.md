@@ -1,6 +1,6 @@
 # Chantier — identifiants entiers pour `users` et `discounts`
 
-Statut : **cadré, décisions prises le 2026-10-20**. Aucune ligne de code ni migration écrite.
+Statut : **étapes 1 à 3 codées le 2026-10-20**, non commitées, migrations 186 et 187 à appliquer. Étape 4 reportée (voir §8). Détail de l'implémentation : §8.
 
 ## 1. Objectif et choix retenus
 
@@ -70,10 +70,10 @@ Règle générale : une migration **additive** (nouvelle séquence, table, colon
 |---|---|---|---|
 | **1** | Users : la séquence `users_user_id_seq` remplace `user-<uuid>` aux 3 points de création (`UsersRepository.NextUserID`) | `186_users_user_id_seq` (séquence + `setval` sur le maximum numérique, calculé à l'application) | 186 staging → push `staging` → test → 186 prod → push `main` |
 | **2** | Discounts : `CreateDiscount` et l'import carte écrivent `discount_id = discount_id_new::text` ; le pricing (`GetDiscounts`, `GetDiscountProducts`, `GetDiscountProductOptions`), le Kiosk et ScanNOrder renvoient `discount_id_new` en chaîne ; traitement de `orders.cart_discount_id` et du cas `RewardID` | Aucune (la séquence de 118 existe) | push `staging` → test → push `main` |
-| **3a** | Users : la table `user_id_remap(legacy_user_id, user_id)` est créée et remplie | `187_user_id_remap` (additive) | Après la reconnaissance prod (§7). 187 staging/prod |
-| **3b** | Users : un filet à l'entrée traduit un `user-<uuid>` encore envoyé par un client via `user_id_remap` (sur le modèle de `resolveLegacyDiscountIDs`) ; l'affichage « encaissé par » des lignes scellées passe aussi par la table | Aucune | push `staging` → test → push `main` |
-| **3c** | Users : renumérotation de `users` et des colonnes « référence pure », et des colonnes acteur **non scellées** | `188_users_renumber` | Après 3b. Créneau 3h-5h |
-| **4** | Users : `CHECK (user_id ~ '^[0-9]+$')` sur `users`, nettoyage des orphelins, FK sur les colonnes « référence pure » (`NOT VALID` puis `VALIDATE`) | `189_users_fk` | Après 3c |
+| **3a** | Users : la table `user_id_remap(legacy_user_id, user_id)` est créée **vide** | `187_user_id_remap` (additive) | 187 staging/prod, avant le code |
+| **3b** | Users : un filet à l'entrée (`userids.Resolve`) traduit un `user-<uuid>` encore envoyé par un client ; le détail de caisse et la liste des paiements d'une commande joignent `user_id_remap` pour les paiements signés | Aucune | push `staging` → test → push `main` |
+| **3c** | Users : renumérotation de `users`, des colonnes « référence pure » et des colonnes acteur, **sauf les lignes signées** de `payments` et `audit_logs`, puis vidage du cache Redis des sessions | Aucune : commande `cmd/renumber_users` (aperçu, puis `--apply`) | Après 3b. Créneau 3h-5h |
+| **4** | Users : `CHECK (user_id ~ '^[0-9]+$')` sur `users`, nettoyage des orphelins, FK sur les colonnes « référence pure » | `188_users_fk` | **Reportée** (§8) |
 | **5** | Nettoyage : suppression de `helpers.UserIDPrefix` et `DiscountIDPrefix` ; le filet 3b et `resolveLegacyDiscountIDs` sont retirés après N semaines sans déclenchement ; la PRIMARY KEY de `discounts` bascule si on le souhaite | Selon le cas | En dernier |
 
 Le moteur de promotions ([promotions-moteur-chantier.md](promotions-moteur-chantier.md)) démarre **après l'étape 2**, pour partir directement sur la clé entière.
@@ -121,3 +121,151 @@ ORDER BY n_live_tup DESC;
 ```
 
 Le nom exact de la colonne de signature de `payments` est à confirmer avant de lancer la requête.
+
+## 8. Implémentation (2026-10-20)
+
+### Étape 1 : ids utilisateurs numériques
+
+- **Migration 186.** Elle crée `users_user_id_seq` et la cale au-dessus du plus grand id numérique trouvé dans `users` **et** dans les tables qui le référencent (`users_rights`, `payments`, `orders.created_by`, `cash_registers`, `stock_movements`, `audit_logs`, `services_performed`, `delivery_session`). Un nouvel utilisateur ne doit jamais hériter de l'historique d'un utilisateur supprimé. C'est la même règle que la migration 118 pour les remises.
+- **`UsersRepository.NextUserID`** fournit l'id aux 3 points de création (création d'un équipier, inscription par mot de passe, inscription Google). Il est appelé hors transaction : une inscription annulée laisse seulement un trou dans la séquence.
+- `helpers.UserIDPrefix` est supprimé, puisqu'il n'a plus aucun usage.
+
+### Étape 2 : discounts sur la clé entière
+
+- **Création.** `discounts.Repository.CreateDiscount` tire `nextval('discounts_discount_id_new_seq')`, puis écrit la valeur dans `discount_id_new` et, en texte, dans `discount_id` (toujours PRIMARY KEY), sur la remise et ses tables filles. Le `discount_id` envoyé par un client était déjà écrasé ; il l'est maintenant au niveau du repository. L'import carte ne génère plus d'id. `helpers.DiscountIDPrefix` est supprimé.
+- **Lecture.** Six requêtes renvoient désormais `discount_id_new::text` et joignent les tables filles sur `discount_id_new` : les trois du pricing (`GetDiscounts`, `GetDiscountProducts`, `GetDiscountProductOptions`), les deux du Kiosk (`GetDiscounts`, `GetDiscountProductIDs`) et celle de ScanNOrder (`GetDiscounts`). Le contrat JSON reste une chaîne.
+  - Côté Kiosk, l'`ORDER BY` reprend l'expression texte, comme l'exige le `DISTINCT`. Le départage reste lexicographique, comme avec l'ancien varchar.
+- **Laissé tel quel :**
+  - `resolveLegacyDiscountIDs`, nécessaire tant que des POS ont un pricing en cache ;
+  - `orders.cart_discount_id`, qu'aucun code Go n'écrit ;
+  - le cas `RewardID` mis dans `DiscountID` (`orders/service.go`) : y toucher change le comportement côté client. Ce point reste ouvert ;
+  - la bascule de la PRIMARY KEY (D3).
+
+### Étape 3 : renumérotation
+
+**Ce qui a changé par rapport au cadrage, après lecture des données de staging et du code fiscal :**
+
+- **Lignes signées.** Seules `payments.user_id` et `audit_logs.user_id` entrent dans une charge utile signée. `orders` et `cash_registers` sont scellés, mais leurs colonnes d'utilisateur ne font pas partie de la charge utile (`OrderClosurePayload`, `CashRegisterClosurePayload`) : on les réécrit. Les tickets signés utilisent leur propre `payments_snapshot`. Les archives sont vérifiées sur le fichier, pas reconstruites depuis la base.
+- **Orphelins.** La plupart des valeurs `user-%` de staging pointent vers des utilisateurs qui n'existent plus : les 812 lignes `orders.created_by`, les 1 143 lignes `audit_logs` et 40 lignes `users_rights`. Seuls les 5 utilisateurs existants sont renumérotés ; les orphelins gardent leur valeur.
+- **Colonnes à réécrire.** L'inventaire a été fait **par le contenu** et non par le nom de colonne. Il est dans `userids.Columns`.
+
+**Ce qui a été livré :**
+
+- **Migration 187** : elle crée `user_id_remap` **vide**. Cette table n'est jamais vidée : c'est le seul lien entre une ligne signée et son utilisateur.
+- **Package `internal/userids` :**
+  - `Columns` : l'inventaire des colonnes à réécrire ;
+  - `Resolve` : le filet d'entrée. Il n'interroge la base que pour un id `user-…` ; tout autre id ne coûte aucune requête et ne perturbe pas les tests sqlmock ;
+  - `Plan` et `Apply` : l'aperçu et la renumérotation.
+- **Commande `cmd/renumber_users`**, qui remplace la migration 188 prévue en SQL :
+  - sans option, elle affiche ce qui va bouger, table par table ;
+  - `--apply` fait tout en une seule transaction, puis vide le cache Redis des sessions (`models.UserCachePrefix`) ;
+  - elle refuse de démarrer sans `REDIS_URL`, pour ne pas laisser une session en cache écrire l'ancien id dans un paiement qui serait ensuite signé ;
+  - elle est rejouable : un second passage rattrape les lignes écrites avec un ancien id entre-temps.
+- **Points d'entrée qui passent par le filet :**
+  - `/users/{id}/*` (8 routes du back-office) et `/users/{user_id}/location` ;
+  - `roles.SetUserRole` ;
+  - le filtre `?user_id=` de la liste des employés du planning ;
+  - `StartDelivery?user_id=` ;
+  - `StartDeliverySession` (`delivery_man.user_id`).
+- **Jointures sur les paiements signés** (qui gardent l'ancien id) :
+  - le détail d'une caisse (`cash_registers`) : son `INNER JOIN users` aurait fait **disparaître** ces paiements ;
+  - l'id de l'encaisseur renvoyé avec les paiements d'une commande (`orders_fetcher_builder`).
+
+### Étape 4 reportée
+
+Trois raisons :
+1. **Les orphelins.** Une FK, même `NOT VALID`, exige de décider d'abord ce qu'on fait de ces lignes (§5).
+2. **Les tests d'intégration.** Environ 25 fichiers créent des utilisateurs avec des ids `itest-…`, et certains insèrent `users_rights` avant `users`. Un `CHECK` numérique et des FK les casseraient tous. Comme ils tournent contre la base staging partagée, un id numérique en dur pourrait entrer en collision avec un vrai utilisateur : il faudrait que chaque test tire ses ids de la séquence.
+3. **Le gain est faible** une fois la génération numérique en place. C'est à Ilies de trancher.
+
+### Tests
+
+- **Unitaires.**
+  - Verts, sauf 12 tests planning (`employees` DeleteEmployee, `leave` self, `swaps`) qui échouent **déjà sur HEAD** (vérifié sur une copie propre).
+  - Nouveaux : `userids` (`IsNumeric`, `Resolve` sans requête hors `user-`, unicité de `Columns`, colonnes signées).
+  - Mis à jour : les tests de fragments SQL du pricing et du Kiosk, qui vérifient aussi la nouvelle clé.
+- **Intégration contre staging.**
+  - Verts : orders, kiosk, scannorder, discounts, order_life_cycle. Leurs seeds de remises étaient cassés depuis la migration 118 (`discount_id_new` NOT NULL) et ont été corrigés ; leurs assertions comparent désormais à `discount_id_new`.
+  - Échecs du module menu qui existaient déjà : `tva` `varchar(30)`, `bg_color`.
+- **En attente de l'application de 186 et 187 sur staging :**
+  - `userids.TestApply_Postgres`, qui s'arrête avec un message explicite tant qu'elles manquent ;
+  - les tests d'intégration qui créent un utilisateur (users, signup) ;
+  - ceux qui lisent les paiements d'une commande ou le détail d'une caisse.
+
+### Déroulé
+
+1. **Staging :**
+   1. migrations 186 et 187 ;
+   2. push du code ;
+   3. tests : inscription, création d'un équipier, promo neuve sur POS / Kiosk / ScanNOrder, détail d'une caisse ;
+   4. `verify_fiscal --all` ;
+   5. `go run ./cmd/renumber_users` (aperçu), puis `--apply` ;
+   6. `verify_fiscal --all` à nouveau.
+2. **Prod :**
+   1. aperçu lancé avant le créneau ;
+   2. puis, dans le créneau 3h-5h : sauvegarde, migrations 186 et 187, push de `main`, `--apply` avec le `REDIS_URL` de prod, `verify_fiscal --all`.
+
+### Constaté hors périmètre
+
+- **`delivery_sessions.FinalizeDeliveredStop`** (`UPDATE payments SET user_id = ds.user_id`) réaffecte au livreur un paiement **déjà signé**. Or `user_id` fait partie de la charge utile de ce paiement : sa vérification fiscale échouera. À traiter à part.
+
+## 9. Lot 1, suite : encaisseur du livreur et récompenses (2026-10-21)
+
+Deux sujets liés aux mêmes tables, traités avec le lot des ids parce qu'ils partagent les mêmes migrations et le même déploiement.
+
+### 9.1 Encaisseur réel d'un paiement : `payments.collected_by`
+
+**Problème.** `delivery_sessions.FinalizeDeliveredStop` réécrivait `payments.user_id` avec le livreur, pour **tous** les paiements d'une commande livrée, y compris les paiements en ligne. `user_id` est dans la charge utile signée (`fiscal.PaymentPayload`) : l'empreinte de ces paiements ne se recalculait plus.
+
+**Décision.**
+- `payments.user_id` reste « qui a saisi le paiement » et n'est **jamais** réécrit après l'insertion.
+- Nouvelle colonne `payments.collected_by` (migration 188), **hors charge utile signée** comme `cash_register_id`. NULL = l'encaisseur est `user_id`.
+- `FinalizeDeliveredStop` n'écrit que `collected_by`, et seulement pour les paiements encaissés en main propre : `models.HandCollectedMOPs` = `ES`, `CB`, `TR`, `CHEQUE`, `HOLIDAY_VOUCHER`. Les paiements en ligne, des plateformes, de la borne et les récompenses gardent leur encaisseur.
+- Lecture : `COALESCE(collected_by, user_id_remap.user_id, user_id)` dans le détail de caisse (`cash_registers`) et dans les paiements d'une commande (`orders_fetcher_builder`). Le champ JSON `collected_by` du détail de caisse, que le POS et le back-office utilisent pour découper les résumés par utilisateur, garde donc la même forme.
+- `payments.collected_by` est dans l'inventaire de `cmd/renumber_users` (`userids.Columns`).
+
+**Effet sur les résumés de caisse par utilisateur.** Les totaux du Z ne bougent pas (rattachement par `cash_register_id`). Le découpage par utilisateur reste identique pour les paiements en main propre. Il change pour les paiements en ligne d'une commande livrée, qui restent sous la personne qui les a saisis au lieu de partir chez le livreur : c'est la correction.
+
+**Réparation de l'existant** : `cmd/repair_payment_collectors` (aperçu, puis `--apply`). Elle retrouve l'ancien `user_id` d'un paiement signé réécrit : l'empreinte est déterministe, le seul candidat qui la redonne est l'id d'origine. Candidats : l'auteur de la commande, les employés de l'établissement, les ids déjà vus sur ses paiements, les anciens ids de `user_id_remap`. Puis elle remet `user_id` et inscrit le livreur dans `collected_by` pour les paiements en main propre. Un paiement dont l'ancien id n'est pas retrouvé n'est pas modifié.
+- **Staging** : rien à réparer. Les 28 paiements livrés sont en `hash_version` 1 (juin-juillet, avant le scellement v2) et ne sont pas contrôlés à l'empreinte.
+- **Production** : la commande ne traite que les paiements v2, scellés depuis le 11/10. Lancer l'aperçu avant de conclure.
+
+### 9.2 Récompenses « produit offert » : `orderitems.reward_id`
+
+**Problème.** Une récompense de fidélité (`customer_rewards`, `reward_type = 'free_product'`) était enregistrée dans `orderitems.discount_id`, dans le même espace de numérotation que les remises. Constat sur staging : les `reward_id` vont de 80 à 293 et les `discount_id_new` de 3 à 100, donc ils se chevauchent. Trois conséquences : la ligne pouvait afficher le nom d'une remise sans rapport, la clôture fiscale signée enregistrait la valeur comme une remise, et l'écriture dans `discount_redemptions` violait sa clé étrangère.
+
+**Décision.** Champ propre `reward_id`, `discount_id` ne contient plus que des remises.
+- **Migration 189** : `orderitems.reward_id` (integer, nullable, sans clé étrangère). Hors charge utile signée.
+- **Pricing** : une ligne offerte porte `reward_id`. Tant que `models.RewardLineInDiscountID` vaut `true`, elle porte **aussi** l'id de récompense dans `discount_id`, comme avant : un ancien POS fusionne les lignes d'un même produit dès que leur `discount_id` est identique ; sans lui, la ligne offerte fusionnerait avec une ligne payée et le panier serait faux.
+- **Écriture** (`resolveLineDiscounts`, création et modification de commande) : `discount_id` ne reçoit jamais une récompense.
+  1. `reward_id` fourni : conservé, `discount_id` vidé.
+  2. `discount_id` d'une remise du marchand : conservé.
+  3. `discount_id` d'une récompense « produit offert » de cette commande (`used_rewards` à la création, `customer_rewards.used_on_order_id` en modification) : déplacé dans `reward_id`. C'est le cas des POS pas encore à jour.
+  4. Tout autre identifiant (inconnu, d'un autre marchand, non numérique, hors `integer`, récompense en montant ou en pourcentage) : attribution abandonnée avec un log, la ligne garde son prix. Avant, un `discount_id` inconnu faisait échouer l'écriture dans la transaction de la commande.
+  - Un identifiant à la fois remise du marchand et récompense de la commande reste une remise (loggé). Cette ambiguïté disparaît avec la transition.
+- **Lecture** (`orders_fetcher_builder`) : `reward_id` est renvoyé ; `discount_id` le reprend à défaut pendant la transition ; `discounted_price` est renseigné pour une ligne offerte.
+- **Fiscal** : une ligne offerte est signée avec `discount_id = null`. `reward_id` n'est pas dans la charge utile signée : aucune version de signature à changer.
+
+**Clients.**
+
+| Client | Adaptation | État |
+|---|---|---|
+| POS Flutter | `rewardId` dans le modèle, la lecture du pricing, la charge utile de commande, la clé de fusion des lignes du panier (`cart_merge_mixin`) et la clé de contenu (`product_content_key_helper`). Test `test/core/mixins/cart_merge_reward_test.dart` | Codé, à pousser par Ilies |
+| ScanNOrder, API | Rien : la création de commande recalcule le pricing côté serveur et reprend `reward_id` | Rien à faire |
+| ScanNOrder, front | `normalizePricingResponse` compte une ligne `reward_id` à part (« Récompense fidélité »), sans la fusionner avec une remise de même numéro. Types `reward_id`. Test `normalize.pricing.test.ts` | Codé, non commité |
+| Borne (Kiosk) | Rien : elle n'utilise que le nom de remise des lignes et l'API recalcule le pricing | Rien à faire |
+| Back-office | Rien : le type d'une ligne de commande déclare `discount_id` et `discounted_price`, mais aucun code ne les lit | Rien à faire |
+
+### 9.3 Déroulé
+
+**Lot 1** (tout ce qui précède, plus les étapes 1 à 3 du §8). Le code dépend des migrations : **les appliquer avant de pousser**.
+1. Staging : migrations 186, 187, 188 et 189, puis push `staging`.
+2. Tests sur staging : inscription, création d'un équipier, promo sur POS / Kiosk / ScanNOrder, une récompense « produit offert » (une ligne offerte et une ligne payée du même produit sur le POS), une livraison avec paiement espèces et paiement en ligne, détail d'une caisse.
+3. Les tests d'intégration bloqués jusque-là : `userids`, signup, users, orders, order_life_cycle, cash_registers, `fiscal` (réparation), `delivery_sessions`, `reward_line`.
+4. Aperçu de `cmd/repair_payment_collectors` et de `cmd/renumber_users` ; `verify_fiscal --all` avant et après.
+5. Production : sauvegarde, migrations 186 à 189, push `main`, puis les deux commandes en `--apply` dans le créneau 3h-5h.
+
+**Lot 2** (après la mise à jour des POS et du front ScanNOrder, vérifiable avec `users_devices.app_version`) :
+1. Passer `models.RewardLineInDiscountID` à `false`.
+2. Vérifier sur une tablette à jour qu'une ligne offerte (prix remisé, sans `discount_id`) s'affiche correctement.
+3. Supprimer la constante et ses branches.

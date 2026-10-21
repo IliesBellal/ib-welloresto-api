@@ -851,9 +851,16 @@ func (r *OrdersRepository) GetDiscounts(ctx context.Context, req *models.Pricing
 	localDate := localTime.Format("2006-01-02")
 	clock := localTime.Format("15:04:05")
 
+	// discount_id renvoyé = discount_id_new en texte (chantier ids entiers,
+	// étape 2) : le POS le renvoie tel quel dans orderitems.discount_id
+	// (integer). L'ancien varchar valait "discount-<uuid>" pour toute
+	// promotion créée depuis le Sprint 2 (hotfix 22P02 du 2026-10-19). Les
+	// trois requêtes du pricing (ici, GetDiscountProducts,
+	// GetDiscountProductOptions) doivent rester sur la même clé : la map des
+	// produits est indexée par cette valeur.
 	query := fmt.Sprintf(`
 		SELECT
-			d.discount_id,
+			d.discount_id_new::text,
 			COALESCE(d.discount_order_type, ''),
 			d.discount_code,
 			d.discount_name,
@@ -869,7 +876,7 @@ func (r *OrdersRepository) GetDiscounts(ctx context.Context, req *models.Pricing
 			d.available,
 			d.prefered_order
 		FROM discounts d
-		LEFT JOIN discounts_schedules ds ON ds.discount_id = d.discount_id AND ds.enabled = TRUE
+		LEFT JOIN discounts_schedules ds ON ds.discount_id_new = d.discount_id_new AND ds.enabled = TRUE
 		WHERE d.merchant_id = ?
 		  AND %[1]s <= ?
 		  AND (d.valid_to IS NULL OR %[2]s >= ?)
@@ -877,7 +884,7 @@ func (r *OrdersRepository) GetDiscounts(ctx context.Context, req *models.Pricing
 		       OR NOT d.is_time_limited)
 		  AND d.available = TRUE
 		  AND d.enabled = TRUE
-		ORDER BY d.prefered_order ASC, d.discount_id ASC
+		ORDER BY d.prefered_order ASC, d.discount_id_new ASC
 	`, dbx.UTCDate("d.valid_from"), dbx.UTCDate("d.valid_to"))
 
 	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query, req.MerchantID, localDate, localDate, clock, clock, req.DayOfWeek)
@@ -926,9 +933,9 @@ func (r *OrdersRepository) GetDiscounts(ctx context.Context, req *models.Pricing
 
 func (r *OrdersRepository) GetDiscountProducts(ctx context.Context, merchantID string) (map[string]map[string]*models.DiscountProductInfo, error) {
 	query := `
-		SELECT dp.discount_id, dp.product_id, dp.new_price
+		SELECT dp.discount_id_new::text, dp.product_id, dp.new_price
 		FROM discounts_products dp
-		INNER JOIN discounts d ON d.discount_id = dp.discount_id
+		INNER JOIN discounts d ON d.discount_id_new = dp.discount_id_new
 		WHERE d.merchant_id = ?
 	`
 
@@ -982,9 +989,9 @@ func (r *OrdersRepository) GetDiscountProducts(ctx context.Context, merchantID s
 // contrainte d'option n'était jamais trouvée par applyDiscounts.
 func (r *OrdersRepository) GetDiscountProductOptions(ctx context.Context, merchantID string) (map[string]map[string][]models.DiscountOptionInfo, error) {
 	query := `
-		SELECT dpo.discount_id, dpo.product_id, dpo.option_id, dpo.new_price, dpo.is_option_mandatory
+		SELECT dpo.discount_id_new::text, dpo.product_id, dpo.option_id, dpo.new_price, dpo.is_option_mandatory
 		FROM discounts_products_options dpo
-		INNER JOIN discounts d ON d.discount_id = dpo.discount_id
+		INNER JOIN discounts d ON d.discount_id_new = dpo.discount_id_new
 		WHERE d.merchant_id = ?
 		  AND d.available = TRUE
 		  AND d.enabled = TRUE

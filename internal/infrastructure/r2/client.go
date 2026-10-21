@@ -218,6 +218,21 @@ func GenerateKioskKey(merchantID, imageType, ext string) string {
 	return fmt.Sprintf("wello_resto_images_storage/merchants/%s/kiosk/%s%s", merchantID, imageType, ext)
 }
 
+// GenerateKioskMarketingMediaKey génère la clé R2 d'un média du ruban marketing
+// des bornes Kiosk (table kiosk_marketing_media).
+//
+// Contrairement à GenerateKioskKey (un seul visuel de veille par merchant, clé
+// déterministe qu'on écrase), le ruban est une rotation de plusieurs médias qui
+// coexistent : chacun a sa propre clé, dérivée de son identifiant, supprimée
+// individuellement quand il est retiré. Une clé n'étant jamais réécrite, aucun
+// cache-buster n'est nécessaire.
+func GenerateKioskMarketingMediaKey(merchantID, mediaID, ext string) string {
+	if !strings.HasPrefix(ext, ".") {
+		ext = "." + ext
+	}
+	return fmt.Sprintf("wello_resto_images_storage/merchants/%s/kiosk/marketing/%s%s", merchantID, mediaID, ext)
+}
+
 // GenerateConfigOptionKey génère la clé R2 pour l'image d'une option de
 // configuration produit (ex. variantes "Coca / Sprite / Fanta" dans un
 // wizard de personnalisation).

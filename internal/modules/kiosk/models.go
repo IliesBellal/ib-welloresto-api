@@ -79,9 +79,13 @@ type KioskSettingsRow struct {
 	IdleImageURL         *string
 	IdleVideoURL         *string
 	PrimaryColor         *string
-	BusinessName         *string
-	Slug                 *string
-	CreatedAt            time.Time
+	// MarketingRibbonEnabled / MarketingDefaultDurationSeconds : ruban marketing
+	// (migration 190, voir marketing.go).
+	MarketingRibbonEnabled          bool
+	MarketingDefaultDurationSeconds int
+	BusinessName                    *string
+	Slug                            *string
+	CreatedAt                       time.Time
 	UpdatedAt            *time.Time
 }
 
@@ -307,6 +311,13 @@ type KioskSettingsResponse struct {
 	IdleVideoURL         *string `json:"idle_video_url"`
 	PrimaryColor         *string `json:"primary_color"`
 
+	// MarketingRibbon — ruban marketing du haut de l'écran de menu. Toujours
+	// présent (jamais null) pour qu'un client n'ait pas à tester son absence ;
+	// Media n'est rempli que pour la borne (GET /kiosk/settings) et seulement si
+	// le ruban est activé — le back-office lit la rotation via
+	// GET /pos/settings/kiosk/marketing/media.
+	MarketingRibbon MarketingRibbonResponse `json:"marketing_ribbon"`
+
 	// BusinessName — merchant.fullName, en lecture seule (jamais modifiable
 	// via UpdateKioskSettingsRequest : le nom de l'établissement se gère
 	// ailleurs, pas dans les paramètres Kiosk) — voir docs/KIOSK_DECISIONS.md.
@@ -340,6 +351,9 @@ type UpdateKioskSettingsRequest struct {
 	CardPaymentEnabled   *bool   `json:"card_payment_enabled"`
 	ShowPromoBadge       *bool   `json:"show_promo_badge"`
 	PrimaryColor         *string `json:"primary_color"`
+
+	MarketingRibbonEnabled          *bool `json:"marketing_ribbon_enabled"`
+	MarketingDefaultDurationSeconds *int  `json:"marketing_default_duration_seconds"`
 }
 
 // ---- Incrément 2 : menu, upsell, pricing, commandes ----

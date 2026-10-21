@@ -9,6 +9,7 @@ import (
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/permission"
+	"welloresto-api/internal/userids"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -651,6 +652,9 @@ func (r *Repository) GetUserRightsRoleID(ctx context.Context, merchantID, userID
 // false when no enabled (merchantID, userID) link exists — the caller maps
 // that to "not found" rather than silently no-op'ing.
 func (r *Repository) SetUserRole(ctx context.Context, merchantID, userID, roleID string) (matched bool, err error) {
+	// Écran « Droits » ouvert avant cmd/renumber_users : ancien "user-<uuid>"
+	// traduit vers l'id actuel (chantier ids entiers, étape 3).
+	userID = userids.Resolve(ctx, r.db, userID)
 	db := dbx.GetDB(ctx, r.db)
 	res, err := db.ExecContext(ctx, `
 		UPDATE users_rights SET role_id = ? WHERE merchant_id = ? AND user_id = ? AND enabled = TRUE

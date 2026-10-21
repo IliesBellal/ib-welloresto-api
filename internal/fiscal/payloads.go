@@ -19,8 +19,11 @@ import (
 // scellement en sont exclues (voir le brief du lot A, phase 3) :
 //   - orders : state, brand_status et les colonnes de service (mises à jour
 //     par les plateformes après la clôture) ;
+//   - orderitems : reward_id (récompense « produit offert » de la ligne) ;
 //   - payments : enabled (état dérivé), cash_register_id (rattaché au registre
-//     à sa fermeture), fee, net_amount, status_check (écrits par Stripe) ;
+//     à sa fermeture), collected_by (livreur ayant encaissé en main propre,
+//     renseigné à la livraison), fee, net_amount, status_check (écrits par
+//     Stripe) ;
 //   - cash_registers : enclosed, closed_by, closure_comment et les relevés
 //     cash_registers_custom_items (saisis après la fermeture).
 

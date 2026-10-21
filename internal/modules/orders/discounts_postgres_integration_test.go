@@ -21,7 +21,9 @@ import (
 //	  go test -tags postgres_integration -run 'Postgres' ./internal/modules/orders/
 
 // seedDiscount insère une promotion (PERCENTAGE, cumulable) et renvoie son
-// discount_id_new, requis par les tables filles.
+// discount_id_new, requis par les tables filles — et seule clé renvoyée par
+// le pricing depuis le chantier ids entiers (étape 2) : comparer les
+// DiscountID obtenus à idKey(idNew), jamais à id (varchar legacy).
 func seedDiscount(t *testing.T, db *sql.DB, id, merchantID string, value int, timeLimited, enabled bool, orderType *string, preferredOrder int) int64 {
 	t.Helper()
 	var idNew int64
@@ -35,6 +37,10 @@ func seedDiscount(t *testing.T, db *sql.DB, id, merchantID string, value int, ti
 	}
 	return idNew
 }
+
+// idKey : discount_id renvoyé par le pricing pour une promotion (texte de
+// discount_id_new).
+func idKey(idNew int64) string { return strconv.FormatInt(idNew, 10) }
 
 func seedSchedule(t *testing.T, db *sql.DB, discountID string, discountIDNew int64, day int, from, to string, enabled bool) {
 	t.Helper()
@@ -83,10 +89,10 @@ func TestDiscountTimeRestriction_Postgres(t *testing.T) {
 	seedSchedule(t, db, "itest-sched-two-slots", twoSlots, 1, "12:00:00", "15:00:00", true)
 
 	// Supprimée dans le back-office.
-	seedDiscount(t, db, "itest-sched-deleted", merchantID, 20, false, false, strPtr("IN"), 4)
+	deleted := seedDiscount(t, db, "itest-sched-deleted", merchantID, 20, false, false, strPtr("IN"), 4)
 
 	// « Tous modes » : discount_order_type et min_order_unit NULL.
-	seedDiscount(t, db, "itest-sched-all-modes", merchantID, 20, false, true, nil, 5)
+	allModes := seedDiscount(t, db, "itest-sched-all-modes", merchantID, 20, false, true, nil, 5)
 
 	repo := NewOrdersRepository(db, nil)
 	// Date du jour et non une date figée : les promotions de test valent à partir
@@ -113,8 +119,8 @@ func TestDiscountTimeRestriction_Postgres(t *testing.T) {
 		return got
 	}
 
-	always := []string{"itest-sched-unlimited", "itest-sched-all-modes"}
-	never := []string{"itest-sched-disabled-slot", "itest-sched-deleted"}
+	always := []string{idKey(unlimited), idKey(allModes)}
+	never := []string{idKey(disabledSlot), idKey(deleted)}
 
 	cases := []struct {
 		name       string
@@ -144,11 +150,11 @@ func TestDiscountTimeRestriction_Postgres(t *testing.T) {
 					t.Fatalf("%s ne doit jamais être active, got %v", id, got)
 				}
 			}
-			if got["itest-sched-limited"] != tc.limitedOn {
-				t.Fatalf("itest-sched-limited active = %v, want %v (got %v)", got["itest-sched-limited"], tc.limitedOn, got)
+			if got[idKey(limited)] != tc.limitedOn {
+				t.Fatalf("itest-sched-limited active = %v, want %v (got %v)", got[idKey(limited)], tc.limitedOn, got)
 			}
-			if got["itest-sched-two-slots"] != tc.twoSlotsOn {
-				t.Fatalf("itest-sched-two-slots active = %v, want %v (got %v)", got["itest-sched-two-slots"], tc.twoSlotsOn, got)
+			if got[idKey(twoSlots)] != tc.twoSlotsOn {
+				t.Fatalf("itest-sched-two-slots active = %v, want %v (got %v)", got[idKey(twoSlots)], tc.twoSlotsOn, got)
 			}
 		})
 	}
@@ -309,10 +315,10 @@ func TestComputePricing_TimeLimitedVsPermanent_Postgres(t *testing.T) {
 			byProduct[p.ProductID] = p
 		}
 		a, b := byProduct[prodA], byProduct[prodB]
-		if a.DiscountedPrice == nil || *a.DiscountedPrice != 800 || *a.DiscountID != "itest-cp-today-A" {
+		if a.DiscountedPrice == nil || *a.DiscountedPrice != 800 || *a.DiscountID != idKey(todayA) {
 			t.Fatalf("A doit être remisé à 800 par la promotion du jour, got %+v", a)
 		}
-		if b.DiscountedPrice == nil || *b.DiscountedPrice != 900 || *b.DiscountID != "itest-cp-permanent-B" {
+		if b.DiscountedPrice == nil || *b.DiscountedPrice != 900 || *b.DiscountID != idKey(permanentB) {
 			t.Fatalf("B doit être remisé à 900 par la promotion permanente (pas -50 %% d'un autre jour), got %+v", b)
 		}
 		if order.TTC != 1700 {

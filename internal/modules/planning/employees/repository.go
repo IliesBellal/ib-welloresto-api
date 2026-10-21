@@ -9,6 +9,7 @@ import (
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/userids"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -21,6 +22,9 @@ func NewRepository(db *sql.DB) *Repository {
 }
 
 func (r *Repository) ListEmployees(ctx context.Context, merchantID string, filters EmployeeListFilters) ([]Employee, int, error) {
+	// Filtre ?user_id= : un ancien "user-<uuid>" encore envoyé est traduit
+	// vers l'id actuel (chantier ids entiers, étape 3).
+	filters.UserID = userids.Resolve(ctx, r.db, filters.UserID)
 	db := dbx.GetDB(ctx, r.db)
 	baseQuery := `
 		FROM employees e

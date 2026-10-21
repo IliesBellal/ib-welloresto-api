@@ -748,13 +748,22 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 	// ----------------------------------------------------------------
 	// p.enabled est boolean en Postgres mais scanné dans un int Go (CRPayment.Enabled) :
 	// CASE 1/0 valide dans les deux dialectes (MySQL évalue le tinyint comme booléen).
+	//
+	// collected_by (migration 188) : livreur ayant encaissé en main propre,
+	// prioritaire sur user_id (qui reste « qui a saisi le paiement », signé).
+	//
+	// user_id_remap (migration 187) : un paiement signé garde pour toujours
+	// l'ancien "user-<uuid>" de son encaisseur (chaîne fiscale), renuméroté
+	// depuis dans users. Sans ce relais, l'INNER JOIN faisait disparaître ces
+	// paiements du détail de la caisse.
 	payRows, err := db.QueryContext(ctx, `
 		SELECT p.order_id, o.order_num, p.payment_id, p.amount, p.mop,
 		       CASE WHEN p.enabled THEN 1 ELSE 0 END AS enabled,
 		       p.payment_date, u.user_id, u.first_name, u.last_name
 		FROM payments p
 		INNER JOIN orders o ON o.order_id = p.order_id
-		INNER JOIN users u ON u.user_id = p.user_id
+		LEFT JOIN user_id_remap rm ON rm.legacy_user_id = p.user_id
+		INNER JOIN users u ON u.user_id = COALESCE(p.collected_by, rm.user_id, p.user_id)
 		WHERE p.cash_register_id = ?
 		ORDER BY p.payment_date ASC
 	`, cashRegisterID)

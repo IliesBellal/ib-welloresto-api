@@ -116,6 +116,11 @@ type OrderProductPayload struct {
 	Description     *string                  `json:"description,omitempty"`
 	DiscountID      *string                  `json:"discount_id"`
 	DiscountName    *string                  `json:"discount_name"`
+	// RewardID : récompense de fidélité « produit offert » portée par la ligne
+	// (customer_rewards.reward_id), distincte de DiscountID qui ne désigne
+	// qu'une remise. Voir RewardLineInDiscountID pour la transition des POS
+	// qui ne connaissent pas encore ce champ.
+	RewardID        *string                  `json:"reward_id,omitempty"`
 	DelayID         *string                  `json:"delay_id"`
 	ProductName     string                   `json:"product_name"`
 	TvaRate         float64                  `json:"tva_rate"`

@@ -27,7 +27,10 @@ func TestGetDiscounts_AllOrderTypesAndLocalClock(t *testing.T) {
 			dbx.UTCDate("d.valid_from") + " <= ?",
 			"(d.valid_to IS NULL OR " + dbx.UTCDate("d.valid_to") + " >= ?)",
 			"d.enabled = true",
-			"ORDER BY d.prefered_order ASC, d.discount_id ASC",
+			"ORDER BY d.prefered_order ASC, d.discount_id_new::text ASC",
+			// Même clé que le pricing (chantier ids entiers, étape 2).
+			"SELECT DISTINCT d.discount_id_new::text,",
+			"ds.discount_id_new = d.discount_id_new",
 		} {
 			if !strings.Contains(sql, fragment) {
 				return errors.New("SQL fragment missing: " + fragment)

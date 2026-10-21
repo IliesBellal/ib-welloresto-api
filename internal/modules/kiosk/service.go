@@ -1070,6 +1070,11 @@ func (s *Service) GetSettingsForKiosk(ctx context.Context, merchantID string) (*
 	if closed {
 		resp.CardPaymentEnabled = false
 	}
+	// Les médias ne sont envoyés que si le ruban est activé : inutile de faire
+	// télécharger à une borne des visuels qu'elle n'affichera pas.
+	if row.MarketingRibbonEnabled {
+		resp.MarketingRibbon.Media = s.marketingMediaForKiosk(ctx, merchantID, row)
+	}
 	return resp, nil
 }
 
@@ -1096,9 +1101,14 @@ func (s *Service) settingsResponse(ctx context.Context, merchantID string, row *
 		IdleImageURL:         row.IdleImageURL,
 		IdleVideoURL:         row.IdleVideoURL,
 		PrimaryColor:         row.PrimaryColor,
-		BusinessName:         row.BusinessName,
-		Slug:                 row.Slug,
-		TerminalLocationID:   terminalLocationID,
+		MarketingRibbon: MarketingRibbonResponse{
+			Enabled:                row.MarketingRibbonEnabled,
+			DefaultDurationSeconds: marketingDefaultDuration(row),
+			Media:                  []MarketingMediaResponse{},
+		},
+		BusinessName:       row.BusinessName,
+		Slug:               row.Slug,
+		TerminalLocationID: terminalLocationID,
 	}, nil
 }
 
@@ -1222,8 +1232,24 @@ func (s *Service) UpdateSettings(ctx context.Context, merchantID string, req Upd
 		current.PrimaryColor = req.PrimaryColor
 	}
 
+	marketingChanged := false
+	if req.MarketingRibbonEnabled != nil {
+		current.MarketingRibbonEnabled = *req.MarketingRibbonEnabled
+		marketingChanged = true
+	}
+	if req.MarketingDefaultDurationSeconds != nil {
+		if !validMarketingDuration(*req.MarketingDefaultDurationSeconds) {
+			return nil, models.ErrKioskSettingsInvalid
+		}
+		current.MarketingDefaultDurationSeconds = *req.MarketingDefaultDurationSeconds
+		marketingChanged = true
+	}
+
 	if err := s.repo.UpsertSettings(ctx, current); err != nil {
 		return nil, err
+	}
+	if marketingChanged {
+		s.notifyMarketingChanged(merchantID)
 	}
 
 	return s.GetSettings(ctx, merchantID)

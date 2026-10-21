@@ -92,10 +92,21 @@ func TestDeliverySessionsRepository_Postgres(t *testing.T) {
 	order1 := newOrder()
 	order2 := newOrder()
 
-	if _, err := db.ExecContext(ctx, `
-		INSERT INTO payments (merchant_id, user_id, order_id, amount, mop, enabled)
-		VALUES ($1, 'itest-ds-cashier', $2, 1500, 'ES', true)`, merchantID, order1); err != nil {
-		t.Fatalf("seed payment: %v", err)
+	// Un paiement en main propre (ES) et un paiement en ligne (STRIPE) : seul le
+	// premier est encaissé par le livreur (payments.collected_by, migration 188).
+	var collectedByColumn bool
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'payments' AND column_name = 'collected_by')`).Scan(&collectedByColumn); err != nil {
+		t.Fatalf("check migration 188: %v", err)
+	}
+	if !collectedByColumn {
+		t.Skip("migration 188 (payments.collected_by) non appliquée sur cette base")
+	}
+	for _, mop := range []string{"ES", "STRIPE"} {
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO payments (merchant_id, user_id, order_id, amount, mop, enabled)
+			VALUES ($1, 'itest-ds-cashier', $2, 750, $3, true)`, merchantID, order1, mop); err != nil {
+			t.Fatalf("seed payment %s: %v", mop, err)
+		}
 	}
 
 	fetcher := orders.NewOrdersFetcher(db)
@@ -191,12 +202,31 @@ func TestDeliverySessionsRepository_Postgres(t *testing.T) {
 	if stopStatus != "delivered" {
 		t.Fatalf("expected delivered stop, got %q", stopStatus)
 	}
-	var payUser string
-	if err := db.QueryRowContext(ctx, `SELECT user_id FROM payments WHERE order_id = $1`, order1).Scan(&payUser); err != nil {
-		t.Fatalf("read back payment: %v", err)
+	// payments.user_id fait partie de la charge utile signée : il ne change
+	// jamais. Le livreur est enregistré dans collected_by, pour les seuls
+	// paiements en main propre.
+	rows, err := db.QueryContext(ctx, `SELECT mop, user_id, collected_by FROM payments WHERE order_id = $1`, order1)
+	if err != nil {
+		t.Fatalf("read back payments: %v", err)
 	}
-	if payUser != userID {
-		t.Fatalf("expected payment reassigned to delivery man %s, got %q", userID, payUser)
+	collectors := map[string]*string{}
+	for rows.Next() {
+		var mop, payUser string
+		var collectedBy *string
+		if err := rows.Scan(&mop, &payUser, &collectedBy); err != nil {
+			t.Fatalf("scan payment: %v", err)
+		}
+		if payUser != "itest-ds-cashier" {
+			t.Fatalf("payments.user_id must never be rewritten (signed), got %q for %s", payUser, mop)
+		}
+		collectors[mop] = collectedBy
+	}
+	rows.Close()
+	if got := collectors["ES"]; got == nil || *got != userID {
+		t.Fatalf("expected cash payment collected_by delivery man %s, got %v", userID, got)
+	}
+	if got := collectors["STRIPE"]; got != nil {
+		t.Fatalf("online payment must keep its recorded collector, got collected_by %q", *got)
 	}
 	// current avancé sur order2 (en_route)
 	var currentOrder *string

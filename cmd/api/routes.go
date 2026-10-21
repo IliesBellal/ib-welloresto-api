@@ -2172,6 +2172,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		r.Get("/devices", kioskAdminHandler.ListKioskDevices)
 		r.Get("/devices/{device_id}", kioskAdminHandler.GetKioskDevice)
 		r.Get("/settings", kioskAdminHandler.GetKioskSettings)
+		r.Get("/marketing/media", kioskAdminHandler.ListMarketingMedia)
 
 		// PIN admin : expose un secret en clair (déchiffré) — protégé par
 		// HasSettingsAccess en plus de authMiddleware, contrairement aux
@@ -2198,6 +2199,13 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			r.Post("/settings/idle-image", kioskAdminHandler.UploadKioskIdleImage)
 			r.Post("/settings/idle-video", kioskAdminHandler.UploadKioskIdleVideo)
 			r.Delete("/settings/idle-video", kioskAdminHandler.DeleteKioskIdleVideo)
+
+			// Ruban marketing (rotation d'images/vidéos en haut du menu).
+			r.Post("/marketing/media", kioskAdminHandler.CreateMarketingMedia)
+			r.Put("/marketing/media/reorder", kioskAdminHandler.ReorderMarketingMedia)
+			r.Post("/marketing/media/reset-durations", kioskAdminHandler.ResetMarketingMediaDurations)
+			r.Put("/marketing/media/{media_id}", kioskAdminHandler.UpdateMarketingMedia)
+			r.Delete("/marketing/media/{media_id}", kioskAdminHandler.DeleteMarketingMedia)
 		})
 	})
 

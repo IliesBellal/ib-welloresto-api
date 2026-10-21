@@ -468,7 +468,8 @@ func (r *Repository) GetSettingsByMerchant(ctx context.Context, merchantID strin
 	SELECT merchant_id, fulfillment_dine_in, fulfillment_take_away, force_fulfillment_type, pager_number_required,
 	       show_allergens, inactivity_timeout_sec, upsell_enabled, pay_at_counter_enabled, card_payment_enabled,
 	       card_payment_pos_toggle, card_payment_closed_at,
-	       show_promo_badge, logo_url, idle_image_url, idle_video_url, primary_color, created_at, updated_at
+	       show_promo_badge, logo_url, idle_image_url, idle_video_url, primary_color,
+	       marketing_ribbon_enabled, marketing_default_duration_seconds, created_at, updated_at
 	FROM kiosk_settings
 	WHERE merchant_id = ?`
 
@@ -477,7 +478,8 @@ func (r *Repository) GetSettingsByMerchant(ctx context.Context, merchantID strin
 		&row.MerchantID, &row.FulfillmentDineIn, &row.FulfillmentTakeAway, &row.ForceFulfillmentType, &row.PagerNumberRequired,
 		&row.ShowAllergens, &row.InactivityTimeoutSec, &row.UpsellEnabled, &row.PayAtCounterEnabled, &row.CardPaymentEnabled,
 		&row.CardPaymentPOSToggle, &row.CardPaymentClosedAt,
-		&row.ShowPromoBadge, &row.LogoURL, &row.IdleImageURL, &row.IdleVideoURL, &row.PrimaryColor, &row.CreatedAt, &row.UpdatedAt,
+		&row.ShowPromoBadge, &row.LogoURL, &row.IdleImageURL, &row.IdleVideoURL, &row.PrimaryColor,
+		&row.MarketingRibbonEnabled, &row.MarketingDefaultDurationSeconds, &row.CreatedAt, &row.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -511,8 +513,9 @@ func (r *Repository) UpsertSettings(ctx context.Context, s *KioskSettingsRow) er
 	INSERT INTO kiosk_settings (
 		merchant_id, fulfillment_dine_in, fulfillment_take_away, force_fulfillment_type, pager_number_required,
 		show_allergens, inactivity_timeout_sec, upsell_enabled, pay_at_counter_enabled, card_payment_enabled,
-		show_promo_badge, logo_url, idle_image_url, idle_video_url, primary_color
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		show_promo_badge, logo_url, idle_image_url, idle_video_url, primary_color,
+		marketing_ribbon_enabled, marketing_default_duration_seconds
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON DUPLICATE KEY UPDATE
 		fulfillment_dine_in = VALUES(fulfillment_dine_in),
 		fulfillment_take_away = VALUES(fulfillment_take_away),
@@ -527,14 +530,17 @@ func (r *Repository) UpsertSettings(ctx context.Context, s *KioskSettingsRow) er
 		logo_url = VALUES(logo_url),
 		idle_image_url = VALUES(idle_image_url),
 		idle_video_url = VALUES(idle_video_url),
-		primary_color = VALUES(primary_color)`
+		primary_color = VALUES(primary_color),
+		marketing_ribbon_enabled = VALUES(marketing_ribbon_enabled),
+		marketing_default_duration_seconds = VALUES(marketing_default_duration_seconds)`
 	if dbx.ActiveDialect() == dbx.Postgres {
 		query = `
 	INSERT INTO kiosk_settings (
 		merchant_id, fulfillment_dine_in, fulfillment_take_away, force_fulfillment_type, pager_number_required,
 		show_allergens, inactivity_timeout_sec, upsell_enabled, pay_at_counter_enabled, card_payment_enabled,
-		show_promo_badge, logo_url, idle_image_url, idle_video_url, primary_color
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		show_promo_badge, logo_url, idle_image_url, idle_video_url, primary_color,
+		marketing_ribbon_enabled, marketing_default_duration_seconds
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT (merchant_id) DO UPDATE SET
 		fulfillment_dine_in = EXCLUDED.fulfillment_dine_in,
 		fulfillment_take_away = EXCLUDED.fulfillment_take_away,
@@ -549,13 +555,16 @@ func (r *Repository) UpsertSettings(ctx context.Context, s *KioskSettingsRow) er
 		logo_url = EXCLUDED.logo_url,
 		idle_image_url = EXCLUDED.idle_image_url,
 		idle_video_url = EXCLUDED.idle_video_url,
-		primary_color = EXCLUDED.primary_color`
+		primary_color = EXCLUDED.primary_color,
+		marketing_ribbon_enabled = EXCLUDED.marketing_ribbon_enabled,
+		marketing_default_duration_seconds = EXCLUDED.marketing_default_duration_seconds`
 	}
 
 	_, err := db.ExecContext(ctx, query,
 		s.MerchantID, s.FulfillmentDineIn, s.FulfillmentTakeAway, s.ForceFulfillmentType, s.PagerNumberRequired,
 		s.ShowAllergens, s.InactivityTimeoutSec, s.UpsellEnabled, s.PayAtCounterEnabled, s.CardPaymentEnabled,
 		s.ShowPromoBadge, s.LogoURL, s.IdleImageURL, s.IdleVideoURL, s.PrimaryColor,
+		s.MarketingRibbonEnabled, s.MarketingDefaultDurationSeconds,
 	)
 	return err
 }
@@ -656,6 +665,9 @@ func defaultKioskSettingsRow(merchantID string) *KioskSettingsRow {
 		UpsellEnabled:        true,
 		PayAtCounterEnabled:  true,
 		ShowPromoBadge:       true,
+		// Même défaut que la colonne (migration 190) : le CHECK de la base
+		// refuserait un 0 écrit par UpsertSettings sur un merchant sans ligne.
+		MarketingDefaultDurationSeconds: defaultMarketingDurationSeconds,
 	}
 }
 
@@ -936,10 +948,10 @@ func (r *Repository) GetDiscountProductIDs(ctx context.Context, discountIDs []st
 	}
 
 	query := fmt.Sprintf(`
-	SELECT dp.discount_id, dp.product_id
+	SELECT dp.discount_id_new::text, dp.product_id
 	FROM discounts_products dp
-	INNER JOIN discounts d ON d.discount_id = dp.discount_id
-	WHERE dp.discount_id IN (%s)
+	INNER JOIN discounts d ON d.discount_id_new = dp.discount_id_new
+	WHERE dp.discount_id_new IN (%s)
 	AND NOT (d.discount_unit = 'NEWPRICE' AND dp.new_price IS NULL)`, placeholders)
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -1089,7 +1101,7 @@ func (r *Repository) GetDiscounts(ctx context.Context, merchantID string, orderT
 
 	query := `
 	SELECT DISTINCT
-		d.discount_id,
+		d.discount_id_new::text,
 		COALESCE(d.discount_order_type, ''),
 		d.discount_code,
 		d.discount_desc,
@@ -1105,7 +1117,7 @@ func (r *Repository) GetDiscounts(ctx context.Context, merchantID string, orderT
 		CASE WHEN d.available THEN 1 ELSE 0 END,
 		d.prefered_order
 	FROM discounts d
-	LEFT JOIN discounts_schedules ds ON ds.discount_id = d.discount_id AND ds.enabled = true
+	LEFT JOIN discounts_schedules ds ON ds.discount_id_new = d.discount_id_new AND ds.enabled = true
 	WHERE d.merchant_id = ?
 	AND (COALESCE(d.discount_order_type, '') = '' OR d.discount_order_type LIKE ?)
 	AND %[1]s <= ?
@@ -1117,8 +1129,12 @@ func (r *Repository) GetDiscounts(ctx context.Context, merchantID string, orderT
 	)
 	AND d.available = true
 	AND d.enabled = true
-	ORDER BY d.prefered_order ASC, d.discount_id ASC
+	ORDER BY d.prefered_order ASC, d.discount_id_new::text ASC
 	`
+	// discount_id = discount_id_new en texte, même clé que le pricing
+	// (orders.GetDiscounts) : la borne renvoie cette valeur dans la commande.
+	// L'ORDER BY reprend l'expression du SELECT, exigé par le DISTINCT.
+	//
 	// Ordre de priorité du pricing (orders.GetDiscounts, prefered_order) :
 	// le badge promo d'un produit visé par plusieurs promotions affiche la
 	// première (voir promoProducts). prefered_order est sélectionné pour

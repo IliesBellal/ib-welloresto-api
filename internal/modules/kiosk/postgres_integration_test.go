@@ -312,9 +312,13 @@ func TestKioskRepository_Postgres(t *testing.T) {
 		t.Fatalf("GetMerchantTimezone = (%s, %v)", tz, err)
 	}
 
-	if _, err := db.ExecContext(ctx, `
+	// Clé renvoyée par GetDiscounts = discount_id_new en texte (chantier ids
+	// entiers, étape 2), pas l'ancien varchar 'itest-kiosk-disc'.
+	var discKey, discAllKey string
+	if err := db.QueryRowContext(ctx, `
 		INSERT INTO discounts (discount_id, merchant_id, discount_name, discount_desc, discount_order_type, discount_code, discount_value, discount_unit, min_order_unit, discounted_quantity, is_cumulative, is_time_limited, available, valid_from)
-		VALUES ('itest-kiosk-disc', $1, 'Promo kiosk', 'desc', 'IN TAKE_AWAY', 'KSK5', 5, 'PERCENT', 'CURRENCY', 1, false, false, true, now() - interval '1 day')`, merchantID); err != nil {
+		VALUES ('itest-kiosk-disc', $1, 'Promo kiosk', 'desc', 'IN TAKE_AWAY', 'KSK5', 5, 'PERCENT', 'CURRENCY', 1, false, false, true, now() - interval '1 day')
+		RETURNING discount_id_new::text`, merchantID).Scan(&discKey); err != nil {
 		t.Fatalf("seed discount: %v", err)
 	}
 	dow := int(time.Now().UTC().Weekday())
@@ -323,9 +327,10 @@ func TestKioskRepository_Postgres(t *testing.T) {
 	}
 	// Promotion « tous modes » (discount_order_type NULL) : listée elle aussi,
 	// comme le pricing l'applique.
-	if _, err := db.ExecContext(ctx, `
+	if err := db.QueryRowContext(ctx, `
 		INSERT INTO discounts (discount_id, merchant_id, discount_name, discount_desc, discount_order_type, discount_code, discount_value, discount_unit, min_order_unit, discounted_quantity, is_cumulative, is_time_limited, available, valid_from)
-		VALUES ('itest-kiosk-disc-all', $1, 'Promo tous modes', 'desc', NULL, NULL, 10, 'PERCENTAGE', 'CURRENCY', 1, false, false, true, now() - interval '1 day')`, merchantID); err != nil {
+		VALUES ('itest-kiosk-disc-all', $1, 'Promo tous modes', 'desc', NULL, NULL, 10, 'PERCENTAGE', 'CURRENCY', 1, false, false, true, now() - interval '1 day')
+		RETURNING discount_id_new::text`, merchantID).Scan(&discAllKey); err != nil {
 		t.Fatalf("seed discount (all order types): %v", err)
 	}
 	discounts, err := repo.GetDiscounts(ctx, merchantID, "", time.Now().UTC())
@@ -333,19 +338,19 @@ func TestKioskRepository_Postgres(t *testing.T) {
 		t.Fatalf("GetDiscounts = (%+v, %v)", discounts, err)
 	}
 	for _, d := range discounts {
-		if d.DiscountID == "itest-kiosk-disc" && d.IsCumulative {
+		if d.DiscountID == discKey && d.IsCumulative {
 			t.Fatalf("unexpected cumulative discount: %+v", d)
 		}
-		if d.DiscountID == "itest-kiosk-disc-all" && d.DiscountOrderType != "" {
+		if d.DiscountID == discAllKey && d.DiscountOrderType != "" {
 			t.Fatalf("NULL discount_order_type must scan as empty, got %q", d.DiscountOrderType)
 		}
 	}
 
-	if _, err := db.ExecContext(ctx, `INSERT INTO discounts_products (discount_id, product_id) VALUES ('itest-kiosk-disc-all', 4242)`); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO discounts_products (discount_id, discount_id_new, product_id) VALUES ('itest-kiosk-disc-all', $1, 4242)`, discAllKey); err != nil {
 		t.Fatalf("seed discount product: %v", err)
 	}
-	discountProducts, err := repo.GetDiscountProductIDs(ctx, []string{"itest-kiosk-disc", "itest-kiosk-disc-all"})
-	if err != nil || len(discountProducts) != 1 || len(discountProducts["itest-kiosk-disc-all"]) != 1 || discountProducts["itest-kiosk-disc-all"][0] != "4242" {
+	discountProducts, err := repo.GetDiscountProductIDs(ctx, []string{discKey, discAllKey})
+	if err != nil || len(discountProducts) != 1 || len(discountProducts[discAllKey]) != 1 || discountProducts[discAllKey][0] != "4242" {
 		t.Fatalf("GetDiscountProductIDs = (%+v, %v)", discountProducts, err)
 	}
 

@@ -18,9 +18,12 @@ func TestDiscountsRepository_Postgres(t *testing.T) {
 	const merchantID = "itest-disc-m1"
 	discountID := "itest-discount-1"
 
+	// Les tables filles sont nettoyées par discount_id_new : depuis l'étape 2
+	// du chantier ids entiers, discount_id ne vaut plus discountID mais le
+	// texte de discount_id_new.
 	cleanup := func() {
-		_, _ = db.ExecContext(ctx, `DELETE FROM discounts_schedules WHERE discount_id = $1`, discountID)
-		_, _ = db.ExecContext(ctx, `DELETE FROM discounts_products WHERE discount_id = $1`, discountID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM discounts_schedules WHERE discount_id_new IN (SELECT discount_id_new FROM discounts WHERE merchant_id = $1)`, merchantID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM discounts_products WHERE discount_id_new IN (SELECT discount_id_new FROM discounts WHERE merchant_id = $1)`, merchantID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM discounts WHERE merchant_id = $1`, merchantID)
 	}
 	cleanup()
@@ -79,6 +82,23 @@ func TestDiscountsRepository_Postgres(t *testing.T) {
 	if created.Products[0].DiscountID != created.DiscountID || created.Schedules[0].DiscountID != created.DiscountID {
 		t.Fatalf("expected child products/schedules to carry the same discount_id_new as the parent, got products=%q schedules=%q parent=%q",
 			created.Products[0].DiscountID, created.Schedules[0].DiscountID, created.DiscountID)
+	}
+
+	// Chantier ids entiers, étape 2 : la colonne varchar discount_id (encore
+	// PRIMARY KEY) reçoit la même valeur que discount_id_new, sur la remise
+	// et sur ses tables filles — plus jamais "discount-<uuid>" ni la valeur
+	// fournie par l'appelant.
+	var legacyParent, legacyProduct, legacySchedule string
+	if err := db.QueryRowContext(ctx, `
+		SELECT d.discount_id,
+		       (SELECT dp.discount_id FROM discounts_products dp WHERE dp.discount_id_new = d.discount_id_new),
+		       (SELECT ds.discount_id FROM discounts_schedules ds WHERE ds.discount_id_new = d.discount_id_new)
+		FROM discounts d WHERE d.discount_id_new = $1`, discountIDNew).Scan(&legacyParent, &legacyProduct, &legacySchedule); err != nil {
+		t.Fatalf("read varchar discount_id columns: %v", err)
+	}
+	if legacyParent != created.DiscountID || legacyProduct != created.DiscountID || legacySchedule != created.DiscountID {
+		t.Fatalf("varchar discount_id must equal discount_id_new %q, got parent=%q product=%q schedule=%q",
+			created.DiscountID, legacyParent, legacyProduct, legacySchedule)
 	}
 
 	// GetActiveDiscounts: enabled = true AND available = true AND validité en

@@ -769,7 +769,6 @@ func (r *MenuRepository) materializePromotionsTx(
 		}
 
 		req := &discounts.CreateDiscountRequest{
-			DiscountID:         helpers.GeneratePrefixedID(helpers.DiscountIDPrefix),
 			DiscountName:       promo.Name,
 			DiscountDesc:       promo.Description,
 			DiscountValue:      float64(promo.DiscountValue),

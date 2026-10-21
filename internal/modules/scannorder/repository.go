@@ -406,7 +406,7 @@ func (r *Repository) GetDiscounts(ctx context.Context, merchantID string, orderT
 
 	query := `
 	SELECT DISTINCT
-		d.discount_id,
+		d.discount_id_new::text,
 		COALESCE(d.discount_order_type, ''),
 		d.discount_code,
 		d.discount_desc,
@@ -421,7 +421,7 @@ func (r *Repository) GetDiscounts(ctx context.Context, merchantID string, orderT
 		CASE WHEN d.is_cumulative THEN 1 ELSE 0 END,
 		CASE WHEN d.available THEN 1 ELSE 0 END
 	FROM discounts d
-	LEFT JOIN discounts_schedules ds ON ds.discount_id = d.discount_id AND ds.enabled = true
+	LEFT JOIN discounts_schedules ds ON ds.discount_id_new = d.discount_id_new AND ds.enabled = true
 	WHERE d.merchant_id = ?
 	AND (COALESCE(d.discount_order_type, '') = '' OR d.discount_order_type LIKE ?)
 	AND %[1]s <= ?
@@ -434,6 +434,9 @@ func (r *Repository) GetDiscounts(ctx context.Context, merchantID string, orderT
 	AND d.available = true
 	AND d.enabled = true
 	`
+	// discount_id = discount_id_new en texte, même clé que le pricing
+	// (orders.GetDiscounts) : ScanNOrder renvoie cette valeur dans la commande.
+	//
 	// discount_order_type vide/NULL = tous les modes, comme le pricing
 	// (orders.applyDiscounts) : ces promotions étaient exclues par le LIKE
 	// alors qu'elles s'appliquent au panier. min_order_unit, nullable, est lu

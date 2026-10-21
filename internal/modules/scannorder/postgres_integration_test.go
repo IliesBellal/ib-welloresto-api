@@ -200,21 +200,26 @@ func TestScannorderRepository_Postgres(t *testing.T) {
 	}
 
 	// --- GetDiscounts (fenêtre horaire + scans booléens CASE 1/0) ---
-	mustExec("discount", `
+	var discKey string
+	if err := db.QueryRowContext(ctx, `
 		INSERT INTO discounts (discount_id, merchant_id, discount_name, discount_desc, discount_order_type, discount_code, discount_value, discount_unit, min_order_unit, discounted_quantity, is_cumulative, is_time_limited, available, valid_from)
-		VALUES ('itest-sno-disc', $1, 'Promo SNO', 'desc', 'IN TAKE_AWAY', 'SNO10', 10, 'PERCENT', 'CURRENCY', 1, true, true, true, now() - interval '1 day')`, merchantID)
+		VALUES ('itest-sno-disc', $1, 'Promo SNO', 'desc', 'IN TAKE_AWAY', 'SNO10', 10, 'PERCENT', 'CURRENCY', 1, true, true, true, now() - interval '1 day')
+		RETURNING discount_id_new::text`, merchantID).Scan(&discKey); err != nil {
+		t.Fatalf("seed discount: %v", err)
+	}
 	dow := int(time.Now().UTC().Weekday())
 	if dow == 0 {
 		dow = 7
 	}
 	mustExec("discount schedule", `
-		INSERT INTO discounts_schedules (discount_id, day_of_week, available_from, available_to, enabled)
-		VALUES ('itest-sno-disc', $1, '00:00:00', '23:59:59', true)`, dow)
+		INSERT INTO discounts_schedules (discount_id, discount_id_new, day_of_week, available_from, available_to, enabled)
+		VALUES ('itest-sno-disc', $1, $2, '00:00:00', '23:59:59', true)`, discKey, dow)
 	discounts, err := repo.GetDiscounts(ctx, merchantID, "IN", time.Now().UTC())
 	if err != nil {
 		t.Fatalf("GetDiscounts failed against postgres: %v", err)
 	}
-	if len(discounts) != 1 || !discounts[0].IsCumulative || !discounts[0].Available {
+	// Clé renvoyée = discount_id_new en texte (chantier ids entiers, étape 2).
+	if len(discounts) != 1 || discounts[0].DiscountID != discKey || !discounts[0].IsCumulative || !discounts[0].Available {
 		t.Fatalf("unexpected discounts: %+v", discounts)
 	}
 

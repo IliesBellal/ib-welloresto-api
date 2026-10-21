@@ -230,36 +230,36 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 		VALUES ($1, $2, 3, 'en_route')`, sessionID, order2)
 
 	// --- discounts ---
-	mustExec("discount 1 (permanent)", `
+	disc1 := mustID("discount 1 (permanent)", `
 		INSERT INTO discounts (discount_id, merchant_id, discount_name, discount_desc, discount_order_type, discount_code, discount_value, discount_unit, min_order_unit, discounted_quantity, is_cumulative, is_time_limited, available, valid_from)
-		VALUES ('itest-disc-1', $1, 'Promo perm', 'itest', 'IN TAKE_AWAY DELIVERY', 'PERM10', 10, 'PERCENT', 'CURRENCY', 1, false, false, true, now() - interval '1 day')`, merchantID)
-	mustExec("discount 2 (horaire)", `
+		VALUES ('itest-disc-1', $1, 'Promo perm', 'itest', 'IN TAKE_AWAY DELIVERY', 'PERM10', 10, 'PERCENT', 'CURRENCY', 1, false, false, true, now() - interval '1 day') RETURNING discount_id_new`, merchantID)
+	disc2 := mustID("discount 2 (horaire)", `
 		INSERT INTO discounts (discount_id, merchant_id, discount_name, discount_desc, discount_order_type, discount_code, discount_value, discount_unit, min_order_unit, discounted_quantity, is_cumulative, is_time_limited, available, valid_from)
-		VALUES ('itest-disc-2', $1, 'Promo creneau', 'itest', 'IN TAKE_AWAY DELIVERY', 'CREN5', 5, 'PERCENT', 'CURRENCY', 1, false, true, true, now() - interval '1 day')`, merchantID)
+		VALUES ('itest-disc-2', $1, 'Promo creneau', 'itest', 'IN TAKE_AWAY DELIVERY', 'CREN5', 5, 'PERCENT', 'CURRENCY', 1, false, true, true, now() - interval '1 day') RETURNING discount_id_new`, merchantID)
 	// créneau couvrant toute la journée courante (ISODOW du jour, UTC) —
 	// rend le prédicat schedule déterministe quel que soit l'instant du test.
 	mustExec("discount schedule", `
-		INSERT INTO discounts_schedules (discount_id, day_of_week, available_from, available_to, enabled)
-		VALUES ('itest-disc-2', EXTRACT(ISODOW FROM now() AT TIME ZONE 'UTC'), '00:00:00', '23:59:59', true)`)
+		INSERT INTO discounts_schedules (discount_id, discount_id_new, day_of_week, available_from, available_to, enabled)
+		VALUES ('itest-disc-2', $1, EXTRACT(ISODOW FROM now() AT TIME ZONE 'UTC'), '00:00:00', '23:59:59', true)`, disc2)
 	// Second créneau identique : la jointure renvoie deux lignes pour
 	// itest-disc-2, GetDiscounts ne doit en garder qu'une.
 	mustExec("discount schedule (doublon)", `
-		INSERT INTO discounts_schedules (discount_id, day_of_week, available_from, available_to, enabled)
-		VALUES ('itest-disc-2', EXTRACT(ISODOW FROM now() AT TIME ZONE 'UTC'), '00:00:00', '23:59:59', true)`)
+		INSERT INTO discounts_schedules (discount_id, discount_id_new, day_of_week, available_from, available_to, enabled)
+		VALUES ('itest-disc-2', $1, EXTRACT(ISODOW FROM now() AT TIME ZONE 'UTC'), '00:00:00', '23:59:59', true)`, disc2)
 	// « Tous modes » (discount_order_type et min_order_unit NULL, écrits par
 	// le back-office quand rien n'est coché) : doit être lue sans erreur.
-	mustExec("discount 3 (tous modes)", `
+	disc3 := mustID("discount 3 (tous modes)", `
 		INSERT INTO discounts (discount_id, merchant_id, discount_name, discount_desc, discount_order_type, discount_code, discount_value, discount_unit, min_order_unit, discounted_quantity, is_cumulative, is_time_limited, available, valid_from)
-		VALUES ('itest-disc-3', $1, 'Promo tous modes', 'itest', NULL, NULL, 15, 'PERCENTAGE', NULL, 1, false, false, true, now() - interval '1 day')`, merchantID)
+		VALUES ('itest-disc-3', $1, 'Promo tous modes', 'itest', NULL, NULL, 15, 'PERCENTAGE', NULL, 1, false, false, true, now() - interval '1 day') RETURNING discount_id_new`, merchantID)
 	// Supprimée dans le back-office (enabled = false) : ne doit plus s'appliquer.
 	mustExec("discount 4 (supprimée)", `
 		INSERT INTO discounts (discount_id, merchant_id, discount_name, discount_desc, discount_order_type, discount_code, discount_value, discount_unit, min_order_unit, discounted_quantity, is_cumulative, is_time_limited, available, enabled, valid_from)
 		VALUES ('itest-disc-4', $1, 'Promo supprimee', 'itest', 'IN', NULL, 50, 'PERCENTAGE', 'CURRENCY', 1, false, false, true, false, now() - interval '1 day')`, merchantID)
 	mustExec("discounts_products", `
-		INSERT INTO discounts_products (discount_id, product_id, new_price) VALUES ('itest-disc-1', $1, 800)`, prodA)
+		INSERT INTO discounts_products (discount_id, discount_id_new, product_id, new_price) VALUES ('itest-disc-1', $1, $2, 800)`, disc1, prodA)
 	mustExec("discounts_products_options", `
-		INSERT INTO discounts_products_options (discount_id, product_id, option_id, new_price, is_option_mandatory)
-		VALUES ('itest-disc-1', $1, $2, 40, true)`, prodAStr, strconv.FormatInt(optionID, 10))
+		INSERT INTO discounts_products_options (discount_id, discount_id_new, product_id, option_id, new_price, is_option_mandatory)
+		VALUES ('itest-disc-1', $1, $2, $3, 40, true)`, disc1, prodAStr, strconv.FormatInt(optionID, 10))
 
 	// --- rewards ---
 	mustExec("loyalty program", `
@@ -607,7 +607,9 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 	for _, d := range discounts {
 		gotIDs[d.DiscountID] = true
 	}
-	if len(discounts) != 3 || !gotIDs["itest-disc-1"] || !gotIDs["itest-disc-2"] || !gotIDs["itest-disc-3"] {
+	// Clé renvoyée = discount_id_new en texte (chantier ids entiers, étape 2).
+	key1, key2, key3 := strconv.FormatInt(disc1, 10), strconv.FormatInt(disc2, 10), strconv.FormatInt(disc3, 10)
+	if len(discounts) != 3 || !gotIDs[key1] || !gotIDs[key2] || !gotIDs[key3] {
 		t.Fatalf("expected disc-1 (permanent), disc-2 (creneau du jour, une seule fois) et disc-3 (tous modes), sans disc-4 (supprimee), got %+v", discounts)
 	}
 
@@ -616,7 +618,7 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetDiscountProducts failed against postgres: %v", err)
 	}
-	if dp["itest-disc-1"] == nil || dp["itest-disc-1"][prodAStr] == nil || dp["itest-disc-1"][prodAStr].NewPrice == nil || *dp["itest-disc-1"][prodAStr].NewPrice != 800 {
+	if dp[key1] == nil || dp[key1][prodAStr] == nil || dp[key1][prodAStr].NewPrice == nil || *dp[key1][prodAStr].NewPrice != 800 {
 		t.Fatalf("unexpected discount products: %+v", dp)
 	}
 
@@ -628,7 +630,7 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 		t.Fatalf("GetDiscountProductOptions failed against postgres: %v", err)
 	}
 	optIDStr := strconv.FormatInt(optionID, 10)
-	opts := dpo["itest-disc-1"][prodAStr]
+	opts := dpo[key1][prodAStr]
 	if len(opts) != 1 || opts[0].OptionID != optIDStr || !opts[0].IsOptionMandatory || opts[0].NewPrice == nil || *opts[0].NewPrice != 40 {
 		t.Fatalf("unexpected discount product options: %+v", dpo)
 	}

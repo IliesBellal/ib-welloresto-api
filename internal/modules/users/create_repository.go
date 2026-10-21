@@ -39,6 +39,19 @@ func (r *UsersRepository) RoleBelongsToMerchant(ctx context.Context, merchantID,
 	return exists, err
 }
 
+// NextUserID returns the next users.user_id, drawn from users_user_id_seq
+// (migration 186) and returned as text: user_id stays a varchar, but new ids
+// are numeric like the historical PHP ones, never "user-<uuid>" again
+// (docs/ids-entiers-users-discounts-chantier.md). Called outside the
+// creation transaction — a rolled-back signup only leaves a gap.
+func (r *UsersRepository) NextUserID(ctx context.Context) (string, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	var id string
+	err := db.QueryRowContext(ctx, `SELECT nextval('users_user_id_seq')::text`).Scan(&id)
+	return id, err
+}
+
 // CreateUser inserts a new user row inside the provided transaction.
 // The caller is responsible for committing or rolling back the transaction.
 func (r *UsersRepository) CreateUser(ctx context.Context, userID, fullName, firstName, lastName, email, tel, hashedPassword, token string, termsAccepted, acceptsMarketing bool) error {

@@ -823,7 +823,16 @@ func (s *OrdersService) applyRewards(req *models.PricingRequest, products []mode
 				if sp.DiscountedPrice == nil && s.isProductInList(sp.ProductID, rwd.ProductIDs) {
 					val := rwd.RewardValue
 					sp.DiscountedPrice = val
-					sp.DiscountID = &rwd.RewardID
+					// reward_id est le champ propre ; discount_id n'est renseigné
+					// que pour les POS qui ne le connaissent pas encore (voir
+					// models.RewardLineInDiscountID). Nouvelles adresses mémoire :
+					// chaque ligne a son propre identifiant.
+					rewardID := rwd.RewardID
+					sp.RewardID = &rewardID
+					if models.RewardLineInDiscountID {
+						discountID := rwd.RewardID
+						sp.DiscountID = &discountID
+					}
 
 					req.Order.UsedRewards = append(req.Order.UsedRewards, &models.UsedReward{
 						RewardID: rwd.RewardID,

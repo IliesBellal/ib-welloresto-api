@@ -379,10 +379,14 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 	{
 		step := "payments"
 		q := `
-		SELECT p.order_id, p.payment_id, p.mop, p.amount, p.payment_date, p.user_id, p.enabled, p.operation_type,
+		SELECT p.order_id, p.payment_id, p.mop, p.amount, p.payment_date, COALESCE(p.collected_by, rm.user_id, p.user_id), p.enabled, p.operation_type,
 		       NULLIF(l.label, '') AS payment_label
 		FROM payments p
 		INNER JOIN orders o on o.order_id = p.order_id
+		-- collected_by : livreur ayant encaissé en main propre (payments.collected_by).
+		-- Paiement signé portant l'ancien "user-<uuid>" de son encaisseur
+		-- (chaîne fiscale, jamais réécrit) : renvoyé avec son id actuel.
+		LEFT JOIN user_id_remap rm ON rm.legacy_user_id = p.user_id
 		LEFT JOIN labels l ON l.label_type = 'mop' AND l.label_value = p.mop AND l.lang = 'FR'
 		-- LEFT JOIN delivery_session_order dso ON dso.order_id = o.order_id
 		-- LEFT JOIN delivery_session ds ON ds.id = dso.delivery_session_id
@@ -432,7 +436,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		SELECT o.order_id, oi.quantity, oi.paid_quantity, oi.price, oi.product_id, p.name, p.product_desc, pc.categ_name, oi.order_item_id,
 		       CASE WHEN oi.isPaid THEN 1 ELSE 0 END AS isPaid,
 		       CASE WHEN oi.isDistributed THEN 1 ELSE 0 END AS isDistributed,
-		       oi.ordered_on, oi.base_price, oi.discount_id, d.discount_name, oi.ready_for_distribution_quantity,
+		       oi.ordered_on, oi.base_price, oi.discount_id, oi.reward_id, d.discount_name, oi.ready_for_distribution_quantity,
 		       oi.distributed_quantity, ` + frozenProductVATRateSQL("IN", "tva_in") + ` as tva_rate_in, ` + frozenProductVATRateSQL("DELIVERY", "tva_delivery") + ` as tva_rate_delivery, ` + frozenProductVATRateSQL("TAKE_AWAY", "tva_take_away") + ` as tva_rate_take_away, oi.delay_id, oc.content, oc.user_id, oc.creation_date,
 		p.price_take_away, p.price_delivery, p.image_url, oi.production_status, oi.production_status_done_quantity, p.production_color,
 		p.available_in, p.available_take_away, p.available_delivery,
@@ -457,7 +461,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var quantity, paidQuantity, price, isPaid, isDistributed, basePrice, discountID, readyForDistribution, distributedQuantity, priceTakeAway, priceDelivery, productionDoneQty, isUpsell, remakeQty sql.NullInt64
+			var quantity, paidQuantity, price, isPaid, isDistributed, basePrice, discountID, rewardID, readyForDistribution, distributedQuantity, priceTakeAway, priceDelivery, productionDoneQty, isUpsell, remakeQty sql.NullInt64
 			var productID, name, productDesc, categName, orderItemID, discountName, delayID, commentContent, commentUserID, imageURL, productionStatus, productionColor, orderID sql.NullString
 			var tvaIn, tvaDelivery, tvaTakeAway sql.NullFloat64
 			var orderedOn, commentCreation sql.NullTime
@@ -466,7 +470,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			scanErr := rows.Scan(
 				&orderID, &quantity, &paidQuantity, &price, &productID, &name, &productDesc,
 				&categName, &orderItemID, &isPaid, &isDistributed, &orderedOn, &basePrice,
-				&discountID, &discountName, &readyForDistribution, &distributedQuantity,
+				&discountID, &rewardID, &discountName, &readyForDistribution, &distributedQuantity,
 				&tvaIn, &tvaDelivery, &tvaTakeAway, &delayID, &commentContent, &commentUserID,
 				&commentCreation, &priceTakeAway, &priceDelivery, &imageURL, &productionStatus,
 				&productionDoneQty, &productionColor, &availableIn, &availableTakeAway,
@@ -488,7 +492,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				debugTargets := []interface{}{
 					&orderID, &quantity, &paidQuantity, &price, &productID, &name, &productDesc,
 					&categName, &orderItemID, &isPaid, &isDistributed, &orderedOn, &basePrice,
-					&discountID, &discountName, &readyForDistribution, &distributedQuantity,
+					&discountID, &rewardID, &discountName, &readyForDistribution, &distributedQuantity,
 					&tvaIn, &tvaDelivery, &tvaTakeAway, &delayID, &commentContent, &commentUserID,
 					&commentCreation, &priceTakeAway, &priceDelivery, &imageURL, &productionStatus,
 					&productionDoneQty, &productionColor, &availableIn, &availableTakeAway,
@@ -532,12 +536,13 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				IsDistributed:                helpers.BoolPtr(isDistributed.Int64 != 0),
 				IsUpsell:                     isUpsell.Int64 != 0,
 				RemakeQuantity:               int(remakeQty.Int64),
-				Price:                        price.Int64,
-				PriceTakeAway:                &priceTakeAway.Int64,
+				Price:                        unitBasePrice(basePrice, price),
+				PriceTakeAway:               &priceTakeAway.Int64,
 				PriceDelivery:                &priceDelivery.Int64,
-				DiscountID:                   helpers.NullInt64ToPtr(discountID),
+				DiscountID:                   lineDiscountID(discountID, rewardID),
+				RewardID:                     helpers.NullInt64ToPtr(rewardID),
 				DiscountName:                 helpers.NullStringToPtr(discountName),
-				DiscountedPrice:              helpers.NilIfNullInt64Discount(discountID, price.Int64),
+				DiscountedPrice:              helpers.NilIfNullInt64Discount(sql.NullInt64{Int64: price.Int64, Valid: discountID.Valid || rewardID.Valid}, price.Int64),
 				TVAIn:                        helpers.NullFloat64Ptr(tvaIn),
 				TVADelivery:                  helpers.NullFloat64Ptr(tvaDelivery),
 				TVATakeAway:                  helpers.NullFloat64Ptr(tvaTakeAway),
@@ -915,4 +920,27 @@ func selectLastOrderCommentContent(comments []models.OrderComment) *string {
 	}
 
 	return nil
+}
+
+// unitBasePrice renvoie le prix unitaire avant remise (oi.base_price) pour
+// `price` côté API ; `oi.price` est le prix final remisé, exposé via
+// discounted_price. Repli sur oi.price pour les anciennes lignes sans
+// base_price : la colonne est NOT NULL DEFAULT 0 (migration 001, sans backfill),
+// donc « absent » vaut 0 et non NULL.
+func unitBasePrice(basePrice, price sql.NullInt64) int64 {
+	if basePrice.Valid && basePrice.Int64 > 0 {
+		return basePrice.Int64
+	}
+	return price.Int64
+}
+
+// lineDiscountID est le discount_id renvoyé pour une ligne de commande : la
+// remise, et — tant que models.RewardLineInDiscountID vaut true — à défaut
+// l'identifiant de sa récompense « produit offert », que les POS pas encore
+// à jour rechargent dans discount_id (clé de fusion des lignes du panier).
+func lineDiscountID(discountID, rewardID sql.NullInt64) *int64 {
+	if !discountID.Valid && models.RewardLineInDiscountID {
+		return helpers.NullInt64ToPtr(rewardID)
+	}
+	return helpers.NullInt64ToPtr(discountID)
 }

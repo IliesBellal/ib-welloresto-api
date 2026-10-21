@@ -10,6 +10,7 @@ import (
 	"welloresto-api/internal/infrastructure/r2"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/userids"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -23,6 +24,14 @@ func NewUsersHandler(s *UsersService, r2Client *r2.Client) *UsersHandler {
 	return &UsersHandler{svc: s, r2Client: r2Client}
 }
 
+// userIDParam lit un id utilisateur dans l'URL et traduit un ancien
+// "user-<uuid>" (renuméroté par cmd/renumber_users) vers son id actuel : un
+// écran du back-office ouvert avant la renumérotation renvoie encore
+// l'ancien id (docs/ids-entiers-users-discounts-chantier.md, étape 3).
+func (h *UsersHandler) userIDParam(r *http.Request, name string) string {
+	return userids.Resolve(r.Context(), h.svc.userRepo.database, chi.URLParam(r, name))
+}
+
 func (h *UsersHandler) GetUserLocation(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
@@ -31,7 +40,7 @@ func (h *UsersHandler) GetUserLocation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	userID := chi.URLParam(r, "user_id")
+	userID := h.userIDParam(r, "user_id")
 
 	result, err := h.svc.GetUserLocation(ctx, token, userID)
 	if err != nil {

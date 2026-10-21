@@ -68,8 +68,6 @@ func (s *Service) CreateDiscount(ctx context.Context, token string, req *CreateD
 		return nil, err
 	}
 
-	req.DiscountID = helpers.GeneratePrefixedID(helpers.DiscountIDPrefix)
-
 	// Restriction horaire = présence de créneaux : le back-office ne
 	// renseignait jamais is_time_limited, les créneaux saisis étaient ignorés.
 	req.IsTimeLimited = len(req.Schedules) > 0

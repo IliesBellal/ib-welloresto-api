@@ -43,7 +43,10 @@ func (s *UsersService) CreateUser(ctx context.Context, req CreateUserRequest) (s
 	}
 
 	// --- Generate IDs & tokens ---
-	userID := helpers.GeneratePrefixedID(helpers.UserIDPrefix)
+	userID, err := s.userRepo.NextUserID(ctx)
+	if err != nil {
+		return "", err
+	}
 
 	userToken, err := helpers.GenerateToken(30) // 30 bytes -> 60 hex chars, fits users.token (VARCHAR(64))
 	if err != nil {

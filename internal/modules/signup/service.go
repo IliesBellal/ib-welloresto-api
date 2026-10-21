@@ -198,7 +198,10 @@ func (s *Service) signupPassword(ctx context.Context, req SignupRequest) (Signup
 	if err != nil {
 		return SignupResponse{}, err
 	}
-	userID := helpers.GeneratePrefixedID(helpers.UserIDPrefix)
+	userID, err := s.usersRepo.NextUserID(ctx)
+	if err != nil {
+		return SignupResponse{}, err
+	}
 	userToken, err := helpers.GenerateToken(30)
 	if err != nil {
 		return SignupResponse{}, err
@@ -249,7 +252,10 @@ func (s *Service) signupGoogle(ctx context.Context, req SignupRequest) (SignupRe
 		return SignupResponse{}, err
 	}
 
-	userID := helpers.GeneratePrefixedID(helpers.UserIDPrefix)
+	userID, err := s.usersRepo.NextUserID(ctx)
+	if err != nil {
+		return SignupResponse{}, err
+	}
 	userToken, err := helpers.GenerateToken(30)
 	if err != nil {
 		return SignupResponse{}, err

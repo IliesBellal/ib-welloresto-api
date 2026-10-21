@@ -11,6 +11,7 @@ import (
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/orders"
+	"welloresto-api/internal/userids"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -250,6 +251,10 @@ func (r *DeliverySessionsRepository) fetchDeliverySessions(ctx context.Context, 
 func (r *DeliverySessionsRepository) StartDeliverySession(ctx context.Context, req *models.DeliverySessionRequest) (*models.DeliverySession, error) {
 	log := logger.FromContext(ctx)
 
+	// Livreur choisi dans une liste chargée côté POS : un ancien
+	// "user-<uuid>" est traduit vers l'id actuel (chantier ids entiers,
+	// étape 3), pour toute la suite de la création.
+	req.DeliveryMan.UserID = userids.Resolve(ctx, r.database, req.DeliveryMan.UserID)
 	userID := req.DeliveryMan.UserID
 	merchantID := req.MerchantID
 
@@ -976,8 +981,8 @@ func (r *DeliverySessionsRepository) ResolveDeliverableStop(ctx context.Context,
 
 // FinalizeDeliveredStop applies the local effects of transition 3 (§1.3 #3 / §3.4 steps
 // 5-7) once SetDelivered has already fiscally closed the order in its own, separate
-// transaction: marks the stop 'delivered', reassigns its payment to the delivery person
-// (same shape as CloseDeliverySession step 3, scoped to this order), and advances
+// transaction: marks the stop 'delivered', records the delivery person as collector of its
+// hand-collected payments (payments.collected_by, never payments.user_id), and advances
 // current_order_id to the next pending stop. Runs in its own transaction.
 //
 // Idempotent: step 1's UPDATE does not depend on the stop's previous status, so a retry
@@ -996,26 +1001,22 @@ func (r *DeliverySessionsRepository) FinalizeDeliveredStop(ctx context.Context, 
 			return err
 		}
 
-		// 2. Reassign the order's payment to the delivery person (ds.user_id)
-		reassignQuery := `
+		// 2. Record the delivery person as the real collector of the payments
+		// taken by hand (payments.collected_by, migration 188). payments.user_id
+		// stays "who recorded the payment": it is part of the signed fiscal
+		// payload (fiscal.PaymentPayload) and rewriting it after the fact made
+		// the payment's signature stop verifying. Online payments (Stripe,
+		// marketplaces, reward) were never collected by the delivery person.
+		if _, err := db.ExecContext(txCtx, `
 			UPDATE payments p
-			INNER JOIN delivery_session_order dso ON dso.order_id = p.order_id
-			INNER JOIN delivery_session ds ON ds.id = dso.delivery_session_id
-			SET p.user_id = ds.user_id
-			WHERE ds.id = ? AND dso.order_id = ?`
-		if dbx.ActiveDialect() == dbx.Postgres {
-			reassignQuery = `
-			UPDATE payments p
-			SET user_id = ds.user_id
+			SET collected_by = ds.user_id
 			FROM delivery_session_order dso
 			JOIN delivery_session ds ON ds.id = dso.delivery_session_id
 			WHERE dso.order_id = p.order_id
-			AND ds.id = ? AND dso.order_id = ?`
-		}
-		if _, err := db.ExecContext(txCtx, reassignQuery, sessionID, orderID); err != nil {
+			  AND ds.id = ? AND dso.order_id = ?
+			  AND p.mop = ANY(?)`, sessionID, orderID, models.HandCollectedMOPs); err != nil {
 			return err
 		}
-
 		// 3. Advance current_order_id to the next pending stop (or NULL if none)
 		return r.advanceCurrentStop(txCtx, sessionID)
 	})

@@ -46,8 +46,12 @@ func TestProdPromotionsActivation_Postgres(t *testing.T) {
 		days     []int
 		from, to string
 	}
+	// GetDiscounts renvoie discount_id_new (chantier ids entiers, étape 2) :
+	// labels le ramène au numéro de l'export de production.
+	labels := map[string]string{}
 	seed := func(id string, orderType *string, limited bool, prio int, slots ...slot) {
 		idNew := seedDiscount(t, db, id, merchantID, 20, limited, true, orderType, prio)
+		labels[idKey(idNew)] = strings.TrimPrefix(id, "itest-pa-")
 		for _, s := range slots {
 			for _, d := range s.days {
 				seedSchedule(t, db, id, idNew, d, s.from, s.to, true)
@@ -84,7 +88,11 @@ func TestProdPromotionsActivation_Postgres(t *testing.T) {
 		}
 		ids := make([]string, 0, len(discounts))
 		for _, d := range discounts {
-			ids = append(ids, strings.TrimPrefix(d.DiscountID, "itest-pa-"))
+			label, ok := labels[d.DiscountID]
+			if !ok {
+				t.Fatalf("GetDiscounts renvoie %q, pas un discount_id_new de ce test", d.DiscountID)
+			}
+			ids = append(ids, label)
 		}
 		sort.Strings(ids)
 		return strings.Join(ids, " ")

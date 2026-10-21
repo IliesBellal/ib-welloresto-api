@@ -504,6 +504,10 @@ var (
 	ErrKioskEnrollmentCodeNotFound    = errors.New("kiosk_enrollment_code_not_found")
 	ErrKioskEnrollmentCodeAlreadyUsed = errors.New("kiosk_enrollment_code_already_used")
 	ErrKioskInvalidColor              = errors.New("kiosk_invalid_color")
+	ErrKioskMediaNotFound             = errors.New("kiosk_media_not_found")
+	ErrKioskMediaInvalid              = errors.New("kiosk_media_invalid")
+	ErrKioskMediaLimitReached         = errors.New("kiosk_media_limit_reached")
+	ErrKioskSettingsInvalid           = errors.New("kiosk_settings_invalid")
 
 	// Erreurs du module Kiosk — PIN admin par borne et nom obligatoire à l'enrôlement
 	ErrKioskNameInvalid           = errors.New("kiosk_name_invalid")
@@ -1689,6 +1693,26 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusBadRequest
 		errorStatus = "kiosk_invalid_color"
 		errorMsg = "primary_color must be null or a valid hex color (#RRGGBB)."
+
+	case errors.Is(err, ErrKioskMediaNotFound):
+		status = http.StatusNotFound
+		errorStatus = "kiosk_media_not_found"
+		errorMsg = "Marketing media not found."
+
+	case errors.Is(err, ErrKioskMediaInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "kiosk_media_invalid"
+		errorMsg = "The marketing media payload is invalid."
+
+	case errors.Is(err, ErrKioskMediaLimitReached):
+		status = http.StatusConflict
+		errorStatus = "kiosk_media_limit_reached"
+		errorMsg = "The maximum number of marketing media has been reached. Delete one to add another."
+
+	case errors.Is(err, ErrKioskSettingsInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "kiosk_settings_invalid"
+		errorMsg = "The kiosk settings payload is invalid."
 
 	case errors.Is(err, ErrKioskNameInvalid):
 		status = http.StatusBadRequest

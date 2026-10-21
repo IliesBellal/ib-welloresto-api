@@ -17,6 +17,7 @@ import (
 	"welloresto-api/internal/modules/customers"
 	"welloresto-api/internal/modules/deliverytime"
 	"welloresto-api/internal/modules/distributiontime"
+	"welloresto-api/internal/userids"
 	"welloresto-api/internal/utils/dbutils"
 
 	"go.uber.org/zap"
@@ -696,6 +697,10 @@ func olcResponsible(userID *string) interface{} {
 }
 
 func (r *OrdersLifeCycleRepository) MarkOrderAsDeliveryStarted(ctx context.Context, orderID string, userID string) (*OrderIntegrationInfo, error) {
+	// ?user_id= du livreur, choisi dans une liste chargée côté POS : un
+	// ancien "user-<uuid>" est traduit vers l'id actuel (chantier ids
+	// entiers, étape 3).
+	userID = userids.Resolve(ctx, r.database, userID)
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
@@ -1416,8 +1421,8 @@ func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models
 	// leur propre TTC/HT/TVA.
 	r.setOrderDefaults(ctx, req)
 
-	if err := r.resolveLegacyDiscountIDs(ctx, req.MerchantID, req.Order.Products); err != nil {
-		log.Error("resolveLegacyDiscountIDs failure " + err.Error())
+	if err := r.resolveLineDiscounts(ctx, req.MerchantID, nil, req.Order.UsedRewards, req.Order.Products); err != nil {
+		log.Error("resolveLineDiscounts failure " + err.Error())
 		return nil, err
 	}
 
@@ -1694,7 +1699,7 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 		return models.ErrCartEmpty
 	}
 
-	if err := r.resolveLegacyDiscountIDs(ctx, req.MerchantID, req.Order.Products); err != nil {
+	if err := r.resolveLineDiscounts(ctx, req.MerchantID, req.Order.OrderID, req.Order.UsedRewards, req.Order.Products); err != nil {
 		return err
 	}
 
@@ -1727,8 +1732,8 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 	// dans aucun dialecte — les deux chemins (item existant / nouveau) sont
 	// donc séparés côté PG, à comportement identique.
 	upsertItemQuery := `
-		INSERT INTO orderitems (order_item_id, order_id, product_id, merchant_id, quantity, discount_id, base_price, price, delay_id, is_upsell, cost_price_unit, cost_price_reason, ordered_on)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())
+		INSERT INTO orderitems (order_item_id, order_id, product_id, merchant_id, quantity, discount_id, reward_id, base_price, price, delay_id, is_upsell, cost_price_unit, cost_price_reason, ordered_on)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())
 		ON DUPLICATE KEY UPDATE
 			-- Remet isDistributed et le statut de production à zéro seulement si la
 			-- quantité distribuée ne correspond plus à la nouvelle quantité commandée
@@ -1741,19 +1746,20 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 			base_price      = VALUES(base_price),
 			price           = VALUES(price),
 			discount_id     = VALUES(discount_id),
+			reward_id       = VALUES(reward_id),
 			delay_id        = VALUES(delay_id),
 			is_upsell       = VALUES(is_upsell),
 			cost_price_unit   = VALUES(cost_price_unit),
 			cost_price_reason = VALUES(cost_price_reason),
 			ordered_on      = VALUES(ordered_on)`
 	insertItemQuery := `
-		INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, base_price, price, delay_id, is_upsell, cost_price_unit, cost_price_reason, ordered_on)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ` + dbx.UTCNow() + `)`
+		INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, reward_id, base_price, price, delay_id, is_upsell, cost_price_unit, cost_price_reason, ordered_on)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ` + dbx.UTCNow() + `)`
 	if dbx.ActiveDialect() == dbx.Postgres {
 		upsertItemQuery = `
-		INSERT INTO orderitems (order_item_id, order_id, product_id, merchant_id, quantity, discount_id, base_price, price, delay_id, is_upsell, cost_price_unit, cost_price_reason, ordered_on)
+		INSERT INTO orderitems (order_item_id, order_id, product_id, merchant_id, quantity, discount_id, reward_id, base_price, price, delay_id, is_upsell, cost_price_unit, cost_price_reason, ordered_on)
 		OVERRIDING SYSTEM VALUE
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
 		ON CONFLICT (order_item_id, order_id, product_id) DO UPDATE SET
 			isDistributed = CASE WHEN orderitems.distributed_quantity = EXCLUDED.quantity THEN orderitems.isDistributed ELSE FALSE END,
 			production_status = CASE WHEN orderitems.distributed_quantity = EXCLUDED.quantity THEN orderitems.production_status ELSE 'CREATION' END,
@@ -1762,6 +1768,7 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 			base_price      = EXCLUDED.base_price,
 			price           = EXCLUDED.price,
 			discount_id     = EXCLUDED.discount_id,
+			reward_id       = EXCLUDED.reward_id,
 			delay_id        = EXCLUDED.delay_id,
 			is_upsell       = EXCLUDED.is_upsell,
 			cost_price_unit   = EXCLUDED.cost_price_unit,
@@ -1790,7 +1797,7 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 			// (RETURNING côté PG, LastInsertId côté MySQL).
 			newID, err := db.InsertReturningID(ctx, insertItemQuery, "order_item_id",
 				req.Order.OrderID, p.ProductID, req.MerchantID,
-				p.Quantity, p.DiscountID, p.Price, finalPrice, p.DelayID, p.IsUpsell, costPriceUnit, costPriceReason)
+				p.Quantity, p.DiscountID, p.RewardID, p.Price, finalPrice, p.DelayID, p.IsUpsell, costPriceUnit, costPriceReason)
 			if err != nil {
 				return fmt.Errorf("product insert failed (product_id=%s): %w", p.ProductID, err)
 			}
@@ -1801,7 +1808,7 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 		} else {
 			if _, err := db.ExecContext(ctx, upsertItemQuery,
 				p.OrderItemID, req.Order.OrderID, p.ProductID, req.MerchantID,
-				p.Quantity, p.DiscountID, p.Price, finalPrice, p.DelayID, p.IsUpsell, costPriceUnit, costPriceReason); err != nil {
+				p.Quantity, p.DiscountID, p.RewardID, p.Price, finalPrice, p.DelayID, p.IsUpsell, costPriceUnit, costPriceReason); err != nil {
 				return fmt.Errorf("product upsert failed (product_id=%s): %w", p.ProductID, err)
 			}
 		}
@@ -2560,6 +2567,7 @@ func (r *OrdersLifeCycleRepository) insertOrderItems(ctx context.Context, req *m
 			MerchantID:      req.MerchantID,
 			Quantity:        p.Quantity,
 			DiscountID:      p.DiscountID,
+			RewardID:        p.RewardID,
 			Price:           finalPrice,        // Final price to apply
 			BasePrice:       p.Price,           // Original price before discounts
 			DiscountedPrice: p.DiscountedPrice, // Discounted price (optional)
@@ -2588,9 +2596,9 @@ func (r *OrdersLifeCycleRepository) InsertOrderItem(ctx context.Context, item *m
 	db := dbx.GetDB(ctx, r.database)
 
 	lastID, err := db.InsertReturningID(ctx, `
-		INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, base_price, price, ordered_on, delay_id, is_upsell, cost_price_unit, cost_price_reason)
-		VALUES (?, ?, ?, ?, ?, ?, ?, `+dbx.UTCNow()+`, ?, ?, ?, ?)
-		`, "order_item_id", item.OrderID, item.ProductID, item.MerchantID, item.Quantity, item.DiscountID, item.BasePrice, item.Price, item.DelayID, item.IsUpsell, item.CostPriceUnit, item.CostPriceReason)
+		INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, reward_id, base_price, price, ordered_on, delay_id, is_upsell, cost_price_unit, cost_price_reason)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, `+dbx.UTCNow()+`, ?, ?, ?, ?)
+		`, "order_item_id", item.OrderID, item.ProductID, item.MerchantID, item.Quantity, item.DiscountID, item.RewardID, item.BasePrice, item.Price, item.DelayID, item.IsUpsell, item.CostPriceUnit, item.CostPriceReason)
 	if err != nil {
 		return 0, err
 	}
@@ -2700,6 +2708,158 @@ func (r *OrdersLifeCycleRepository) resolveLegacyDiscountIDs(ctx context.Context
 	return nil
 }
 
+// resolveLineDiscounts normalise, avant toute écriture dans orderitems,
+// l'attribution de chaque ligne : orderitems.discount_id ne reçoit qu'une
+// remise du marchand (discounts.discount_id_new), orderitems.reward_id qu'une
+// récompense de fidélité « produit offert » (customer_rewards.reward_id).
+//
+// Les deux étaient mélangés dans discount_id : un reward_id prenait le nom et
+// l'attribution d'une remise sans rapport, entrait dans la charge utile
+// fiscale signée comme une remise, et violait la clé étrangère de
+// discount_redemptions (aucune remise ne porte ce numéro).
+//
+// Par ligne, dans l'ordre :
+//  1. reward_id fourni (POS à jour) : conservé, discount_id vidé ;
+//  2. discount_id numérique d'une remise du marchand : conservé ;
+//  3. discount_id numérique d'une récompense « produit offert » consommée par
+//     cette commande (used_rewards à la création, used_on_order_id en
+//     modification) : POS pas encore à jour, qui renvoie l'identifiant de
+//     récompense dans discount_id (models.RewardLineInDiscountID) — déplacé
+//     dans reward_id ;
+//  4. tout autre identifiant : attribution abandonnée (log), la ligne garde
+//     son prix. Un discount_id inconnu faisait échouer l'écriture de
+//     discount_redemptions, dans la transaction de la commande.
+//
+// Un identifiant à la fois remise du marchand et récompense de cette commande
+// reste une remise (cas 2) : sans reward_id, les deux ne se distinguent pas.
+// Il est loggé ; il disparaît avec models.RewardLineInDiscountID.
+//
+// Résout aussi, en premier, les "discount-<uuid>" legacy
+// (resolveLegacyDiscountIDs). orderID est nil à la création (la commande
+// n'existe pas encore).
+func (r *OrdersLifeCycleRepository) resolveLineDiscounts(ctx context.Context, merchantID string, orderID *string, usedRewards []*models.UsedReward, products []models.OrderProductPayload) error {
+	if err := r.resolveLegacyDiscountIDs(ctx, merchantID, products); err != nil {
+		return err
+	}
+	log := logger.FromContext(ctx)
+
+	// Cas 1 : reward_id explicite. Sinon, les discount_id numériques à classer.
+	var candidates []string
+	seen := map[string]bool{}
+	for i := range products {
+		p := &products[i]
+		if p.RewardID != nil {
+			if id, ok := lineKeyID(*p.RewardID); ok {
+				p.RewardID, p.DiscountID = &id, nil
+				continue
+			}
+			log.Warn("invalid reward_id dropped", zap.String("reward_id", *p.RewardID), zap.String("product_id", p.ProductID))
+			p.RewardID = nil
+		}
+		if p.DiscountID == nil {
+			continue
+		}
+		id, ok := lineKeyID(*p.DiscountID)
+		if !ok {
+			log.Warn("invalid discount_id dropped", zap.String("discount_id", *p.DiscountID), zap.String("product_id", p.ProductID))
+			p.DiscountID = nil
+			continue
+		}
+		p.DiscountID = &id
+		if !seen[id] {
+			seen[id] = true
+			candidates = append(candidates, id)
+		}
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	db := dbx.GetDB(ctx, r.database)
+	discountIDs, err := queryIDSet(ctx, db, `
+		SELECT discount_id_new::text FROM discounts WHERE merchant_id = ? AND discount_id_new = ANY(?)`,
+		merchantID, candidates)
+	if err != nil {
+		return fmt.Errorf("resolve discount_id: %w", err)
+	}
+
+	// Les récompenses ne sont cherchées que pour ce que les remises du
+	// marchand n'expliquent pas, ou pour détecter une ambiguïté quand la
+	// commande en consomme.
+	used := make([]string, 0, len(usedRewards))
+	for _, rw := range usedRewards {
+		if rw != nil {
+			if id, ok := lineKeyID(rw.RewardID); ok {
+				used = append(used, id)
+			}
+		}
+	}
+	var rewardIDs map[string]bool
+	if orderID != nil || len(used) > 0 {
+		rewardIDs, err = queryIDSet(ctx, db, `
+			SELECT reward_id::text FROM customer_rewards
+			WHERE reward_type = 'free_product' AND reward_id = ANY(?)
+			  AND (reward_id = ANY(?) OR used_on_order_id = ?)`,
+			candidates, used, orderID)
+		if err != nil {
+			return fmt.Errorf("resolve reward_id: %w", err)
+		}
+	}
+
+	for i := range products {
+		p := &products[i]
+		if p.DiscountID == nil {
+			continue
+		}
+		id := *p.DiscountID
+		switch {
+		case discountIDs[id]:
+			if rewardIDs[id] {
+				log.Warn("discount_id is both a merchant discount and a reward of this order, kept as discount",
+					zap.String("discount_id", id), zap.String("product_id", p.ProductID))
+			}
+		case rewardIDs[id]:
+			p.RewardID, p.DiscountID = &id, nil
+		default:
+			log.Warn("unknown discount_id, discount attribution dropped",
+				zap.String("discount_id", id), zap.String("product_id", p.ProductID))
+			p.DiscountID = nil
+		}
+	}
+	return nil
+}
+
+// lineKeyID valide un identifiant de remise ou de récompense reçu d'un client
+// avant de le passer à Postgres : entier positif tenant dans une colonne
+// integer. Toute autre valeur ferait échouer la requête (22P02, 22003) et
+// donc la commande.
+func lineKeyID(raw string) (string, bool) {
+	id := strings.TrimSpace(raw)
+	n, err := strconv.ParseInt(id, 10, 32)
+	if err != nil || n <= 0 {
+		return "", false
+	}
+	return strconv.FormatInt(n, 10), true
+}
+
+// queryIDSet exécute une requête dont la première colonne est un identifiant
+// texte et renvoie l'ensemble des valeurs lues.
+func queryIDSet(ctx context.Context, db *dbx.DB, query string, args ...interface{}) (map[string]bool, error) {
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
 // insertExtrasWithoutsConfigs does bulk inserts for extras, withouts, configurations
 //
 // optionCosts is the batch already resolved by insertOrderItems (PROMPT 11,

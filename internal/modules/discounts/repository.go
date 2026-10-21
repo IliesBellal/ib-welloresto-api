@@ -239,27 +239,35 @@ func (r *Repository) CreateDiscount(ctx context.Context, merchantID string, req 
 		minOrderValue = *req.MinOrderValue
 	}
 
-	// Insert discount. discount_id_new is not listed: it gets its value from
-	// the column DEFAULT (nextval on discounts_discount_id_new_seq, set up by
-	// migration 118) — req.DiscountID (varchar) remains the legacy/transition
-	// identifier, still the physical PRIMARY KEY until a future contraction lot.
+	// Integer key drawn first from discounts_discount_id_new_seq (migration
+	// 118), then written to both columns: discount_id (varchar, still the
+	// physical PRIMARY KEY until the contraction lot) gets the same value as
+	// text, never "discount-<uuid>" again — every reader (pricing, Kiosk,
+	// ScanNOrder, back-office) now goes through discount_id_new
+	// (docs/ids-entiers-users-discounts-chantier.md, étape 2). Any
+	// client-supplied req.DiscountID is overwritten here.
 	var discountIDNew int
-	err := db.QueryRowContext(ctx, `
+	if err := db.QueryRowContext(ctx, `SELECT nextval('discounts_discount_id_new_seq')`).Scan(&discountIDNew); err != nil {
+		log.Error(err.Error())
+		return nil, err
+	}
+	req.DiscountID = strconv.Itoa(discountIDNew)
+
+	_, err := db.ExecContext(ctx, `
 		INSERT INTO discounts (
-			discount_id, merchant_id, discount_name, discount_desc, prefered_order,
+			discount_id, discount_id_new, merchant_id, discount_name, discount_desc, prefered_order,
 			discount_code, discount_order_type, discount_value, discount_unit,
 			valid_from, valid_to, min_order_value, min_order_unit,
 			max_discount_value, max_discount_unit, discounted_quantity,
 			is_cumulative, is_time_limited, available, enabled, creation_date
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		RETURNING discount_id_new
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		req.DiscountID, merchantID, req.DiscountName, req.DiscountDesc, req.PreferredOrder,
+		req.DiscountID, discountIDNew, merchantID, req.DiscountName, req.DiscountDesc, req.PreferredOrder,
 		req.DiscountCode, req.OrderType, req.DiscountValue, req.DiscountUnit,
 		req.ValidFrom, req.ValidTo, minOrderValue, req.MinOrderUnit,
 		req.MaxDiscountValue, req.MaxDiscountUnit, req.DiscountedQuantity,
 		req.IsCumulative, req.IsTimeLimited, req.Available, true, time.Now().UTC(),
-	).Scan(&discountIDNew)
+	)
 	if err != nil {
 		log.Error(err.Error())
 		return nil, err

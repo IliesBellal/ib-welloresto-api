@@ -376,6 +376,10 @@ func TestProcess_SendsStatementWithBackOfficeLink(t *testing.T) {
 	if mail.data.TestNotice != "" {
 		t.Errorf("bandeau de test présent : %q", mail.data.TestNotice)
 	}
+	// un groupe peut recevoir les relevés de plusieurs établissements à la même adresse
+	if e := mail.data.Establishment; e.ID != "212" || e.Name != "Chez Camille" || e.Address != "1 rue de la Gare, 57000 Metz" {
+		t.Errorf("établissement du mail = %+v", e)
+	}
 
 	// les totaux du virement sont gardés : c'est de quoi construire le récapitulatif mensuel
 	d := repo.done["po_1"]

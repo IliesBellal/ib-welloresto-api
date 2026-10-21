@@ -103,7 +103,8 @@ type OrderItemInsert struct {
 	MerchantID      string
 	Quantity        int
 	DiscountID      *string
-	Price           int  // Final price (discounted_price if provided, otherwise base_price)
+	RewardID        *string // récompense « produit offert » (orderitems.reward_id)
+	Price           int     // Final price (discounted_price if provided, otherwise base_price)
 	BasePrice       int  // Original price before discounts
 	DiscountedPrice *int // Discounted price (optional)
 	DelayID         *string
