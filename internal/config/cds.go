@@ -29,7 +29,8 @@ func loadCDSConfig() CDSConfig {
 		// voir docs/audits/2026-09-19-enrollment-rate-limiting.md.
 		EnrollmentCodeTTLMinutes:  getEnvInt("CDS_ENROLLMENT_CODE_TTL_MINUTES", 10),
 		DeviceRefreshTokenTTLDays: getEnvInt("CDS_DEVICE_TOKEN_TTL_DAYS", 30),
-		AccessTokenTTLMinutes:     getEnvInt("CDS_ACCESS_TOKEN_TTL_MINUTES", 15),
-		Pepper:                    pepper,
+		// 3 h, comme le kiosk (voir loadKioskConfig).
+		AccessTokenTTLMinutes: getEnvInt("CDS_ACCESS_TOKEN_TTL_MINUTES", 180),
+		Pepper:                pepper,
 	}
 }

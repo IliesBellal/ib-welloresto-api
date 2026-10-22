@@ -28,8 +28,12 @@ func loadKioskConfig() KioskConfig {
 	return KioskConfig{
 		EnrollmentCodeTTLMinutes:  getEnvInt("KIOSK_ENROLLMENT_CODE_TTL_MINUTES", 15),
 		DeviceRefreshTokenTTLDays: getEnvInt("KIOSK_DEVICE_TOKEN_TTL_DAYS", 30),
-		AccessTokenTTLMinutes:     getEnvInt("KIOSK_ACCESS_TOKEN_TTL_MINUTES", 15),
-		Pepper:                    pepper,
+		// 3 h : chaque refresh fait tourner le refresh token (une ligne en
+		// base, une ligne de log). À 15 min, c'était 96 refresh par jour et
+		// par borne. Contrepartie : une borne révoquée garde ses routes REST
+		// jusqu'à 3 h (access token auto-porteur, voir RevokeKiosk).
+		AccessTokenTTLMinutes: getEnvInt("KIOSK_ACCESS_TOKEN_TTL_MINUTES", 180),
+		Pepper:                pepper,
 	}
 }
 
