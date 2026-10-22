@@ -3,6 +3,7 @@ package requestlogger
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,6 +74,38 @@ func TestRequestLoggerMiddleware_EmptyResponseBodyDefaultsToEmptyObject(t *testi
 
 	if string(entry.ResponsePayload) != "{}" {
 		t.Fatalf("ResponsePayload = %q, want %q", entry.ResponsePayload, "{}")
+	}
+}
+
+// Régression : mots de passe, PIN et jetons étaient stockés en clair dans
+// api_request_logs (login, PIN admin des bornes, refresh des jetons device...).
+func TestRequestLoggerMiddleware_RedactsSecrets(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"token":"sess-123","user":{"name":"Ali"},"refresh_token":"rt-456"}`))
+	})
+	req := httptest.NewRequest(http.MethodPost, "/auth/login?token=abc&merchant=212",
+		strings.NewReader(`{"email":"a@b.fr","password":"hunter2","admin_pin":1234,"new_password":"x\"y"}`))
+
+	entry := captureLogEntry(t, handler, req)
+
+	wantReq := `{"email":"a@b.fr","password":"[REDACTED]","admin_pin":"[REDACTED]","new_password":"[REDACTED]"}`
+	if string(entry.Payload) != wantReq {
+		t.Fatalf("Payload = %s, want %s", entry.Payload, wantReq)
+	}
+	wantResp := `{"token":"[REDACTED]","user":{"name":"Ali"},"refresh_token":"[REDACTED]"}`
+	if string(entry.ResponsePayload) != wantResp {
+		t.Fatalf("ResponsePayload = %s, want %s", entry.ResponsePayload, wantResp)
+	}
+	if entry.URL != "/auth/login?merchant=212&token=%5BREDACTED%5D" {
+		t.Fatalf("URL = %q, jeton de query non masqué", entry.URL)
+	}
+}
+
+// Les clés qui ressemblent aux mots sensibles sans en être restent intactes.
+func TestRedactInboundSecrets_LeavesLookalikeKeysUntouched(t *testing.T) {
+	body := `{"max_tokens":800,"shipping":"5","mapping":"a","pin_enabled":true,"pin":null}`
+	if got := string(redactInboundSecrets([]byte(body))); got != body {
+		t.Fatalf("redactInboundSecrets = %s, want inchangé %s", got, body)
 	}
 }
 

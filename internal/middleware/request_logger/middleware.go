@@ -7,12 +7,26 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"time"
 	"welloresto-api/internal/models"
 
 	"github.com/go-chi/chi/middleware"
 )
+
+// inboundSecretRe repère, dans un corps JSON entrant ou sortant de l'API, la
+// valeur (chaîne ou nombre) de toute clé nommée password, pin, token ou secret,
+// seule ou en suffixe (new_password, admin_pin, refresh_token, client_secret...).
+// Les pluriels (max_tokens) et les mots qui contiennent ces lettres sans en être
+// (shipping, mapping) ne sont pas touchés.
+var inboundSecretRe = regexp.MustCompile(`(?i)("(?:[a-z0-9_]*_)?(?:password|pin|token|secret)"\s*:\s*)(?:"(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)`)
+
+// redactInboundSecrets masque mots de passe, PIN et jetons avant stockage dans
+// api_request_logs. Le JSON reste valide : seule la valeur est remplacée.
+func redactInboundSecrets(body []byte) []byte {
+	return inboundSecretRe.ReplaceAll(body, []byte(`$1"[REDACTED]"`))
+}
 
 // jsonOrSizeMarker retourne body tel quel s'il s'agit de JSON valide. Sinon
 // (upload multipart, binaire, export de fichier...), seule sa taille est
@@ -38,7 +52,7 @@ func RequestLoggerMiddleware(logger *Logger) func(http.Handler) http.Handler {
 				bodyCopy, _ := io.ReadAll(r.Body)
 				// On remet le body pour la suite, avant tout traitement du payload de log
 				r.Body = io.NopCloser(bytes.NewBuffer(bodyCopy))
-				payload = jsonOrSizeMarker(bodyCopy)
+				payload = redactInboundSecrets(jsonOrSizeMarker(bodyCopy))
 			}
 
 			// Utilisation du WrapResponseWriter de Chi, avec Tee pour dupliquer le
@@ -59,7 +73,7 @@ func RequestLoggerMiddleware(logger *Logger) func(http.Handler) http.Handler {
 			next.ServeHTTP(ww, r)
 			durationMs := time.Since(startedAt).Milliseconds()
 
-			responsePayload := jsonOrSizeMarker(respBuf.Bytes())
+			responsePayload := redactInboundSecrets(jsonOrSizeMarker(respBuf.Bytes()))
 
 			var userID *int64
 			var merchantID *string
@@ -78,7 +92,7 @@ func RequestLoggerMiddleware(logger *Logger) func(http.Handler) http.Handler {
 				UserID:          userID,
 				MerchantID:      merchantID,
 				Method:          r.Method,
-				URL:             r.URL.String(),
+				URL:             sanitizedURL(r.URL),
 				Payload:         payload,
 				ResponsePayload: responsePayload,
 				StatusCode:      ww.Status(), // ww récupère le vrai statut final
