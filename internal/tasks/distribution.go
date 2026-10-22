@@ -39,19 +39,17 @@ const (
 	avgDistMaxDeltaAbsoluteSec = 60   // ±60s plancher
 )
 
-type distributionItem struct {
-	quantity    int64
-	orderedTS   int64 // UNIX_TIMESTAMP(oi.ordered_on)
-	turnaroundS int64 // secondes entre ordered_on et distributed_on
-}
-
-// UpdateAverageDistributionTime : met à jour le temps de préparation moyen en
-// simulant la capacité de production parallèle de la cuisine
-// (concurrent_preparation_capacity). Portage direct du script PHP.
+// UpdateAverageDistributionTime : met à jour le temps de préparation moyen
+// par article de chaque marchand, sur les orderitems servis des dernières 24h.
 //
-// Contrainte pool MySQL (1 connexion max) : chaque requête est lue
-// intégralement en mémoire avant la suivante, et l'upsert final est un
-// statement autocommit unique — aucune transaction longue.
+// Le portage du script PHP simulait une file de production sur
+// concurrent_preparation_capacity postes, mais le résultat n'additionnait que
+// les temps unitaires : la simulation et la capacité n'avaient aucun effet.
+// Le calcul se fait donc en une seule agrégation SQL pour tous les marchands
+// (computeDistributionStats), au lieu d'une requête par marchand qui relisait
+// tout l'historique de chacun de ses produits. La capacité ne sert plus qu'à
+// choisir les marchands traités (NULL ou 0 : ignoré, comme avant) ; elle reste
+// utilisée par l'estimation (distributiontime.EstimatedSeconds).
 func (tm *TasksManager) UpdateAverageDistributionTime() {
 	ctx := context.Background()
 	tm.logInfo("[CRON] UpdateAverageDistributionTime: démarrage")
@@ -93,6 +91,12 @@ func (tm *TasksManager) UpdateAverageDistributionTime() {
 	}
 	rows.Close()
 
+	stats, err := tm.computeDistributionStats(ctx)
+	if err != nil {
+		tm.logError("[CRON] UpdateAverageDistributionTime: agrégation des orderitems échouée", zap.Error(err))
+		return
+	}
+
 	updated := 0
 	for _, m := range merchants {
 		// Comme en PHP : sans capacité configurée (NULL ou 0), le marchand
@@ -101,12 +105,7 @@ func (tm *TasksManager) UpdateAverageDistributionTime() {
 			continue
 		}
 
-		avgTime, items, err := tm.computeAverageDistributionTime(ctx, m.id, int(m.capacity))
-		if err != nil {
-			tm.logError("[CRON] UpdateAverageDistributionTime: marchand en échec",
-				zap.String("merchant_id", m.id), zap.Error(err))
-			continue
-		}
+		avgTime, items := averageDistributionTime(stats[m.id])
 		if items < avgDistMinItems {
 			continue // pas assez de données, la valeur précédente reste en place
 		}
@@ -149,116 +148,72 @@ func (tm *TasksManager) UpdateAverageDistributionTime() {
 		zap.Int("merchants_mis_a_jour", updated))
 }
 
-// computeAverageDistributionTime lit les orderitems distribués de la fenêtre,
-// simule la file de production sur `capacity` slots parallèles et retourne le
-// temps moyen borné [avgDistFloorSec, avgDistCeilSec] ainsi que le nombre
-// d'items traités. Retourne (0, 0, nil) si pas assez de données.
-func (tm *TasksManager) computeAverageDistributionTime(ctx context.Context, merchantID string, capacity int) (int64, int, error) {
-	db := dbx.GetDB(ctx, tm.DB)
-	query := `
-		SELECT
-			oi.quantity,
-			` + tskUnixTimestamp("oi.ordered_on") + `,
-			` + tskSecondsBetween("oi.ordered_on", "oi.distributed_on") + `
-		FROM orders o
-		INNER JOIN orderitems oi ON o.order_id = oi.order_id
-		INNER JOIN products p ON oi.product_id = p.product_id
-		WHERE
-			p.merchant_id = ?
-			AND oi.distributed_quantity > 0 AND oi.distributed_on IS NOT NULL
-			AND oi.ordered_on >= ` + tskNowMinusMinutes() + `
-			AND ` + tskSecondsBetween("oi.ordered_on", "oi.distributed_on") + ` BETWEEN ? AND ?
-		ORDER BY oi.ordered_on ASC`
-
-	rows, err := db.QueryContext(ctx, query,
-		merchantID, avgDistCalcIntervalMinutes, avgDistTurnaroundMinSec, avgDistTurnaroundMaxSec)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	// Lecture complète avant tout autre accès DB (1 connexion max).
-	var items []distributionItem
-	for rows.Next() {
-		var quantity, orderedTS, turnaround sql.NullInt64
-		if err := rows.Scan(&quantity, &orderedTS, &turnaround); err != nil {
-			continue
-		}
-		if !quantity.Valid || !orderedTS.Valid || !turnaround.Valid {
-			continue
-		}
-		items = append(items, distributionItem{
-			quantity:    quantity.Int64,
-			orderedTS:   orderedTS.Int64,
-			turnaroundS: turnaround.Int64,
-		})
-	}
-	iterErr := rows.Err()
-	rows.Close()
-	if iterErr != nil {
-		return 0, 0, iterErr
-	}
-
-	avgTime, processed := simulateAverageDistributionTime(items, capacity)
-	return avgTime, processed, nil
+// merchantDistributionStats agrège, pour un marchand, les orderitems servis de
+// la fenêtre : lines compte les lignes retenues par le SQL, items et
+// totalSeconds ne portent que sur les lignes exploitables (quantité > 0 et
+// temps unitaire arrondi > 0).
+type merchantDistributionStats struct {
+	lines        int64
+	items        int64
+	totalSeconds float64
 }
 
-// simulateAverageDistributionTime simule la cuisine avec `capacity` slots de
-// production parallèles et retourne le temps moyen borné ainsi que le nombre
-// d'items traités. Retourne (0, 0) si moins de avgDistMinItems items.
-// `capacity` doit être >= 1 (garanti par l'appelant).
-func simulateAverageDistributionTime(items []distributionItem, capacity int) (int64, int) {
-	if len(items) < avgDistMinItems {
+// computeDistributionStats agrège en une seule requête, pour tous les
+// marchands, les orderitems servis sur les avgDistCalcIntervalMinutes
+// dernières minutes. Le temps unitaire d'une ligne est round(turnaround /
+// quantité) ; totalSeconds en est la somme pondérée par la quantité.
+//
+// Lecture seule. Les marchands sans orderitem dans la fenêtre sont absents
+// de la map.
+func (tm *TasksManager) computeDistributionStats(ctx context.Context) (map[string]merchantDistributionStats, error) {
+	db := dbx.GetDB(ctx, tm.DB)
+
+	turnaround := tskSecondsBetween("oi.ordered_on", "oi.distributed_on")
+	perItem := "ROUND(CAST(" + turnaround + " AS DECIMAL(20,4)) / oi.quantity)"
+	usable := "oi.quantity > 0 AND " + perItem + " > 0"
+
+	query := `
+		SELECT
+			p.merchant_id,
+			COUNT(oi.quantity),
+			COALESCE(SUM(CASE WHEN ` + usable + ` THEN oi.quantity END), 0),
+			COALESCE(SUM(CASE WHEN ` + usable + ` THEN oi.quantity * ` + perItem + ` END), 0)
+		FROM orderitems oi
+		INNER JOIN products p ON oi.product_id = p.product_id
+		WHERE
+			oi.distributed_quantity > 0 AND oi.distributed_on IS NOT NULL
+			AND oi.ordered_on >= ` + tskNowMinusMinutes() + `
+			AND ` + turnaround + ` BETWEEN ? AND ?
+		GROUP BY p.merchant_id`
+
+	rows, err := db.QueryContext(ctx, query,
+		avgDistCalcIntervalMinutes, avgDistTurnaroundMinSec, avgDistTurnaroundMaxSec)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	stats := make(map[string]merchantDistributionStats)
+	for rows.Next() {
+		var merchantID string
+		var s merchantDistributionStats
+		if err := rows.Scan(&merchantID, &s.lines, &s.items, &s.totalSeconds); err != nil {
+			return nil, err
+		}
+		stats[merchantID] = s
+	}
+	return stats, rows.Err()
+}
+
+// averageDistributionTime retourne le temps unitaire moyen borné
+// [avgDistFloorSec, avgDistCeilSec] et le nombre d'items pris en compte, ou
+// (0, 0) s'il y a moins de avgDistMinItems lignes ou items exploitables.
+func averageDistributionTime(s merchantDistributionStats) (int64, int) {
+	if s.lines < avgDistMinItems || s.items < avgDistMinItems {
 		return 0, 0
 	}
-	if capacity < 1 {
-		capacity = 1
-	}
 
-	// Chaque slot mémorise le timestamp auquel il se libère.
-	productionSlots := make([]int64, capacity)
-	var totalProductionSeconds int64
-	totalItemsProcessed := 0
-
-	for _, item := range items {
-		if item.quantity <= 0 {
-			continue
-		}
-		// Temps de préparation estimé pour un article de cette ligne.
-		timePerSingleItem := int64(math.Round(float64(item.turnaroundS) / float64(item.quantity)))
-		if timePerSingleItem <= 0 {
-			continue
-		}
-
-		for q := int64(0); q < item.quantity; q++ {
-			// a. Trouver le slot qui se libère le plus tôt.
-			slotIdx := 0
-			for i := 1; i < len(productionSlots); i++ {
-				if productionSlots[i] < productionSlots[slotIdx] {
-					slotIdx = i
-				}
-			}
-
-			// b. La préparation démarre à l'heure de commande ou à la
-			// libération du slot, selon le plus tardif.
-			startTS := item.orderedTS
-			if productionSlots[slotIdx] > startTS {
-				startTS = productionSlots[slotIdx]
-			}
-
-			// c./d. Occupation du slot jusqu'à la fin de cet item.
-			productionSlots[slotIdx] = startTS + timePerSingleItem
-
-			// e. Accumulation du temps de production.
-			totalProductionSeconds += timePerSingleItem
-			totalItemsProcessed++
-		}
-	}
-
-	if totalItemsProcessed < avgDistMinItems {
-		return 0, 0
-	}
-
-	avgTime := int64(math.Round(float64(totalProductionSeconds) / float64(totalItemsProcessed)))
+	avgTime := int64(math.Round(s.totalSeconds / float64(s.items)))
 	if avgTime < avgDistFloorSec {
 		avgTime = avgDistFloorSec
 	}
@@ -266,7 +221,7 @@ func simulateAverageDistributionTime(items []distributionItem, capacity int) (in
 		avgTime = avgDistCeilSec
 	}
 
-	return avgTime, totalItemsProcessed
+	return avgTime, int(s.items)
 }
 
 // smoothDistributionTime pondère la moyenne brute d'un cycle de CRON
@@ -279,7 +234,7 @@ func simulateAverageDistributionTime(items []distributionItem, capacity int) (in
 // plafonner sans historique.
 //
 // rawAvgTime est déjà borné à [avgDistFloorSec, avgDistCeilSec] par
-// simulateAverageDistributionTime, et previous l'était lors de son propre
+// averageDistributionTime, et previous l'était lors de son propre
 // calcul : une moyenne pondérée des deux, ensuite resserrée par le
 // plafonnement, reste donc toujours dans ces bornes sans reclamp explicite.
 func smoothDistributionTime(previous sql.NullInt64, rawAvgTime int64, items int) int64 {

@@ -14,8 +14,8 @@ import (
 )
 
 // Ces tests ciblent délibérément les fonctions PAR MARCHAND (non exportées :
-// computeAverageDistributionTime, updateMerchantPopularProducts,
-// processUpsellPatternsForMerchant), jamais les points d'entrée cron exportés
+// updateMerchantPopularProducts, processUpsellPatternsForMerchant) ou en
+// lecture seule (computeDistributionStats), jamais les points d'entrée cron exportés
 // (UpdateAverageDistributionTime, UpdatePopularProducts, RecomputeUpsellPatterns,
 // CloseOrders, DenyOrders, CapturePayments, CancelPayments).
 //
@@ -107,18 +107,6 @@ func TestSQLCompatFragments_Postgres(t *testing.T) {
 		}
 		if seconds < 89 || seconds > 91 {
 			t.Fatalf("expected ~90 seconds, got %d", seconds)
-		}
-	})
-
-	t.Run("tskUnixTimestamp", func(t *testing.T) {
-		ts := time.Now().Truncate(time.Second)
-		var unix int64
-		q := "SELECT " + tskUnixTimestamp("?::timestamptz")
-		if err := db.QueryRowContext(ctx, q, ts).Scan(&unix); err != nil {
-			t.Fatalf("tskUnixTimestamp query failed against postgres: %v", err)
-		}
-		if unix != ts.Unix() {
-			t.Fatalf("expected unix %d, got %d", ts.Unix(), unix)
 		}
 	})
 
@@ -219,8 +207,7 @@ func TestComputeAndStoreAverageDistributionTime_Postgres(t *testing.T) {
 	}
 
 	// 5 orderitems, turnaround identique 100s chacun -> moyenne pondérée
-	// attendue = 100s quelle que soit la capacité (cf. distribution_test.go
-	// TestSimulateAverageDistributionTime_CapacityDoesNotPanic).
+	// attendue = 100s.
 	now := time.Now().UTC()
 	for i := 0; i < 5; i++ {
 		orderedOn := now.Add(-time.Duration(300-i*10) * time.Second)
@@ -233,11 +220,17 @@ func TestComputeAndStoreAverageDistributionTime_Postgres(t *testing.T) {
 		}
 	}
 
+	// Agrégation globale en lecture seule : seule l'entrée du marchand
+	// sentinelle est vérifiée.
 	tm := &TasksManager{DB: rawDB}
-	avgTime, items, err := tm.computeAverageDistributionTime(ctx, merchantID, 2)
+	stats, err := tm.computeDistributionStats(ctx)
 	if err != nil {
-		t.Fatalf("computeAverageDistributionTime failed against postgres: %v", err)
+		t.Fatalf("computeDistributionStats failed against postgres: %v", err)
 	}
+	if got := stats[merchantID]; got.lines != 5 || got.items != 5 || got.totalSeconds != 500 {
+		t.Fatalf("expected stats (5 lines, 5 items, 500s), got %+v", got)
+	}
+	avgTime, items := averageDistributionTime(stats[merchantID])
 	if items != 5 {
 		t.Fatalf("expected 5 items processed, got %d", items)
 	}

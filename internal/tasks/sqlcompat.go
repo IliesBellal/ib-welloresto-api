@@ -25,14 +25,6 @@ func tskSecondsBetween(from, to string) string {
 	return "TIMESTAMPDIFF(SECOND, " + from + ", " + to + ")"
 }
 
-// tskUnixTimestamp : équivalent UNIX_TIMESTAMP(col).
-func tskUnixTimestamp(col string) string {
-	if dbx.ActiveDialect() == dbx.Postgres {
-		return "EXTRACT(EPOCH FROM " + col + ")::bigint"
-	}
-	return "UNIX_TIMESTAMP(" + col + ")"
-}
-
 // tskNowMinusMinutes : "maintenant (UTC) - N minutes", N paramétré par un `?`
 // supplémentaire porté par le fragment (même position que l'original
 // DATE_SUB(UTC_TIMESTAMP(), INTERVAL ? MINUTE)).
