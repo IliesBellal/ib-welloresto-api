@@ -12,8 +12,10 @@ import (
 // apiRequestLogRetentionDays est la durée de conservation des lignes
 // api_request_logs. Purement technique (débogage d'intégration), sans valeur
 // probante contrairement à audit_logs (chaînage de hash, non concerné par
-// cette tâche) : 90 jours (journal des entrants et des sortants).
-const apiRequestLogRetentionDays = 90
+// cette tâche) : 30 jours (journal des entrants et des sortants). Les corps
+// contiennent des données clients : garder la fenêtre courte (RGPD, et ~3,6 Ko
+// par ligne). Purge quotidienne, donc jamais plus d'un jour au-delà.
+const apiRequestLogRetentionDays = 30
 
 // apiRequestLogPurgeBatchSize borne chaque DELETE pour ne pas tenir un verrou
 // long sur une table de plusieurs centaines de milliers de lignes.

@@ -96,8 +96,8 @@ Pas branchés, volontairement ou parce que hors de portée :
 - **Query string** : paramètres contenant `token`, `key`, `secret`, `sig`, `signature`, `password`,
   `code`, `auth` masqués (la clé `key=` de Google Maps).
 - **Données personnelles non masquées** : corps Brevo (emails, téléphones, contenu), adresses
-  Google Maps, données clients Stripe. Rétention **90 jours** (purge mensuelle
-  `CleanupOldRequestLogs`, donc jusqu'à environ 120 jours en pratique) ; à garder en tête pour le RGPD.
+  Google Maps, données clients Stripe. Rétention **30 jours** (purge quotidienne
+  `CleanupOldRequestLogs`) ; à garder en tête pour le RGPD.
 - **Plafond 32 Ko** par corps, début conservé et marqué `…[truncated]`. Une pièce jointe base64
   dans un mail Brevo y est coupée.
 
@@ -113,7 +113,8 @@ Pas branchés, volontairement ou parce que hors de portée :
    ne lisent ni ne ferment la réponse (`deliveroo/service.go` le faisait), la ligne aurait manqué.
 4. **`http.DefaultClient` de `deliveroo/service.go` remplacé** par un client dédié sans délai
    d'expiration (comme avant) ; la réponse est maintenant fermée (fuite de connexion corrigée).
-5. **Rétention** : la constante valait déjà 90 jours ; seuls des commentaires disaient 30.
+5. **Rétention** : 90 jours à l'origine (purge mensuelle) ; ramenée à 30 jours avec une purge
+   quotidienne le 2026-10-22 (taille de la table, données clients).
 
 ## Vérifié
 

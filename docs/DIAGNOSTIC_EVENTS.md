@@ -69,7 +69,7 @@ appelé **après succès** de la création, de la modification et de chaque paie
 3. **Uber Eats et Deliveroo exclus** : leur prix vient de la plateforme et on ne
    sait pas s'il inclut déjà les modificateurs (même règle que `GetOrderSaleLines`).
 4. **Pas de corps de requête dans l'événement** : il contient des données clients.
-   Le corps complet est dans `api_request_logs` (90 jours) : relier par heure et URL,
+   Le corps complet est dans `api_request_logs` (30 jours) : relier par heure et URL,
    et par `user_id` / `merchant_id`, désormais remplis (voir plus bas).
 5. **Pas de dédoublonnage** : une commande incohérente journalise à chaque étape,
    ce qui montre aussi quand l'écart apparaît.
