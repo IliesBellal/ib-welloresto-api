@@ -130,6 +130,10 @@ func SetupTasks(
 	// sécurité/maintenance de nuit (3h-5h), sans coïncider avec elles.
 	add("45 4 * * *", taskManager.CleanupExpiredSignupSessions)
 
+	// Chaque nuit à 4h50 : purge des refresh tokens de borne et d'écran CDS
+	// révoqués ou expirés depuis plus de 30 jours (une ligne par rotation).
+	add("50 4 * * *", taskManager.CleanupDeadDeviceTokens)
+
 	// ── Logs de requêtes API ─────────────────────────────────────────────────
 	// Chaque nuit à 5h : purge des lignes api_request_logs plus vieilles que
 	// apiRequestLogRetentionDays (30 jours). Quotidienne et non mensuelle : une
