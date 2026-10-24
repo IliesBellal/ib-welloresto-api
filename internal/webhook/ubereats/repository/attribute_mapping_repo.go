@@ -61,9 +61,9 @@ func (r *AttributeMappingRepository) CreateOptionFromUber(ctx context.Context, a
 	log := logger.FromContext(ctx)
 
 	id, err := db.InsertReturningID(ctx, `
-		INSERT INTO configurable_attribute_options (configurable_attribute_id, title, extra_price)
-		VALUES (?, ?, ?)
-	`, "id", attributeID, title, price)
+		INSERT INTO configurable_attribute_options (configurable_attribute_id, title, extra_price, display_order)
+		VALUES (?, ?, ?, (SELECT COALESCE(MAX(display_order) + 1, 0) FROM configurable_attribute_options WHERE configurable_attribute_id = ?))
+	`, "id", attributeID, title, price, attributeID)
 
 	if err != nil {
 		log.Error("Error creating option from Uber item: " + err.Error())

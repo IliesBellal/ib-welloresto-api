@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
@@ -260,7 +261,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		q := `
 		SELECT ca.id as configurable_attribute_id, oi.order_item_id, cao.id, cao.title, cao.extra_price,
 		case when oic.id is null then false else true end as selected,
-		COALESCE(oic.quantity, 0) as quantity, cao.max_quantity
+		COALESCE(oic.quantity, 0) as quantity, cao.max_quantity, cao.display_order
 		FROM orders o
 		INNER JOIN orderitems oi on oi.order_id = o.order_id
 		INNER JOIN product_configurable_attribute pca on pca.product_id = ` + castChar("oi.product_id") + `
@@ -278,10 +279,10 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		defer rows.Close()
 		for rows.Next() {
 			var attrID, orderItemID, id, title sql.NullString
-			var extraPrice int
+			var extraPrice, displayOrder int
 			var quantity, maxQuantity sql.NullInt64
 			var selected sql.NullBool
-			if err := rows.Scan(&attrID, &orderItemID, &id, &title, &extraPrice, &selected, &quantity, &maxQuantity); err != nil {
+			if err := rows.Scan(&attrID, &orderItemID, &id, &title, &extraPrice, &selected, &quantity, &maxQuantity, &displayOrder); err != nil {
 				return nil, err
 			}
 
@@ -295,6 +296,21 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				Quantity:          int(quantity.Int64),
 				MaxQuantity:       int(maxQuantity.Int64),
 				Selected:          selected.Bool,
+				DisplayOrder:      displayOrder,
+			})
+		}
+		// Tri en Go plutôt qu'en SQL : le WHERE est composé par whereFilters.
+		// Stable, pour garder l'ordre de lecture à rang égal.
+		for _, opts := range configurableOptionsMap {
+			sort.SliceStable(opts, func(i, j int) bool {
+				if opts[i].DisplayOrder != opts[j].DisplayOrder {
+					return opts[i].DisplayOrder < opts[j].DisplayOrder
+				}
+				// À rang égal : ordre de création (id numérique, donc longueur puis texte).
+				if len(opts[i].ID) != len(opts[j].ID) {
+					return len(opts[i].ID) < len(opts[j].ID)
+				}
+				return opts[i].ID < opts[j].ID
 			})
 		}
 	}

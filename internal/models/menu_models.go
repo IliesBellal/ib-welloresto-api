@@ -227,6 +227,7 @@ type ConfigurableOption struct {
 	Quantity          int     `json:"quantity"`
 	Selected          bool    `json:"selected"`
 	ImageURL          *string `json:"image_url,omitempty"`
+	DisplayOrder      int     `json:"display_order"` // rang dans l'attribut ; les options sont déjà renvoyées triées
 }
 
 // delays

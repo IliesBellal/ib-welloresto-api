@@ -119,9 +119,9 @@ func (r *Repository) SyncOption(ctx context.Context, merchantID string, productI
 
 	// b. Create Option
 	optIDInt, err := db.InsertReturningID(ctx, `
-		INSERT INTO configurable_attribute_options (configurable_attribute_id, title, extra_price)
-		VALUES (?, ?, ?)`,
-		"id", attributeID, mod.Name, mod.UnitPrice.Fractional)
+		INSERT INTO configurable_attribute_options (configurable_attribute_id, title, extra_price, display_order)
+		VALUES (?, ?, ?, (SELECT COALESCE(MAX(display_order) + 1, 0) FROM configurable_attribute_options WHERE configurable_attribute_id = ?))`,
+		"id", attributeID, mod.Name, mod.UnitPrice.Fractional, attributeID)
 	if err != nil {
 		return "", "", err
 	}

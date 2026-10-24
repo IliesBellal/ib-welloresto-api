@@ -351,10 +351,11 @@ func (r *MenuRepository) GetAttributes(ctx context.Context, merchantID string) (
 	// ca.enabled est boolean en cible, cao.enabled est resté integer (0/1)
 	optQuery := `
         SELECT cao.id, cao.configurable_attribute_id, cao.title, cao.max_quantity, cao.extra_price, cao.enabled, cao.image_url,
-               cao.component_id, cao.quantity, cao.unit_of_measure
+               cao.component_id, cao.quantity, cao.unit_of_measure, cao.display_order
         FROM configurable_attributes ca
         INNER JOIN configurable_attribute_options cao ON cao.configurable_attribute_id = ca.id
-        WHERE ca.merchant_id = ? AND ca.enabled = TRUE AND ca.brand = ? AND cao.enabled = 1`
+        WHERE ca.merchant_id = ? AND ca.enabled = TRUE AND ca.brand = ? AND cao.enabled = 1
+        ORDER BY cao.display_order ASC, cao.id ASC`
 
 	optRows, err := db.QueryContext(ctx, optQuery, merchantID, models.BrandWelloResto)
 	if err != nil {
@@ -370,7 +371,7 @@ func (r *MenuRepository) GetAttributes(ctx context.Context, merchantID string) (
 		var unitOfMeasure sql.NullInt64
 
 		if err := optRows.Scan(&opt.ID, &parentAttrID, &opt.Title, &opt.MaxQuantity, &opt.Price, &opt.Enabled, &opt.ImageURL,
-			&componentID, &quantity, &unitOfMeasure); err != nil {
+			&componentID, &quantity, &unitOfMeasure, &opt.DisplayOrder); err != nil {
 			return nil, fmt.Errorf("scan option failed: %w", err)
 		}
 		if componentID.Valid {
@@ -461,9 +462,10 @@ func (r *MenuRepository) GetAttribute(ctx context.Context, merchantID, attribute
 	// 2. Récupération des options (enabled est resté integer sur cette table)
 	optQuery := `
         SELECT id, configurable_attribute_id, title, max_quantity, extra_price, enabled, image_url,
-               component_id, quantity, unit_of_measure
+               component_id, quantity, unit_of_measure, display_order
         FROM configurable_attribute_options
-        WHERE configurable_attribute_id = ? AND enabled = 1`
+        WHERE configurable_attribute_id = ? AND enabled = 1
+        ORDER BY display_order ASC, id ASC`
 
 	optRows, err := db.QueryContext(ctx, optQuery, attributeID)
 	if err != nil {
@@ -479,7 +481,7 @@ func (r *MenuRepository) GetAttribute(ctx context.Context, merchantID, attribute
 		var unitOfMeasure sql.NullInt64
 
 		if err := optRows.Scan(&opt.ID, &parentAttrID, &opt.Title, &opt.MaxQuantity, &opt.Price, &opt.Enabled, &opt.ImageURL,
-			&componentID, &quantity, &unitOfMeasure); err != nil {
+			&componentID, &quantity, &unitOfMeasure, &opt.DisplayOrder); err != nil {
 			return nil, fmt.Errorf("scan option failed: %w", err)
 		}
 		if componentID.Valid {
@@ -605,8 +607,8 @@ func (r *MenuRepository) insertAttributeOptionsTx(ctx context.Context, merchantI
 
 	optionIDs := make([]int64, 0, len(options))
 
-	// Process options
-	for _, opt := range options {
+	// Process options — display_order = position dans le tableau reçu.
+	for position, opt := range options {
 		price := opt.Price
 		if opt.ExtraPrice != nil {
 			price = *opt.ExtraPrice
@@ -648,8 +650,9 @@ func (r *MenuRepository) insertAttributeOptionsTx(ctx context.Context, merchantI
 				image_url,
 				component_id,
 				quantity,
-				unit_of_measure
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+				unit_of_measure,
+				display_order
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`
 
 		enabledInt := 0
@@ -665,7 +668,8 @@ func (r *MenuRepository) insertAttributeOptionsTx(ctx context.Context, merchantI
 			opt.ImageURL,
 			componentIDArg,
 			quantityArg,
-			unitArg)
+			unitArg,
+			position)
 		if err != nil {
 			return nil, fmt.Errorf("insert option error: %w", err)
 		}
@@ -727,8 +731,11 @@ func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attrib
 		return fmt.Errorf("disable options error: %w", err)
 	}
 
-	// 3. Process options
-	for _, opt := range payload.Options {
+	// 3. Process options — display_order = position dans le tableau reçu, que
+	// l'option soit conservée (UPDATE) ou nouvelle (INSERT) : les options
+	// absentes du payload restent désactivées (étape 2.5), leur rang n'a plus
+	// d'effet.
+	for position, opt := range payload.Options {
 		if opt.ID != nil && *opt.ID != "" {
 			// Option exists - update it
 			price := opt.Price
@@ -775,7 +782,8 @@ func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attrib
 					image_url = COALESCE(?, image_url),
 					component_id = ?,
 					quantity = ?,
-					unit_of_measure = ?
+					unit_of_measure = ?,
+					display_order = ?
 				WHERE id = ? AND configurable_attribute_id = ?
 			`
 
@@ -799,6 +807,7 @@ func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attrib
 				componentIDArg,
 				quantityArg,
 				unitArg,
+				position,
 				optID,
 				attributeID)
 			if err != nil {
@@ -851,8 +860,9 @@ func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attrib
 					image_url,
 					component_id,
 					quantity,
-					unit_of_measure
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+					unit_of_measure,
+					display_order
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`
 
 			enabledInt := 0
@@ -868,7 +878,8 @@ func (r *MenuRepository) UpdateAttribute(ctx context.Context, merchantID, attrib
 				opt.ImageURL,
 				componentIDArg,
 				quantityArg,
-				unitArg)
+				unitArg,
+				position)
 			if err != nil {
 				return fmt.Errorf("insert option error: %w", err)
 			}
@@ -1311,12 +1322,13 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 	{
 		step := "configurable_options"
 		q := `
-            SELECT DISTINCT ca.id as configurable_attribute_id, cao.id, cao.title, cao.extra_price, cao.max_quantity, cao.image_url
+            SELECT DISTINCT ca.id as configurable_attribute_id, cao.id, cao.title, cao.extra_price, cao.max_quantity, cao.image_url, cao.display_order
             FROM products p
             INNER JOIN product_configurable_attribute pca on pca.product_id = ` + menuCastChar("p.product_id") + `
             INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
             INNER JOIN configurable_attribute_options cao on cao.configurable_attribute_id = ca.id
             WHERE p.merchant_id = ? AND ca.enabled = TRUE AND cao.enabled = 1 AND pca.enabled = TRUE
+            ORDER BY cao.display_order ASC, cao.id ASC
         `
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -1327,7 +1339,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		for rows.Next() {
 			var cfgID string
 			var o models.ConfigurableOption
-			if err := rows.Scan(&cfgID, &o.ID, &o.Title, &o.ExtraPrice, &o.MaxQuantity, &o.ImageURL); err != nil {
+			if err := rows.Scan(&cfgID, &o.ID, &o.Title, &o.ExtraPrice, &o.MaxQuantity, &o.ImageURL, &o.DisplayOrder); err != nil {
 				return nil, err
 			}
 			optMap[cfgID] = append(optMap[cfgID], o)
@@ -1965,13 +1977,14 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 	{
 		step := "configurable_options_all"
 		q := `
-            SELECT DISTINCT ca.id as configurable_attribute_id, cao.id, cao.title, cao.extra_price, cao.max_quantity, cao.image_url
+            SELECT DISTINCT ca.id as configurable_attribute_id, cao.id, cao.title, cao.extra_price, cao.max_quantity, cao.image_url, cao.display_order
             FROM products p
             INNER JOIN product_configurable_attribute pca on pca.product_id = ` + menuCastChar("p.product_id") + `
             INNER JOIN configurable_attributes ca on ca.id = pca.configurable_attribute_id
             INNER JOIN configurable_attribute_options cao on cao.configurable_attribute_id = ca.id
             WHERE p.merchant_id = ? AND ca.enabled = TRUE AND cao.enabled = 1 AND pca.enabled = TRUE
 			AND p.enabled = TRUE
+            ORDER BY cao.display_order ASC, cao.id ASC
         `
 		rows, err := runQuery(step, q, merchantID)
 		if err != nil {
@@ -1981,7 +1994,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		for rows.Next() {
 			var cfgID string
 			var o models.ConfigurableOption
-			if err := rows.Scan(&cfgID, &o.ID, &o.Title, &o.ExtraPrice, &o.MaxQuantity, &o.ImageURL); err != nil {
+			if err := rows.Scan(&cfgID, &o.ID, &o.Title, &o.ExtraPrice, &o.MaxQuantity, &o.ImageURL, &o.DisplayOrder); err != nil {
 				return nil, err
 			}
 			optMap[cfgID] = append(optMap[cfgID], o)
@@ -2947,11 +2960,12 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 	{
 		step := "configurable_options_for_product"
 		q := `
-			SELECT DISTINCT ca.id, cao.id, cao.title, cao.extra_price, cao.max_quantity, cao.image_url
+			SELECT DISTINCT ca.id, cao.id, cao.title, cao.extra_price, cao.max_quantity, cao.image_url, cao.display_order
 			FROM product_configurable_attribute pca
 			INNER JOIN configurable_attributes ca ON ca.id = pca.configurable_attribute_id
 			INNER JOIN configurable_attribute_options cao ON cao.configurable_attribute_id = ca.id
 			WHERE pca.product_id = ? AND ca.enabled = TRUE AND cao.enabled = 1 AND pca.enabled = TRUE
+			ORDER BY cao.display_order ASC, cao.id ASC
 		`
 		rows, err := runQuery(step, q, productID)
 		if err != nil {
@@ -2961,7 +2975,7 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 		for rows.Next() {
 			var cfgID string
 			var o models.ConfigurableOption
-			if err := rows.Scan(&cfgID, &o.ID, &o.Title, &o.ExtraPrice, &o.MaxQuantity, &o.ImageURL); err != nil {
+			if err := rows.Scan(&cfgID, &o.ID, &o.Title, &o.ExtraPrice, &o.MaxQuantity, &o.ImageURL, &o.DisplayOrder); err != nil {
 				return nil, err
 			}
 			optMap[cfgID] = append(optMap[cfgID], o)

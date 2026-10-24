@@ -205,6 +205,7 @@ type AttributeOption struct {
 	MaxQuantity     int      `json:"max_quantity"` // max_quantity
 	Enabled         bool     `json:"enabled"`      // enabled
 	ImageURL        *string  `json:"image_url,omitempty"`
+	DisplayOrder    int      `json:"display_order"`                // rang dans l'attribut (0, 1, 2...) ; les options sont déjà renvoyées triées
 	ComponentID     *string  `json:"component_id,omitempty"`       // ingrédient (components.component_id) lié, nil = aucun
 	Quantity        *float64 `json:"quantity,omitempty"`           // quantité consommée par sélection ; nil si ComponentID est nil
 	UnitOfMeasureID *string  `json:"unit_of_measure_id,omitempty"` // unit_of_measure.id de la quantité ; nil si ComponentID est nil
@@ -362,6 +363,10 @@ type UpdateAttributeOptionPayload struct {
 	Enabled     *bool   `json:"enabled"`      // Whether the option is enabled
 	ExtraPrice  *int    `json:"extra_price"`  // Extra price (deprecated, use Price)
 	ImageURL    *string `json:"image_url"`    // Image URL (managed primarily via the dedicated upload endpoint)
+
+	// L'ordre d'affichage n'a pas de champ : il est donné par la position de
+	// l'option dans Options (display_order = index). Un champ "order" ou
+	// "display_order" envoyé par un client est ignoré.
 
 	// Lien ingrédient. Non-pointeurs volontairement : le back-office envoie
 	// toujours la valeur complète actuelle de l'option à chaque sauvegarde
