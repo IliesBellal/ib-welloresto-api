@@ -268,7 +268,11 @@ func (s *Service) GetSitemap(ctx context.Context) (*SitemapResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &SitemapResponse{Merchants: entries}, nil
+	franchises, err := s.repo.GetSitemapFranchises(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &SitemapResponse{Merchants: entries, Franchises: franchises}, nil
 }
 
 // GetEffectivePrepMinutes renvoie le temps de préparation annoncé au client :

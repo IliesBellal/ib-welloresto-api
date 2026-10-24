@@ -376,6 +376,45 @@ func (r *Repository) GetSitemapEntries(ctx context.Context) ([]SitemapEntry, err
 	return entries, rows.Err()
 }
 
+// GetSitemapFranchises liste les hubs référençables : franchises dont au moins
+// un établissement est affiché (mêmes conditions que GetFranchiseHub).
+func (r *Repository) GetSitemapFranchises(ctx context.Context) ([]SitemapEntry, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	query := fmt.Sprintf(`
+	SELECT f.slug, COALESCE(f.updated_at, f.creation_date)
+	FROM franchises f
+	WHERE EXISTS (
+		SELECT 1
+		FROM merchant m
+		INNER JOIN scannorder_settings snos ON snos.merchant_id = %[1]s AND snos.activated = true
+		WHERE m.franchise_id = f.franchise_id
+		  AND m.franchise_hub_visible = true
+		  AND EXISTS (SELECT 1 FROM qrcodes main WHERE main.merchant_id = snos.merchant_id AND %[2]s)
+		  AND NOT %[3]s
+	)
+	ORDER BY f.slug`, snoMerchantJoinCast(), snoMainQRCondition("main"), snoSubscriptionBlocked("snos.merchant_id"))
+
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	entries := []SitemapEntry{}
+	for rows.Next() {
+		var e SitemapEntry
+		var updatedAt time.Time
+		if err := rows.Scan(&e.Slug, &updatedAt); err != nil {
+			return nil, err
+		}
+		t := updatedAt.UTC()
+		e.UpdatedAt = &t
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
 func (r *Repository) GetLoyaltyPrograms(ctx context.Context, merchantID, orderType string) ([]LoyaltyProgram, error) {
 	db := dbx.GetDB(ctx, r.database)
 

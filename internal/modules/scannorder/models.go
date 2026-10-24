@@ -127,6 +127,8 @@ type SitemapEntry struct {
 
 type SitemapResponse struct {
 	Merchants []SitemapEntry `json:"merchants"`
+	// Franchises : hubs (/franchise/{slug}) affichant au moins un établissement.
+	Franchises []SitemapEntry `json:"franchises"`
 }
 
 type SlotsResponse struct {

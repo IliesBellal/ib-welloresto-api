@@ -85,6 +85,7 @@ Remplace `GET /scannorder/brands/{slug}` (que rien n'appelait). 404 `franchise_n
 
 - `next_opening` : prochaine ouverture (`YYYY-MM-DD HH:MM:SS`, heure locale), seulement quand fermé.
 - Statut ouvert/fermé : même calcul que la page restaurant (`GetMerchantOpenState` : ouverture ScanNOrder, horaires, jours fériés, vacances). Calculé en parallèle (4 à la fois) ; un échec affiche l'établissement fermé sans faire échouer le hub.
+- `GET /scannorder/sitemap` gagne `franchises: [{slug, updated_at}]` : les hubs qui affichent au moins un établissement.
 - La page restaurant (`GET /scannorder/{slug}`) gagne `merchant.franchise: {name, slug}` (nil si aucune franchise ou masqué sur le hub), pour le lien « autres établissements ».
 
 ## Plus tard (v2)
