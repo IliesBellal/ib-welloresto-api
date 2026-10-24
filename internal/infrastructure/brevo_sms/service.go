@@ -1,7 +1,6 @@
 package brevo_sms
 
 import (
-	requestlogger "welloresto-api/internal/middleware/request_logger"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -10,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	requestlogger "welloresto-api/internal/middleware/request_logger"
 
 	"welloresto-api/internal/infrastructure/sms"
 )
@@ -38,7 +38,7 @@ func NewBrevoSMS(cfg Config) sms.Service {
 }
 
 // SendSMSAsync sends an SMS message asynchronously.
-// senderID is the identifier of the sender (e.g., "Wello", merchant name, etc.)
+// senderID is the identifier of the sender (e.g., "WelloResto", merchant name, etc.)
 // phoneNumber should be in international format (e.g., "+33612345678")
 func (b *BrevoSMS) SendSMSAsync(senderID, phoneNumber, message string) {
 	go func() {
@@ -87,7 +87,7 @@ func (b *BrevoSMS) TriggerTestSMS(writer http.ResponseWriter, request *http.Requ
 		TrackingURL:  "http://dashboard",
 	}
 
-	b.SendOrderConfirmationSMS("Wello", "+33609217928", data)
+	b.SendOrderConfirmationSMS("WelloResto", "+33609217928", data)
 	writer.WriteHeader(http.StatusOK)
 	writer.Write([]byte("Test SMS triggered"))
 }
@@ -149,5 +149,5 @@ func (b *BrevoSMS) sendSMSViaBrevo(senderID, phoneNumber, message string) (strin
 func (b *BrevoSMS) SendOTP(tel, otp string) {
 	message := fmt.Sprintf("Votre code de vérification est le %s\n Un employé de Wello Resto ne vous demandera jamais votre code secret.", otp)
 
-	b.SendSMSAsync("Wello Resto", tel, message)
+	b.SendSMSAsync("WelloResto", tel, message)
 }

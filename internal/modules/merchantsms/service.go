@@ -93,7 +93,7 @@ func (s *Service) SendAsync(ctx context.Context, merchantID, senderID, phoneNumb
 // SendOrderConfirmationSMS envoie, sans bloquer, la confirmation de commande
 // ScanNOrder au client de l'établissement.
 func (s *Service) SendOrderConfirmationSMS(ctx context.Context, merchantID, phoneNumber string, data sms.OrderConfirmationSMSData) {
-	s.SendAsync(ctx, merchantID, "Wello", phoneNumber, sms.OrderConfirmationMessage(data), nil)
+	s.SendAsync(ctx, merchantID, "WelloResto", phoneNumber, sms.OrderConfirmationMessage(data), nil)
 }
 
 var internationalPhonePattern = regexp.MustCompile(`^\+[0-9]{8,15}$`)

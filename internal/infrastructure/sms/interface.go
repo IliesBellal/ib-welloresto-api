@@ -9,7 +9,7 @@ import (
 // This allows you to mock the SMS service in your unit tests.
 type Service interface {
 	// SendSMSAsync sends an SMS message asynchronously with a sender ID.
-	// senderID is the identifier of the sender (e.g., "Wello", merchant name, etc.)
+	// senderID is the identifier of the sender (e.g., "WelloResto", merchant name, etc.)
 	// phoneNumber should be in international format (e.g., "+33612345678")
 	SendSMSAsync(senderID, phoneNumber, message string)
 
