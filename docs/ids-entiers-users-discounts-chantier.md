@@ -262,10 +262,43 @@ Deux sujets liés aux mêmes tables, traités avec le lot des ids parce qu'ils p
 1. Staging : migrations 186, 187, 188 et 189, puis push `staging`.
 2. Tests sur staging : inscription, création d'un équipier, promo sur POS / Kiosk / ScanNOrder, une récompense « produit offert » (une ligne offerte et une ligne payée du même produit sur le POS), une livraison avec paiement espèces et paiement en ligne, détail d'une caisse.
 3. Les tests d'intégration bloqués jusque-là : `userids`, signup, users, orders, order_life_cycle, cash_registers, `fiscal` (réparation), `delivery_sessions`, `reward_line`.
-4. Aperçu de `cmd/repair_payment_collectors` et de `cmd/renumber_users` ; `verify_fiscal --all` avant et après.
+4. Aperçu de `cmd/repair_payment_collectors` et de `cmd/renumber_users`, puis `cmd/renumber_users --audit` (colonnes hors inventaire) ; `verify_fiscal --all` avant et après.
 5. Production : sauvegarde, migrations 186 à 189, push `main`, puis les deux commandes en `--apply` dans le créneau 3h-5h.
 
 **Lot 2** (après la mise à jour des POS et du front ScanNOrder, vérifiable avec `users_devices.app_version`) :
 1. Passer `models.RewardLineInDiscountID` à `false`.
 2. Vérifier sur une tablette à jour qu'une ligne offerte (prix remisé, sans `discount_id`) s'affiche correctement.
 3. Supprimer la constante et ses branches.
+### 9.4 Produit offert conservé quand on modifie la commande (2026-10-21)
+
+**Problème.** Modifier au POS une commande dont la récompense « produit offert » était déjà consommée (créée par ScanNOrder) refaisait payer la ligne offerte au plein tarif. Le recalcul de prix ne retrouvait plus la récompense : le POS n'envoie aucune `available_rewards`, et `GetRewards` écarte de toute façon les récompenses déjà utilisées. Défaut antérieur au lot 1.
+
+**Correction** (`OrdersRepository.GetRewards`, `appliedRewardIDs`). Le POS n'envoie pas l'identifiant de la commande au recalcul, mais l'`order_item_id` de ses lignes déjà enregistrées. Le serveur lit en base la récompense que portent ces lignes (`orderitems.reward_id`) et la réapplique. Rien n'est cru sur parole : la ligne doit appartenir au marchand, la récompense doit avoir été consommée par la commande de cette ligne et appartenir au client de la commande. Seul le produit offert est repris : une réduction en montant ou en pourcentage passe par un paiement `REWARD` déjà enregistré, qu'un recalcul ne doit pas doubler. Aucune modification de l'app. Les recalculs sans ligne enregistrée (nouvelle commande, borne, ScanNOrder) ne changent pas et n'exécutent aucune requête de plus.
+
+**Limite connue.** Si le caissier retire le produit offert, la récompense reste consommée par la commande au lieu de revenir au client. C'est le comportement d'avant ; la libération fait partie du lot 2.
+
+Test : `reward_edit_postgres_integration_test.go` (10 cas sur la vraie base, dont les refus : autre client, autre marchand, récompense d'une autre commande, réduction en montant, identifiants invalides). Les deux cas positifs échouent quand on neutralise la correction.
+
+### 9.5 Lot 2 : récompenses à la caisse (décisions du 2026-10-21, à faire)
+
+Aujourd'hui, une récompense ne s'applique qu'à ScanNOrder : le serveur y retrouve le client par son téléphone. Le POS envoie déjà `customer_id` (chaîne vide pour un nouveau client) mais ne charge ni n'envoie jamais de récompense.
+
+**Décisions d'Ilies.**
+1. **Toutes les récompenses** : produit offert, réduction en montant, réduction en pourcentage.
+2. **`automatically_add_customer_rewards` s'applique à la caisse**, comme à ScanNOrder.
+3. Pas de récompense pour un nouveau client (`customer_id` vide).
+
+**Contraintes relevées, à respecter pour que ce soit sûr.**
+- Le POS n'envoie jamais `used_rewards` (toujours `[]`) et `consumeUsedRewards` ne s'exécute qu'à la création, d'après cette liste du client : une récompense appliquée à la caisse ne serait jamais consommée et pourrait servir à l'infini. La consommation doit être décidée par le serveur, à partir de lignes et de paiements `REWARD` contrôlés, jamais d'une liste envoyée par le client.
+- `UpdateOrder` ne consomme ni ne libère aucune récompense : une récompense ajoutée à la modification ne serait pas consommée, une récompense dont la ligne est retirée ne reviendrait pas au client.
+- Le chargement des récompenses du client côté serveur se fait dans `OrdersService.GetPricing` (chemin POS uniquement), en ignorant toute liste envoyée par le client.
+- `free_product` ne s'applique pas avec `reward_value <= 0` et facture la ligne `reward_value` centimes.
+### 9.6 Relecture du lot 1 (2026-10-21)
+
+Relecture critique de l'ensemble du lot après les tests sur staging. Trois corrections :
+
+- **Colonnes oubliées de la renumérotation** : `customer.blocked_by` (écrite avec l'id de l'utilisateur qui bloque un client) et `upsell_suggestions.staff_member_id` ne figuraient pas dans `userids.Columns`. L'inventaire avait été établi par le contenu de staging, où ces colonnes sont vides ; en production, un `blocked_by` aurait gardé un ancien id orphelin.
+- **Filet pour ce que l'inventaire ne connaît pas** : `cmd/renumber_users --audit` cherche les anciens identifiants dans **toutes** les colonnes texte de la base hors inventaire (`userids.Audit`). Lecture seule, longue (70 secondes sur staging) : à lancer hors service en production, avant puis après `--apply`. Sont ignorées `audit_logs.resource_id` (dans la charge utile signée du journal) et les contenus JSON. Test : `TestAudit_Postgres` (une colonne hors inventaire contenant un ancien id doit être signalée).
+- **`reward_id` explicite contrôlé** : un `reward_id` envoyé par un client est désormais vérifié comme l'ancien écho dans `discount_id` — la récompense doit être « produit offert » et consommée par cette commande (`used_rewards` à la création, `customer_rewards.used_on_order_id` à la modification). Sinon il est écarté avec un log. Une ligne porte une récompense ou une remise, jamais les deux.
+
+Vérifié sans problème : les ids du menu ScanNOrder (cache de 10 minutes) et ceux des lignes du panier ne sont jamais rapprochés par le front.

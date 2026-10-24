@@ -5030,3 +5030,77 @@ non-régression.
 
 Les bornes déjà désappairées par l'incident doivent être réappairées une
 fois à la main (Admin → TPE) : rien ne permet de retrouver l'ancien reader.
+
+## Ruban marketing des bornes (2026-10-21)
+
+Rotation d'images et de vidéos affichée en haut de l'écran de menu de la borne
+(`wello-kiosk`), configurable au back-office comme la zone marketing du CDS
+(`cds_media_items`). Migration **190** (`migrations/todo/190_kiosk_marketing_ribbon`),
+module `kiosk` : `marketing*.go`.
+
+**Périmètre : merchant**, pas borne — comme `kiosk_settings`. Toutes les bornes
+d'un établissement affichent la même rotation (le CDS, lui, est par écran). Une
+configuration par borne s'ajouterait avec un `kiosk_id` nullable.
+
+**Modèle**
+- `kiosk_settings.marketing_ribbon_enabled` (défaut `false` : aucune borne ne
+  change de comportement tant que le restaurateur n'active pas le ruban) et
+  `marketing_default_duration_seconds` (défaut 10, bornes 3–120).
+- `kiosk_marketing_media(id, merchant_id, kind, url, duration_seconds, sort_order)`.
+  `kind` ∈ `image` | `video` — **pas de QR** (décision produit, la contrainte
+  `CHECK` s'élargira le jour venu). `duration_seconds` NULL = suit la durée par
+  défaut ; toujours NULL pour une vidéo (jouée en entier, muette).
+- La durée est **résolue côté serveur** (`COALESCE`) : la borne reçoit toujours
+  un entier. `custom_duration` dit si elle est propre au média.
+
+**Contrat borne** — `GET /kiosk/settings` gagne un bloc toujours présent :
+`marketing_ribbon: { enabled, default_duration_seconds, media: [{id, kind, url,
+duration_seconds, custom_duration, sort_order}] }`. `media` n'est rempli que si le
+ruban est activé (inutile de faire télécharger des visuels non affichés). Une
+borne ancienne ignore ce bloc. Une erreur de lecture des médias **ne fait jamais
+échouer** `GET /kiosk/settings` (qui porte tout le parcours de commande) : la
+borne reçoit `media: []` et l'incident est journalisé.
+
+**Back-office** (groupe `kiosk.manage`, lecture sans permission dédiée comme
+`GET /settings`) — `/pos/settings/kiosk/marketing/media` : `GET` (liste), `POST`
+(multipart, champ `file` + `duration_seconds` facultatif), `PUT /{id}` (durée,
+`null` ou 0 = redevient suiveur), `PUT /reorder`, `POST /reset-durations`,
+`DELETE /{id}`. L'activation et la durée par défaut passent par le `PUT
+/settings` existant (`marketing_ribbon_enabled`,
+`marketing_default_duration_seconds`).
+
+**Upload — choix de robustesse** (une borne en service ne doit pas ralentir ni
+planter sur un média inutilisable) :
+- Le `kind` est déduit du **contenu** du fichier (premiers octets), jamais du
+  `Content-Type` déclaré ni du formulaire. MP4 : boîte `ftyp` + marque majeure
+  en liste blanche (`mp4*`, `iso*`, `M4V `, `avc1`, `dash`, `MSNV`, `f4v `) — HEIC,
+  AVIF et QuickTime portent aussi `ftyp` et sont refusés. Le codec n'est pas
+  vérifié : la borne saute un média qu'elle ne sait pas lire.
+- Plafonds : image 5 Mo, vidéo 50 Mo, appliqués **à la lecture** du corps
+  (`http.MaxBytesReader`) et non seulement sur la taille déclarée. Le CDS ne
+  borne pas la taille d'une vidéo ; ce n'est pas repris ici.
+- Rotation plafonnée à **20 médias** : une borne garde chaque fichier sur
+  disque. Contrôle fait **avant** de lire le fichier.
+- Fichiers temporaires multipart effacés dans tous les cas ; objet R2 effacé si
+  l'insertion échoue ensuite (sinon orphelin), et à la suppression du média.
+- Clé R2 propre à chaque média (`…/kiosk/marketing/{id}.ext`), jamais réécrite :
+  pas de cache-buster, contrairement à la vidéo de veille.
+
+**Réordonnancement tolérant** : les identifiants reçus passent en premier, les
+médias non cités suivent dans leur ordre actuel (liste périmée d'un autre onglet
+= ni erreur, ni média perdu, ni deux médias sur le même rang). Un identifiant
+inconnu ou cité deux fois reste une erreur.
+
+**Temps réel** : `kiosk_settings_updated` est diffusé après chaque mutation du
+ruban (médias, activation, durée par défaut) pour que les bornes rechargent
+leurs réglages sans redémarrer. Volontairement **pas** après tout
+`UpdateSettings` : une borne rechargerait ses réglages de parcours en pleine
+commande.
+
+**Déploiement** : migration **avant** le code (`GetSettingsByMerchant` sélectionne
+les nouvelles colonnes ; sans elles `GET /kiosk/settings` échoue). Rollback :
+`190_…down.sql` après retrait du code.
+
+Tests : `marketing_test.go` (durées, ordre, détection de format),
+`marketing_postgres_integration_test.go` (contraintes, cloisonnement par
+merchant — tag `postgres_integration`, nécessite la migration 190).

@@ -6221,3 +6221,21 @@ Suite de l'entrée du 2026-10-20 ; détail dans [ids-entiers-users-discounts-cha
 - **Limite connue de la transition** : un identifiant à la fois remise du marchand et récompense de la même commande reste attribué à la remise (loggé).
 
 Tests : unitaires verts, sauf 12 tests planning déjà cassés sur HEAD (`employees`, `leave`, `swaps`). Nouveaux : `TestApplyRewards_FreeProductCarriesRewardID`, `TestLineKeyID`, `TestSealedPayment_SealedWith`, `userids`, POS `cart_merge_reward_test.dart` (5 tests), ScanNOrder `normalize.pricing.test.ts` (4 tests). Intégration Postgres écrits mais non exécutables avant les migrations 186 à 189 : `TestResolveLineDiscounts_Postgres`, `TestCollectorRepair_Postgres`, `TestApply_Postgres` (userids), `delivery_sessions` (`collected_by`). Les autres tests d'intégration de `orders`, `order_life_cycle`, `cash_registers`, `users` et `signup` échouent aujourd'hui sur « relation ou colonne inexistante » pour la même raison. Statut : non commité, non déployé.
+### Produit offert conservé à la modification d'une commande (2026-10-21)
+
+Suite de l'entrée sur les récompenses de fidélité ; détail dans [ids-entiers-users-discounts-chantier.md](ids-entiers-users-discounts-chantier.md) §9.4 et §9.5.
+
+- **Défaut corrigé** : modifier au POS une commande dont le produit offert est déjà consommé le faisait repasser au plein tarif. `GetRewards` retrouve désormais, par l'`order_item_id` des lignes déjà enregistrées (le POS n'envoie pas l'identifiant de la commande), la récompense « produit offert » que la commande a consommée, et la réapplique. Contrôles : marchand de la ligne, commande de la récompense, client de la commande. Les réductions en montant ou en pourcentage ne sont pas reprises (paiement `REWARD` déjà enregistré). Aucune modification du POS.
+- **Lot 2 (à faire, décisions d'Ilies)** : récompenses à la caisse pour tous les types, avec `automatically_add_customer_rewards`. Le POS n'envoie jamais `used_rewards` : la consommation et la libération (création et modification) devront être décidées par le serveur, pas par la liste du client.
+
+Tests : `TestRewardKeptWhenEditingOrder_Postgres` (10 cas sur la vraie base). Statut : non commité, non déployé.
+
+### Code MFA envoyé au refresh du back-office (2026-10-22)
+
+- **Défaut corrigé** : au refresh d'une page du back-office avec un MFA à renouveler (statut non vérifié, ou dernière vérification de plus de 30 jours), la popup OTP s'ouvrait sur « un mail a été envoyé » alors qu'aucun code ne partait. Le middleware `Auth` ne faisait que passer le statut en `pending` et répondre `401 mfa_required` ; l'envoi n'existait que dans `Login`, que ce parcours ne traverse pas (token déjà émis).
+- **Envoi dans le middleware** : il appelle `AuthService.StartMFAChallenge`, qui passe le statut en `pending` puis envoie le code par email via `SendMFACode` (même circuit que `Login`).
+- **Anti-doublon** : un refresh déclenche plusieurs requêtes parallèles qui reçoivent toutes `mfa_required`, et chaque envoi écrase le code du précédent. `StartMFAChallenge` regroupe les appels simultanés d'un même user (singleflight) et n'envoie rien tant qu'un code valide existe déjà dans Redis pour le token (5 min). Le cooldown de 60 s fondé sur `mfa_otp_sent_at` ne suffit pas ici : le user du middleware vient du cache Redis, où cette colonne est périmée. Le bouton « Renvoyer le code » reste la façon de redemander un code.
+- **Bouton « Renvoyer le code »** : la popup MFA appelle `/auth/send-verification` avec `mode: "mfa"`. `SendVerificationCode` ne traitait que `EMAIL` et `SMS` : il stockait un code sous une clé que `VerifyMFA` ne lit pas, n'envoyait rien et répondait `success`. Le mode `MFA` est maintenant délégué à `SendMFACode` (cooldown de 60 s, clé lue par `VerifyMFA`), l'email masqué est renvoyé comme destinataire. Aucune modification du front.
+- **Effet visible** : ouvrir la popup consomme le cooldown de 60 s ; un clic immédiat sur « Renvoyer » renvoie `otp_wait_time`, comme après un login.
+
+Tests : `mfa_challenge_test.go` (envoi + clé Redis, code existant non écrasé, rafale de 8 requêtes = 1 mail, sans Redis, mode `mfa` du bouton « Renvoyer »). Statut : non commité, non déployé.
