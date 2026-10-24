@@ -130,5 +130,77 @@ func (s *Service) hubMerchant(ctx context.Context, row FranchiseHubRow) Franchis
 		m.ReservationURL = &reservationURL
 	}
 
+	m.AdvanceOrdersEnabled = row.AdvanceOrdersEnabled
+	m.Discounts = []Discount{}
+	discounts, err := s.repo.GetDiscounts(ctx, row.MerchantID, "", now)
+	if err != nil {
+		logger.FromContext(ctx).Warn("franchise hub: discounts failed",
+			zap.String("merchant_id", row.MerchantID), zap.Error(err))
+	} else {
+		m.Discounts = onlineDiscounts(discounts)
+	}
+
 	return m
+}
+
+// onlineDiscounts garde les remises valables en commande en ligne (à emporter
+// ou livraison) : le hub ne mène pas au sur place.
+func onlineDiscounts(discounts []Discount) []Discount {
+	out := make([]Discount, 0, len(discounts))
+	for _, d := range discounts {
+		types := strings.ToUpper(d.DiscountOrderType)
+		if strings.TrimSpace(types) == "" || strings.Contains(types, "TAKE_AWAY") || strings.Contains(types, "DELIVERY") {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// RecordFranchiseHubEvent enregistre un affichage du hub ou un clic. Un slug
+// ou un établissement inconnu est ignoré sans erreur : ces appels partent du
+// navigateur en tâche de fond et ne doivent jamais gêner la page.
+func (s *Service) RecordFranchiseHubEvent(ctx context.Context, slug string, req FranchiseHubEventRequest) error {
+	switch req.EventType {
+	case HubEventView:
+		req.MerchantID = ""
+	case HubEventOrderClick, HubEventReservationClick:
+		if strings.TrimSpace(req.MerchantID) == "" {
+			return models.ErrInvalidInput
+		}
+	default:
+		return models.ErrInvalidInput
+	}
+
+	franchiseID, err := s.repo.GetFranchiseIDBySlug(ctx, strings.ToLower(strings.TrimSpace(slug)))
+	if err != nil || franchiseID == "" {
+		return err
+	}
+	if req.MerchantID != "" {
+		ok, err := s.repo.MerchantInFranchise(ctx, franchiseID, req.MerchantID)
+		if err != nil || !ok {
+			return err
+		}
+	}
+	return s.repo.InsertHubEvent(ctx, franchiseID, req.MerchantID, req.EventType)
+}
+
+// recordHubOrder attribue au hub une commande ScanNOrder créée après un clic
+// « Commander » (req.HubFranchiseSlug, envoyé par le front). Best-effort : un
+// échec est journalisé, jamais remonté à la commande.
+func (s *Service) recordHubOrder(ctx context.Context, slug, merchantID, orderID string) {
+	if strings.TrimSpace(slug) == "" || orderID == "" {
+		return
+	}
+	log := logger.FromContext(ctx)
+	franchiseID, err := s.repo.GetFranchiseIDBySlug(ctx, strings.ToLower(strings.TrimSpace(slug)))
+	if err != nil || franchiseID == "" {
+		return
+	}
+	ok, err := s.repo.MerchantInFranchise(ctx, franchiseID, merchantID)
+	if err != nil || !ok {
+		return
+	}
+	if err := s.repo.InsertHubOrder(ctx, orderID, franchiseID, merchantID); err != nil {
+		log.Warn("franchise hub: order attribution failed", zap.String("order_id", orderID), zap.Error(err))
+	}
 }

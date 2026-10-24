@@ -247,6 +247,12 @@ type FranchiseHubMerchant struct {
 	// ReservationURL : page de réservation en ligne, nil si l'établissement ne
 	// prend pas de réservation.
 	ReservationURL *string `json:"reservation_url"`
+	// AdvanceOrdersEnabled : commande programmée possible (le hub propose
+	// « Précommander » quand l'établissement est fermé).
+	AdvanceOrdersEnabled bool `json:"advance_orders_enabled"`
+	// Discounts : remises actives maintenant, en commande en ligne (à emporter
+	// ou livraison) — même forme que GET /scannorder/{slug}/discounts.
+	Discounts []Discount `json:"discounts"`
 }
 
 // FranchiseHubRow : lecture brute de GetFranchiseHub.
@@ -274,7 +280,22 @@ type FranchiseHubRow struct {
 	Slug             string
 	// ReservationCode : bookings_settings.code quand la réservation en ligne est
 	// ouverte.
-	ReservationCode *string
+	ReservationCode      *string
+	AdvanceOrdersEnabled bool
+}
+
+// Événements du hub (franchise_hub_events, migration 194).
+const (
+	HubEventView             = "view"
+	HubEventOrderClick       = "order_click"
+	HubEventReservationClick = "reservation_click"
+)
+
+// FranchiseHubEventRequest : POST /scannorder/franchises/{slug}/events.
+// MerchantID est requis pour les clics, ignoré pour un affichage.
+type FranchiseHubEventRequest struct {
+	EventType  string `json:"event_type"`
+	MerchantID string `json:"merchant_id,omitempty"`
 }
 
 // MerchantFranchise : franchise d'un établissement visible sur son hub (lien

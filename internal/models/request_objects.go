@@ -244,6 +244,11 @@ type PricingRequest struct {
 	// RequestObject.UpsellSuggestionID so OrdersLifeCycleService.CreateOrder can
 	// trigger upsell acceptance tracking (Phase C). Unused by pricing calls.
 	UpsellSuggestionID *string `json:"upsell_suggestion_id,omitempty"`
+
+	// HubFranchiseSlug, sur CreateOrderSNO : la commande suit un clic
+	// « Commander » sur le hub de cette franchise (attribution des statistiques
+	// du hub, table franchise_hub_orders). Ignoré par le pricing.
+	HubFranchiseSlug string `json:"hub_franchise_slug,omitempty"`
 }
 
 type MerchantRow struct {

@@ -1066,6 +1066,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			r.With(salesRead).Post("/clients", analyticsH.GetClients)
 			r.With(salesRead).Post("/upsell", analyticsH.GetUpsell)
 			r.With(salesRead).Post("/discounts", analyticsH.GetDiscounts)
+			r.With(salesRead).Post("/scannorder", analyticsH.GetScanNOrder)
 
 			// PROMPT 10 / 18 / 19: nominative rankings are gated by their own
 			// key ALONE, not reports.sales.read + that key (hence per-route
@@ -1144,6 +1145,8 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- SCANNORDER ---
 	r.Route("/scannorder", func(r chi.Router) {
 		r.Get("/franchises/{franchise_slug}", scannHandler.GetFranchise)
+		// Statistiques du hub (anonymes) : envoyées par le navigateur, bornées par IP.
+		r.With(httprate.LimitByIP(120, 1*time.Minute)).Post("/franchises/{franchise_slug}/events", scannHandler.RecordFranchiseHubEvent)
 		r.Get("/sitemap", scannHandler.GetSitemap)
 		r.Get("/{merchant_slug}", scannHandler.GetMerchant)
 		r.Get("/{merchant_slug}/slots", scannHandler.GetSlots)

@@ -148,6 +148,24 @@ func (h *Handler) CreateOrderSNO(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "scannorder", "create_order_sno", create_order)
 }
 
+// RecordFranchiseHubEvent — POST /scannorder/franchises/{franchise_slug}/events
+// {event_type, merchant_id?} : affichage du hub ou clic Commander / Réserver.
+// 204 même pour un slug ou un établissement inconnu (rien à corriger côté
+// navigateur) ; 400 pour un type d'événement invalide.
+func (h *Handler) RecordFranchiseHubEvent(w http.ResponseWriter, r *http.Request) {
+	var req FranchiseHubEventRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "scannorder", "record_franchise_hub_event", models.ErrInvalidRequestBody)
+		return
+	}
+	if err := h.service.RecordFranchiseHubEvent(r.Context(), chi.URLParam(r, "franchise_slug"), req); err != nil {
+		models.SendErrorJSON(w, "scannorder", "record_franchise_hub_event", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // GetFranchise — GET /scannorder/franchises/{franchise_slug} : hub public
 // d'une franchise.
 func (h *Handler) GetFranchise(w http.ResponseWriter, r *http.Request) {

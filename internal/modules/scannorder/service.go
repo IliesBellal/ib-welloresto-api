@@ -1242,6 +1242,10 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest
 		return models.CreateOrderResult{Status: "error_003"}, err
 	}
 
+	if newOrder.Status == "1" || newOrder.Status == "success" {
+		s.recordHubOrder(ctx, req.HubFranchiseSlug, orderReq.Merchant.MerchantID, newOrder.OrderID)
+	}
+
 	if (newOrder.Status == "1" || newOrder.Status == "success") && newOrder.Action == "payment" {
 
 		order.OrderID = &newOrder.OrderID

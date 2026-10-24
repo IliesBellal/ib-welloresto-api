@@ -1047,7 +1047,7 @@ func (r *Repository) GetFranchiseHub(ctx context.Context, slug string) (*Franchi
 		snos.take_away_enabled, snos.take_away_available,
 		snos.delivery_enabled, snos.delivery_available,
 		snos.in_enabled, snos.in_available,
-		mp.preparation_time_mode, mp.preparation_time, %[2]s,
+		mp.preparation_time_mode, mp.preparation_time, %[2]s, COALESCE(mp.enable_advance_orders, false),
 		qr.code,
 		(SELECT bs.code FROM bookings_settings bs
 		  LEFT JOIN packages p ON p.id = sub.package_id
@@ -1084,7 +1084,7 @@ func (r *Repository) GetFranchiseHub(ctx context.Context, slug string) (*Franchi
 			&row.TakeawayEnabled, &row.TakeawayAvailable,
 			&row.DeliveryEnabled, &row.DeliveryAvailable,
 			&row.InEnabled, &row.InAvailable,
-			&row.PrepTimeMode, &row.PrepTime, &row.ExtraPrepMinutes,
+			&row.PrepTimeMode, &row.PrepTime, &row.ExtraPrepMinutes, &row.AdvanceOrdersEnabled,
 			&row.Slug,
 			&reservationCode,
 		); err != nil {
@@ -1101,6 +1101,51 @@ func (r *Repository) GetFranchiseHub(ctx context.Context, slug string) (*Franchi
 	}
 
 	return franchise, merchants, nil
+}
+
+// GetFranchiseIDBySlug : "" si le slug est inconnu.
+func (r *Repository) GetFranchiseIDBySlug(ctx context.Context, slug string) (string, error) {
+	db := dbx.GetDB(ctx, r.database)
+	var id string
+	err := db.QueryRowContext(ctx, `SELECT franchise_id FROM franchises WHERE slug = ?`, slug).Scan(&id)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return id, err
+}
+
+// MerchantInFranchise : l'établissement appartient à la franchise.
+func (r *Repository) MerchantInFranchise(ctx context.Context, franchiseID, merchantID string) (bool, error) {
+	db := dbx.GetDB(ctx, r.database)
+	var ok bool
+	err := db.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM merchant WHERE franchise_id = ? AND CAST(id AS TEXT) = ?)`,
+		franchiseID, merchantID).Scan(&ok)
+	return ok, err
+}
+
+// InsertHubEvent enregistre un affichage du hub (merchantID vide) ou un clic.
+func (r *Repository) InsertHubEvent(ctx context.Context, franchiseID, merchantID, eventType string) error {
+	db := dbx.GetDB(ctx, r.database)
+	var merchant interface{}
+	if merchantID != "" {
+		merchant = merchantID
+	}
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO franchise_hub_events (franchise_id, merchant_id, event_type) VALUES (?, ?, ?)`,
+		franchiseID, merchant, eventType)
+	return err
+}
+
+// InsertHubOrder attribue une commande au hub (une seule fois par commande).
+func (r *Repository) InsertHubOrder(ctx context.Context, orderID, franchiseID, merchantID string) error {
+	db := dbx.GetDB(ctx, r.database)
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO franchise_hub_orders (order_id, franchise_id, merchant_id)
+		VALUES (CAST(? AS integer), ?, ?)
+		ON CONFLICT (order_id) DO NOTHING`,
+		orderID, franchiseID, merchantID)
+	return err
 }
 
 // GetUpsellProducts retrieves the IDs of "popular" products (is_popular = 1) eligible for

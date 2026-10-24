@@ -19,6 +19,17 @@ Regroupement d'établissements sous une **franchise** : une page hub ScanNOrder 
 | D11 | Le hub ne montre que les établissements ScanNOrder actifs (activé, abonnement non coupé, QR principal), comme le sitemap. Un établissement masqué ou sans ScanNOrder reste listé au back-office avec un avertissement. | Pas de lien de commande mort sur une page publique. |
 | D12 | Bouton « Réserver une table » seulement si la réservation en ligne est ouverte ; un établissement « sur place » seul n'a pas de bouton « Commander » (commander sur place passe par le QR de la table). | Décision Ilies. |
 
+### Hub v1.1 (décisions du 2026-10-24)
+
+| # | Décision | Pourquoi |
+|---|---|---|
+| D13 | **« Votre établissement habituel »** : le dernier établissement où le client a cliqué « Commander » ou « Réserver » sur ce hub est épinglé en tête, mémorisé sur l'appareil (localStorage, par franchise). | La plupart des clients reviennent au même endroit. Rien côté serveur. |
+| D14 | **Précommander** : fermé avec commande programmée possible (`advance_orders_enabled`) → « Fermé · ouvre à … » et bouton « Précommander » ; fermé sans commande programmée → pas de bouton de commande. | Une visite à la fermeture devient une commande, sans proposer une commande impossible. |
+| D15 | **Offres sur les cartes** : remises actives maintenant, valables à emporter ou en livraison (`discounts`, même forme que `/discounts`). | Premier levier de clic des marketplaces. |
+| D16 | **Statistiques** : onglet **ScanNOrder** de la page Analyse (par établissement, périmètre et période de la page) : CA, commandes, panier moyen et part du ScanNOrder, puis le hub : affichages, clics Commander / Réserver, commandes et CA attribués, conversion. | Prouver la valeur du hub au franchiseur et à chaque établissement. |
+| D17 | **Mesure anonyme** : on compte des événements (affichage du hub, clics), jamais des personnes : ni identifiant de visiteur, ni IP, ni cookie. Les affichages sont comptés par franchise (un affichage montre tous ses établissements). | Pas de consentement à demander, pas de donnée personnelle. |
+| D18 | **Attribution d'une commande au hub** : clic « Commander » sur le hub, puis commande dans les 2 h sur le même établissement (mémorisé dans le navigateur, envoyé en `hub_franchise_slug` à la création). Table `franchise_hub_orders`, pas de colonne sur `orders`. | Rien ne change dans l'écriture ni la signature des commandes. |
+
 ## Modèle de données (migration 193)
 
 - `franchises` (ex-`brands`) : `franchise_id` (varchar 64, `fra-<uuid>`), `name` (80), `slug` (unique), `description`, `logo_url`, `banner_url`, `brand_color` (`#RRGGBB`), `creation_date`, `updated_at`. Logo, bannière et description facultatifs.
@@ -85,6 +96,10 @@ Remplace `GET /scannorder/brands/{slug}` (que rien n'appelait). 404 `franchise_n
 
 - `next_opening` : prochaine ouverture (`YYYY-MM-DD HH:MM:SS`, heure locale), seulement quand fermé.
 - Statut ouvert/fermé : même calcul que la page restaurant (`GetMerchantOpenState` : ouverture ScanNOrder, horaires, jours fériés, vacances). Calculé en parallèle (4 à la fois) ; un échec affiche l'établissement fermé sans faire échouer le hub.
+- Chaque établissement porte aussi `advance_orders_enabled` (D14) et `discounts` (D15).
+- `POST /scannorder/franchises/{slug}/events` `{event_type: view | order_click | reservation_click, merchant_id?}` → 204 (limité à 120/min par IP ; slug ou établissement inconnu ignoré, type invalide → 400). Table `franchise_hub_events` (migration 194).
+- `POST /scannorder/{slug}/orders` accepte `hub_franchise_slug` (D18) → `franchise_hub_orders`.
+- `POST /analytics/scannorder` `{date_from, date_to, merchant_ids?}` (reports.sales.read, périmètre `pos.analytics` comme les autres onglets) → `{scope, totals: {sno_orders, sno_revenue_ttc_cents, all_revenue_ttc_cents}, hub: {in_franchise, franchises, views, order_clicks, reservation_clicks, orders, revenue_ttc_cents, tracking_since}, daily: [{date, sno_orders, hub_orders, order_clicks}], by_merchant: [...]}`. Commandes au sens des onglets CA / Commandes (`AnalyticsOrdersScope`).
 - `GET /scannorder/sitemap` gagne `franchises: [{slug, updated_at}]` : les hubs qui affichent au moins un établissement.
 - La page restaurant (`GET /scannorder/{slug}`) gagne `merchant.franchise: {name, slug}` (nil si aucune franchise ou masqué sur le hub), pour le lien « autres établissements ».
 
