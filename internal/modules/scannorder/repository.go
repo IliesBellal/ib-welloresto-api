@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
@@ -310,9 +311,11 @@ func (r *Repository) GetMerchantSEOInfo(ctx context.Context, merchantID string) 
 	       (SELECT qr.code FROM qrcodes qr
 	         WHERE qr.merchant_id = snos.merchant_id AND %[3]s
 	         ORDER BY qr.qr_id
-	         LIMIT 1)
+	         LIMIT 1),
+	       f.name, f.slug
 	FROM merchant m
 	INNER JOIN scannorder_settings snos ON snos.merchant_id = %[1]s
+	LEFT JOIN franchises f ON f.franchise_id = m.franchise_id AND m.franchise_hub_visible = true
 	WHERE m.id = ?`, snoMerchantJoinCast(), snoSubscriptionBlocked("snos.merchant_id"), snoMainQRCondition("qr"))
 
 	row := MerchantSEORow{}
@@ -321,6 +324,7 @@ func (r *Repository) GetMerchantSEOInfo(ctx context.Context, merchantID string) 
 		&row.City, &row.ZipCode, &row.Country,
 		&row.SEOTitle, &row.SEODescription, &row.SEOCuisineType,
 		&row.Activated, &row.Blocked, &mainSlug,
+		&row.FranchiseName, &row.FranchiseSlug,
 	)
 	if err != nil {
 		return nil, err
@@ -491,6 +495,24 @@ func (r *Repository) GetDiscounts(ctx context.Context, merchantID string, orderT
 }
 
 func (r *Repository) GetMerchantStatus(ctx context.Context, merchantID string, dow int, currentTime string) (*MerchantStatus, error) {
+	status, err := r.GetMerchantOpenState(ctx, merchantID, dow, currentTime)
+	if err != nil {
+		return nil, err
+	}
+
+	openHours, err := r.GetMerchantOpenHours(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	status.OpenHours = openHours
+
+	return status, nil
+}
+
+// GetMerchantOpenState : ouvert maintenant et prochaine ouverture, sans les
+// horaires de la semaine (GetMerchantStatus les ajoute). Utilisé seul par le
+// hub d'une franchise, qui n'affiche pas les horaires.
+func (r *Repository) GetMerchantOpenState(ctx context.Context, merchantID string, dow int, currentTime string) (*MerchantStatus, error) {
 	db := dbx.GetDB(ctx, r.database)
 
 	status := &MerchantStatus{}
@@ -573,12 +595,6 @@ func (r *Repository) GetMerchantStatus(ctx context.Context, merchantID string, d
 	if hoursStatus.NextStart != nil && !forcedClosed {
 		status.NextStart = openinghours.FormatDateTime(hoursStatus.NextStart)
 	}
-
-	openHours, err := r.GetMerchantOpenHours(ctx, merchantID)
-	if err != nil {
-		return nil, err
-	}
-	status.OpenHours = openHours
 
 	return status, nil
 }
@@ -962,22 +978,21 @@ func (s *Repository) GetBooking(ctx context.Context, qrCode string) (*models.Boo
 	return nil, nil
 }
 
-// GetMerchantsByBrandSlug fetches the brand and its merchants.
-// If lat and lng are non-nil, only merchants within 50 km are returned (Haversine).
-func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, lat, lng *float64) (*BrandData, []BrandMerchantRow, error) {
+// GetFranchiseHub lit une franchise et ses établissements affichés sur le hub
+// (visibles, ScanNOrder activé et non coupé par l'abonnement, QR principal
+// existant — mêmes règles que le sitemap). franchise = nil si le slug est
+// inconnu. Le statut ouvert/fermé et le temps d'attente sont calculés par le
+// service.
+func (r *Repository) GetFranchiseHub(ctx context.Context, slug string) (*FranchisePublic, []FranchiseHubRow, error) {
 	db := dbx.GetDB(ctx, r.database)
 
-	// 1. Fetch brand
-	brandQuery := `
-		SELECT brand_id, name, slug, logo_url, banner_url, description
-		FROM brands
-		WHERE slug = ?
-		LIMIT 1`
-
-	brand := &BrandData{}
-	err := db.QueryRowContext(ctx, brandQuery, slug).Scan(
-		&brand.BrandID, &brand.Name, &brand.Slug,
-		&brand.LogoURL, &brand.BannerURL, &brand.Description,
+	franchise := &FranchisePublic{}
+	err := db.QueryRowContext(ctx, `
+		SELECT franchise_id, name, slug, description, logo_url, banner_url, brand_color
+		FROM franchises
+		WHERE slug = ?`, slug).Scan(
+		&franchise.FranchiseID, &franchise.Name, &franchise.Slug,
+		&franchise.Description, &franchise.LogoURL, &franchise.BannerURL, &franchise.BrandColor,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil, nil
@@ -986,164 +1001,67 @@ func (r *Repository) GetMerchantsByBrandSlug(ctx context.Context, slug string, l
 		return nil, nil, err
 	}
 
-	// 2. Fetch merchants (with optional distance filter)
-	var rows *sql.Rows
+	query := fmt.Sprintf(`
+	SELECT
+		m.id, m.fullName, m.address, m.zip_code, m.city, m.lat, m.lng, m.timezone,
+		COALESCE(snos.logo_url, m.logo_url),
+		snos.take_away_enabled, snos.take_away_available,
+		snos.delivery_enabled, snos.delivery_available,
+		snos.in_enabled, snos.in_available,
+		mp.preparation_time_mode, mp.preparation_time, %[2]s,
+		qr.code,
+		(SELECT bs.code FROM bookings_settings bs
+		  LEFT JOIN packages p ON p.id = sub.package_id
+		  WHERE bs.merchant_id = snos.merchant_id AND bs.enabled = TRUE
+		    AND COALESCE(sub.bookings_enabled, p.bookings_enabled, TRUE)
+		  LIMIT 1)
+	FROM merchant m
+	INNER JOIN scannorder_settings snos ON snos.merchant_id = %[1]s AND snos.activated = true
+	INNER JOIN merchant_parameters mp ON mp.merchant_id = %[1]s
+	INNER JOIN qrcodes qr ON qr.qr_id = (
+		SELECT MIN(main.qr_id) FROM qrcodes main
+		WHERE main.merchant_id = snos.merchant_id AND %[3]s
+	)
+	LEFT JOIN subscriptions sub ON sub.merchant_id = snos.merchant_id
+	WHERE m.franchise_id = ?
+	  AND m.franchise_hub_visible = true
+	  AND NOT %[4]s
+	ORDER BY m.fullName`,
+		snoMerchantJoinCast(), snoActiveExtraPrepMinutes(), snoMainQRCondition("main"), snoSubscriptionBlocked("snos.merchant_id"))
 
-	if lat != nil && lng != nil {
-		// Le HAVING sans GROUP BY sur l'alias distance_km (tolerance MySQL)
-		// devient une sous-requete filtree en WHERE cote PG — meme resultat.
-		merchantQuery := fmt.Sprintf(`
-			SELECT
-				m.id,
-				m.fullName,
-				m.address,
-				m.lat,
-				m.lng,
-				m.timezone,
-				m.logo_url,
-				snos.take_away_enabled,
-				snos.take_away_available,
-				snos.delivery_enabled,
-				snos.delivery_available,
-				snos.in_enabled,
-				snos.in_available,
-				snos.header_background,
-				mp.preparation_time_mode,
-				mp.preparation_time,
-				%[2]s,
-				qr.code as slug,
-				(6371 * ACOS(
-					COS(RADIANS(?)) * COS(RADIANS(m.lat)) *
-					COS(RADIANS(m.lng) - RADIANS(?)) +
-					SIN(RADIANS(?)) * SIN(RADIANS(m.lat))
-				)) AS distance_km
-			FROM brands b
-			INNER JOIN merchant m ON m.brand_id = b.brand_id
-          	INNER JOIN qrcodes qr ON qr.merchant_id = %[1]s and qr.location_id IS NULL and qr.user_id IS NULL and qr.deleted = false
-			INNER JOIN scannorder_settings snos ON snos.merchant_id = %[1]s
-			INNER JOIN merchant_parameters mp ON mp.merchant_id = %[1]s
-			WHERE b.brand_id = ?
-			HAVING distance_km < 50
-			ORDER BY distance_km ASC`, snoMerchantJoinCast(), snoActiveExtraPrepMinutes())
-		if dbx.ActiveDialect() == dbx.Postgres {
-			merchantQuery = fmt.Sprintf(`
-			SELECT * FROM (
-				SELECT
-					m.id,
-					m.fullName,
-					m.address,
-					m.lat,
-					m.lng,
-					m.timezone,
-					m.logo_url,
-					snos.take_away_enabled,
-					snos.take_away_available,
-					snos.delivery_enabled,
-					snos.delivery_available,
-					snos.in_enabled,
-					snos.in_available,
-					snos.header_background,
-					mp.preparation_time_mode,
-					mp.preparation_time,
-					%[2]s,
-					qr.code as slug,
-					(6371 * ACOS(
-						COS(RADIANS(?)) * COS(RADIANS(m.lat)) *
-						COS(RADIANS(m.lng) - RADIANS(?)) +
-						SIN(RADIANS(?)) * SIN(RADIANS(m.lat))
-					)) AS distance_km
-				FROM brands b
-				INNER JOIN merchant m ON m.brand_id = b.brand_id
-				INNER JOIN qrcodes qr ON qr.merchant_id = %[1]s and qr.location_id IS NULL and qr.user_id IS NULL and qr.deleted = false
-				INNER JOIN scannorder_settings snos ON snos.merchant_id = %[1]s
-				INNER JOIN merchant_parameters mp ON mp.merchant_id = %[1]s
-				WHERE b.brand_id = ?
-			) nearby
-			WHERE distance_km < 50
-			ORDER BY distance_km ASC`, snoMerchantJoinCast(), snoActiveExtraPrepMinutes())
-		}
-
-		rows, err = db.QueryContext(ctx, merchantQuery, *lat, *lng, *lat, brand.BrandID)
-	} else {
-		merchantQuery := fmt.Sprintf(`
-			SELECT
-				m.id,
-				m.fullName,
-				m.address,
-				m.lat,
-				m.lng,
-				m.timezone,
-				m.logo_url,
-				snos.take_away_enabled,
-				snos.take_away_available,
-				snos.delivery_enabled,
-				snos.delivery_available,
-				snos.in_enabled,
-				snos.in_available,
-				snos.header_background,
-				mp.preparation_time_mode,
-				mp.preparation_time,
-				%[2]s,
-				qr.code as slug,
-				NULL AS distance_km
-			FROM brands b
-			INNER JOIN merchant m ON m.brand_id = b.brand_id
-          	INNER JOIN qrcodes qr ON qr.merchant_id = %[1]s and qr.location_id IS NULL and qr.user_id IS NULL and qr.deleted = false
-			INNER JOIN scannorder_settings snos ON snos.merchant_id = %[1]s
-			INNER JOIN merchant_parameters mp ON mp.merchant_id = %[1]s
-			WHERE b.brand_id = ?
-			ORDER BY m.fullName ASC`, snoMerchantJoinCast(), snoActiveExtraPrepMinutes())
-
-		rows, err = db.QueryContext(ctx, merchantQuery, brand.BrandID)
-	}
-
+	rows, err := db.QueryContext(ctx, query, franchise.FranchiseID)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer rows.Close()
 
-	var merchants []BrandMerchantRow
+	merchants := []FranchiseHubRow{}
 	for rows.Next() {
-		var row BrandMerchantRow
-		var distanceKm sql.NullFloat64
-
+		var row FranchiseHubRow
+		var reservationCode sql.NullString
 		if err := rows.Scan(
-			&row.MerchantID,
-			&row.FullName,
-			&row.Address,
-			&row.Lat,
-			&row.Lng,
-			&row.Timezone,
+			&row.MerchantID, &row.FullName, &row.Address, &row.ZipCode, &row.City, &row.Lat, &row.Lng, &row.Timezone,
 			&row.LogoURL,
-			&row.TakeawayEnabled,
-			&row.TakeawayAvailable,
-			&row.DeliveryEnabled,
-			&row.DeliveryAvailable,
-			&row.InEnabled,
-			&row.InAvailable,
-			&row.BannerURL,
-			&row.PrepTimeMode,
-			&row.PrepTime,
-			&row.ExtraPrepMinutes,
+			&row.TakeawayEnabled, &row.TakeawayAvailable,
+			&row.DeliveryEnabled, &row.DeliveryAvailable,
+			&row.InEnabled, &row.InAvailable,
+			&row.PrepTimeMode, &row.PrepTime, &row.ExtraPrepMinutes,
 			&row.Slug,
-			&distanceKm,
+			&reservationCode,
 		); err != nil {
 			return nil, nil, err
 		}
-
-		if distanceKm.Valid {
-			v := distanceKm.Float64
-			row.DistanceKm = &v
+		if reservationCode.Valid && strings.TrimSpace(reservationCode.String) != "" {
+			code := reservationCode.String
+			row.ReservationCode = &code
 		}
-
 		merchants = append(merchants, row)
 	}
-
 	if err := rows.Err(); err != nil {
 		return nil, nil, err
 	}
 
-	return brand, merchants, nil
+	return franchise, merchants, nil
 }
 
 // GetUpsellProducts retrieves the IDs of "popular" products (is_popular = 1) eligible for

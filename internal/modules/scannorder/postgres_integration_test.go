@@ -23,7 +23,7 @@ func TestScannorderRepository_Postgres(t *testing.T) {
 
 	const qrCode = "itest-sno-qr"
 	const tableQRCode = "itest-sno-qr-table"
-	const brandSlug = "itest-sno-brand"
+	const franchiseSlug = "itest-sno-franchise"
 	var merchantID string
 
 	cleanupFor := func(mid string) {
@@ -52,13 +52,13 @@ func TestScannorderRepository_Postgres(t *testing.T) {
 		_, _ = db.ExecContext(ctx, `DELETE FROM scannorder_settings WHERE merchant_id = $1`, mid)
 		_, _ = db.ExecContext(ctx, `DELETE FROM merchant_parameters WHERE merchant_id = $1`, mid)
 		_, _ = db.ExecContext(ctx, `DELETE FROM merchant WHERE id = $1`, mid)
-		_, _ = db.ExecContext(ctx, `DELETE FROM brands WHERE brand_id = 'itest-sno-brand-id'`)
+		_, _ = db.ExecContext(ctx, `DELETE FROM franchises WHERE franchise_id = 'itest-sno-franchise-id'`)
 	}
 	var oldID int64
 	if err := db.QueryRowContext(ctx, `SELECT id FROM merchant WHERE siret = 'siret-sno' LIMIT 1`).Scan(&oldID); err == nil {
 		cleanupFor(strconv.FormatInt(oldID, 10))
 	} else {
-		_, _ = db.ExecContext(ctx, `DELETE FROM brands WHERE brand_id = 'itest-sno-brand-id'`)
+		_, _ = db.ExecContext(ctx, `DELETE FROM franchises WHERE franchise_id = 'itest-sno-franchise-id'`)
 	}
 	t.Cleanup(func() { cleanupFor(merchantID) })
 
@@ -69,13 +69,13 @@ func TestScannorderRepository_Postgres(t *testing.T) {
 		}
 	}
 
-	mustExec("brands", `
-		INSERT INTO brands (brand_id, name, slug, logo_url, banner_url, description) VALUES ('itest-sno-brand-id', 'ITest Brand', $1, 'https://cdn/logo.png', 'https://cdn/banner.png', 'desc')`, brandSlug)
+	mustExec("franchises", `
+		INSERT INTO franchises (franchise_id, name, slug, logo_url, banner_url, description, brand_color) VALUES ('itest-sno-franchise-id', 'ITest Franchise', $1, 'https://cdn/logo.png', 'https://cdn/banner.png', 'desc', '#FF5500')`, franchiseSlug)
 
 	var merchantIntID int64
 	if err := db.QueryRowContext(ctx, `
-		INSERT INTO merchant (fullname, address, street_number, street, zip_code, city, siret, web_site, merchanttel, token, timezone, lat, lng, brand_id)
-		VALUES ('ITest SNO Merchant', 'a', '1', 's', '75001', 'Paris', 'siret-sno', 'https://x', '06', 'mtok-sno', 'Europe/Paris', 48.85, 2.35, 'itest-sno-brand-id')
+		INSERT INTO merchant (fullname, address, street_number, street, zip_code, city, siret, web_site, merchanttel, token, timezone, lat, lng, franchise_id)
+		VALUES ('ITest SNO Merchant', 'a', '1', 's', '75001', 'Paris', 'siret-sno', 'https://x', '06', 'mtok-sno', 'Europe/Paris', 48.85, 2.35, 'itest-sno-franchise-id')
 		RETURNING id`).Scan(&merchantIntID); err != nil {
 		t.Fatalf("seed merchant: %v", err)
 	}
@@ -302,29 +302,31 @@ func TestScannorderRepository_Postgres(t *testing.T) {
 		t.Fatalf("unexpected customer from QR: %+v", fromQR)
 	}
 
-	// --- GetMerchantsByBrandSlug (avec et sans filtre distance/HAVING) ---
-	brand, merchants, err := repo.GetMerchantsByBrandSlug(ctx, brandSlug, nil, nil)
+	// --- GetFranchiseHub (visibilité, QR principal, abonnement) + lien franchise de la page restaurant ---
+	franchise, merchants, err := repo.GetFranchiseHub(ctx, franchiseSlug)
 	if err != nil {
-		t.Fatalf("GetMerchantsByBrandSlug failed against postgres: %v", err)
+		t.Fatalf("GetFranchiseHub failed against postgres: %v", err)
 	}
-	if brand == nil || brand.Slug != brandSlug || len(merchants) != 1 || merchants[0].MerchantID != merchantID {
-		t.Fatalf("unexpected brand result: brand=%+v merchants=%+v", brand, merchants)
+	if franchise == nil || franchise.Slug != franchiseSlug || franchise.BrandColor == nil || len(merchants) != 1 ||
+		merchants[0].MerchantID != merchantID || merchants[0].Slug != qrCode || merchants[0].City != "Paris" {
+		t.Fatalf("unexpected franchise hub: franchise=%+v merchants=%+v", franchise, merchants)
 	}
-	lat, lng := 48.86, 2.35 // ~1 km
-	_, near, err := repo.GetMerchantsByBrandSlug(ctx, brandSlug, &lat, &lng)
-	if err != nil {
-		t.Fatalf("GetMerchantsByBrandSlug (geo) failed against postgres: %v", err)
+	if missing, rows, err := repo.GetFranchiseHub(ctx, "itest-sno-unknown"); err != nil || missing != nil || rows != nil {
+		t.Fatalf("GetFranchiseHub(unknown) = (%+v, %+v, %v), want nil", missing, rows, err)
 	}
-	if len(near) != 1 || near[0].DistanceKm == nil || *near[0].DistanceKm > 50 {
-		t.Fatalf("unexpected geo result: %+v", near)
+	if _, err := repo.GetMerchantOpenState(ctx, merchantID, 1, "12:00:00"); err != nil {
+		t.Fatalf("GetMerchantOpenState failed against postgres: %v", err)
 	}
-	farLat, farLng := 43.30, 5.37 // Marseille, > 50 km
-	_, far, err := repo.GetMerchantsByBrandSlug(ctx, brandSlug, &farLat, &farLng)
-	if err != nil {
-		t.Fatalf("GetMerchantsByBrandSlug (far) failed against postgres: %v", err)
+	seoInfo, err := repo.GetMerchantSEOInfo(ctx, merchantID)
+	if err != nil || seoInfo.FranchiseSlug == nil || *seoInfo.FranchiseSlug != franchiseSlug {
+		t.Fatalf("GetMerchantSEOInfo franchise = (%+v, %v)", seoInfo, err)
 	}
-	if len(far) != 0 {
-		t.Fatalf("expected no merchant within 50 km of Marseille, got %+v", far)
+	mustExec("hide merchant from hub", `UPDATE merchant SET franchise_hub_visible = false WHERE id = $1`, merchantID)
+	if _, hidden, err := repo.GetFranchiseHub(ctx, franchiseSlug); err != nil || len(hidden) != 0 {
+		t.Fatalf("hidden merchant still on hub: %+v, %v", hidden, err)
+	}
+	if seoInfo, err := repo.GetMerchantSEOInfo(ctx, merchantID); err != nil || seoInfo.FranchiseSlug != nil {
+		t.Fatalf("hidden merchant still links its franchise: %+v, %v", seoInfo, err)
 	}
 
 	// --- upsell + prix ---

@@ -61,6 +61,7 @@ import (
 	discountsModule "welloresto-api/internal/modules/discounts"
 	dunningModule "welloresto-api/internal/modules/dunning"
 	haccpModule "welloresto-api/internal/modules/haccp"
+	franchisesModule "welloresto-api/internal/modules/franchises"
 	integrationsModule "welloresto-api/internal/modules/integrations"
 	locModule "welloresto-api/internal/modules/locations"
 	menuModule "welloresto-api/internal/modules/menu"
@@ -406,6 +407,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	scannRepo := scannorder.NewRepository(selectedDB)
 	scannService := scannorder.NewService(cfg.ScanNOrder, scannRepo, menuService, ordersService, stripeManager, redisClient, ordersLifeCycleService, upsellService, deliverySessionsService, availabilitiesService)
 	scannHandler := scannorder.NewHandler(scannService)
+
+	// ---- Franchises (back-office ; hub public : scannorder) ----
+	franchisesService := franchisesModule.NewService(franchisesModule.NewRepository(selectedDB), redisClient, cfg.ScanNOrder.SNORedirectBaseURL)
+	franchisesHandler := franchisesModule.NewHandler(franchisesService, r2Client)
 
 	// ---- Integrations dashboard ----
 	integrationsService := integrationsModule.NewService(
@@ -1138,7 +1143,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 
 	// --- SCANNORDER ---
 	r.Route("/scannorder", func(r chi.Router) {
-		r.Get("/brands/{brand_slug}", scannHandler.GetBrand)
+		r.Get("/franchises/{franchise_slug}", scannHandler.GetFranchise)
 		r.Get("/sitemap", scannHandler.GetSitemap)
 		r.Get("/{merchant_slug}", scannHandler.GetMerchant)
 		r.Get("/{merchant_slug}/slots", scannHandler.GetSlots)
@@ -2062,6 +2067,37 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			r.Post("/waitlist", reservationHandler.HandleJoinWaitlist)
 			r.Get("/waitlist/{waitlist_token}", reservationHandler.HandleGetWaitlistStatus)
 			r.Delete("/waitlist/{waitlist_token}", reservationHandler.HandleLeaveWaitlist)
+		})
+	})
+
+	// --- FRANCHISES (back-office) ---
+	// Droits propres aux franchises (franchise_members, admin des
+	// établissements), contrôlés par le service : pas de RequirePermission,
+	// le RBAC est par établissement. Voir docs/franchises.md.
+	r.Route("/franchises", func(r chi.Router) {
+		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
+
+		r.Get("/", franchisesHandler.List)
+		r.Post("/", franchisesHandler.Create)
+		r.Get("/slug-availability", franchisesHandler.SlugAvailability)
+
+		r.Route("/{franchise_id}", func(r chi.Router) {
+			r.Get("/", franchisesHandler.Get)
+			r.Patch("/", franchisesHandler.Update)
+			r.Delete("/", franchisesHandler.Delete)
+			r.Put("/logo", franchisesHandler.UploadLogo)
+			r.Put("/banner", franchisesHandler.UploadBanner)
+
+			r.Get("/candidates", franchisesHandler.Candidates)
+			r.Post("/merchants", franchisesHandler.AddMerchants)
+			r.Patch("/merchants/{merchant_id}", franchisesHandler.UpdateMerchant)
+			r.Delete("/merchants/{merchant_id}", franchisesHandler.RemoveMerchant)
+
+			r.Get("/members", franchisesHandler.ListMembers)
+			r.Post("/members", franchisesHandler.AddMember)
+			r.Patch("/members/{user_id}", franchisesHandler.UpdateMember)
+			r.Delete("/members/{user_id}", franchisesHandler.RemoveMember)
 		})
 	})
 

@@ -84,6 +84,7 @@ func Load() *AppConfig {
 		Reservation: loadReservationConfig(),
 		Auth:        loadAuthConfig(),
 	}
+	cfg.ScanNOrder.ReservationBaseURL = cfg.Reservation.PublicBaseURL
 
 	cfg.validate()
 	return cfg

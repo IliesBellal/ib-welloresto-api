@@ -249,6 +249,9 @@ func applyMerchantSEO(m *MerchantData, seo *MerchantSEORow) {
 		CanonicalSlug: seo.MainSlug,
 		Indexable:     seo.Activated && !seo.Blocked && seo.MainSlug != nil,
 	}
+	if seo.FranchiseName != nil && seo.FranchiseSlug != nil {
+		m.Franchise = &MerchantFranchise{Name: *seo.FranchiseName, Slug: *seo.FranchiseSlug}
+	}
 }
 
 func nonEmpty(s string) *string {
@@ -479,73 +482,6 @@ func (s *Service) GetMerchantStatus(ctx context.Context, merchantID string) (*Me
 	currentTime := now.Format("15:04:05")
 
 	return s.repo.GetMerchantStatus(ctx, merchantID, dow, currentTime)
-}
-
-func (s *Service) GetBrand(ctx context.Context, slug, latStr, lngStr string) (*BrandResponse, error) {
-	var lat, lng *float64
-
-	if latStr != "" && lngStr != "" {
-		parsedLat, err1 := strconv.ParseFloat(latStr, 64)
-		parsedLng, err2 := strconv.ParseFloat(lngStr, 64)
-		if err1 == nil && err2 == nil {
-			lat = &parsedLat
-			lng = &parsedLng
-		}
-	}
-
-	brand, merchantRows, err := s.repo.GetMerchantsByBrandSlug(ctx, slug, lat, lng)
-	if err != nil {
-		return nil, err
-	}
-	if brand == nil {
-		return &BrandResponse{Status: "not_found"}, nil
-	}
-
-	summaries := make([]MerchantSummary, 0, len(merchantRows))
-	for _, row := range merchantRows {
-		status, err := s.GetMerchantStatus(ctx, row.MerchantID)
-		isOpen := false
-		if err == nil {
-			isOpen = status.IsOpen
-		}
-
-		merchantRow := &models.MerchantRow{
-			MerchantID:       row.MerchantID,
-			Timezone:         row.Timezone,
-			PrepTimeMode:     row.PrepTimeMode,
-			PrepTime:         row.PrepTime,
-			ExtraPrepMinutes: row.ExtraPrepMinutes,
-		}
-		prepMinutes := s.GetEffectivePrepMinutes(ctx, merchantRow)
-
-		summaries = append(summaries, MerchantSummary{
-			MerchantID:      row.MerchantID,
-			BusinessName:    row.FullName,
-			IsOpen:          isOpen,
-			PreparationTime: prepMinutes,
-			DistanceKm:      row.DistanceKm,
-			Address: Address{
-				Address: row.Address,
-				Lat:     row.Lat,
-				Lng:     row.Lng,
-			},
-			OrderTypes: OrderTypes{
-				TakeawayEnabled:   row.TakeawayEnabled,
-				TakeawayAvailable: row.TakeawayAvailable,
-				DeliveryEnabled:   row.DeliveryEnabled,
-				DeliveryAvailable: row.DeliveryAvailable,
-				InEnabled:         row.InEnabled,
-				InAvailable:       row.InAvailable,
-			},
-			URL: s.cfg.SNORedirectBaseURL + "/restaurant/" + row.Slug,
-		})
-	}
-
-	return &BrandResponse{
-		Status:    "success",
-		Brand:     brand,
-		Merchants: summaries,
-	}, nil
 }
 
 func (s *Service) GetPricingSNO(ctx context.Context, req *models.PricingRequest) (*models.PricingResponse, error) {

@@ -45,6 +45,13 @@ const (
 	// fenêtre de statut périmé plutôt que de la laisser courir 60 min.
 	ScannorderMerchantTTL = 2 * time.Minute
 
+	// Réponse du hub d'une franchise (clé : préfixe + slug). Purgée à chaque
+	// modification au back-office (module franchises) ; le TTL plafonne la
+	// péremption du statut ouvert/fermé et du temps d'attente, qui changent
+	// sans purge, comme ScannorderMerchantTTL.
+	ScannorderFranchiseHub    = "scannorder:franchise:"
+	ScannorderFranchiseHubTTL = 60 * time.Second
+
 	// Préfixe des clés Redis pour les orders
 	OrdersCachePrefix = "order:"
 

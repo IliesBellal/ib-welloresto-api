@@ -410,6 +410,24 @@ var (
 	ErrPlanningLeaveShiftConflict               = errors.New("planning_leave_shift_conflict")
 	ErrPlanningShiftSwapRequestNotFound         = errors.New("planning_shift_swap_request_not_found")
 	ErrPlanningShiftSwapApprovalForbidden       = errors.New("planning_shift_swap_approval_forbidden")
+
+	// Franchises (module franchises, docs/franchises.md).
+	ErrFranchiseNotFound                 = errors.New("franchise_not_found")
+	ErrFranchiseForbidden                = errors.New("franchise_forbidden")
+	ErrFranchiseCreateForbidden          = errors.New("franchise_create_forbidden")
+	ErrFranchiseNameInvalid              = errors.New("franchise_name_invalid")
+	ErrFranchiseSlugInvalid              = errors.New("franchise_slug_invalid")
+	ErrFranchiseSlugTaken                = errors.New("franchise_slug_taken")
+	ErrFranchiseBrandColorInvalid        = errors.New("franchise_brand_color_invalid")
+	ErrFranchiseDescriptionInvalid       = errors.New("franchise_description_invalid")
+	ErrFranchiseMerchantNotAdmin         = errors.New("franchise_merchant_not_admin")
+	ErrFranchiseMerchantInOtherFranchise = errors.New("franchise_merchant_in_other_franchise")
+	ErrFranchiseMerchantNotInFranchise   = errors.New("franchise_merchant_not_in_franchise")
+	ErrFranchiseMemberNotFound           = errors.New("franchise_member_not_found")
+	ErrFranchiseMemberExists             = errors.New("franchise_member_exists")
+	ErrFranchiseUserNotFound             = errors.New("franchise_user_not_found")
+	ErrFranchiseRoleInvalid              = errors.New("franchise_role_invalid")
+	ErrFranchiseLastOwner                = errors.New("franchise_last_owner")
 	ErrPlanningShiftSwapStatusInvalid           = errors.New("planning_shift_swap_status_invalid")
 	ErrPlanningShiftSwapInvalid                 = errors.New("planning_shift_swap_invalid")
 	ErrPlanningShiftSwapConflict                = errors.New("planning_shift_swap_conflict")
@@ -1085,6 +1103,86 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusForbidden
 		errorStatus = "planning_shift_swap_approval_forbidden"
 		errorMsg = "The current user cannot validate this shift swap request."
+
+	case errors.Is(err, ErrFranchiseNotFound):
+		status = http.StatusNotFound
+		errorStatus = "franchise_not_found"
+		errorMsg = "Franchise not found."
+
+	case errors.Is(err, ErrFranchiseForbidden):
+		status = http.StatusForbidden
+		errorStatus = "franchise_forbidden"
+		errorMsg = "The current user cannot perform this action on this franchise."
+
+	case errors.Is(err, ErrFranchiseCreateForbidden):
+		status = http.StatusForbidden
+		errorStatus = "franchise_create_forbidden"
+		errorMsg = "Only an administrator of at least one establishment can create a franchise."
+
+	case errors.Is(err, ErrFranchiseNameInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "franchise_name_invalid"
+		errorMsg = "The franchise name must contain 1 to 80 characters."
+
+	case errors.Is(err, ErrFranchiseSlugInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "franchise_slug_invalid"
+		errorMsg = "The slug must contain 3 to 50 lowercase letters, digits or single dashes."
+
+	case errors.Is(err, ErrFranchiseSlugTaken):
+		status = http.StatusConflict
+		errorStatus = "franchise_slug_taken"
+		errorMsg = "This slug is already used by another franchise."
+
+	case errors.Is(err, ErrFranchiseBrandColorInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "franchise_brand_color_invalid"
+		errorMsg = "The brand color must be a #RRGGBB hex color."
+
+	case errors.Is(err, ErrFranchiseDescriptionInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "franchise_description_invalid"
+		errorMsg = "The description must contain at most 500 characters."
+
+	case errors.Is(err, ErrFranchiseMerchantNotAdmin):
+		status = http.StatusForbidden
+		errorStatus = "franchise_merchant_not_admin"
+		errorMsg = "Only an administrator of the establishment can add it to a franchise."
+
+	case errors.Is(err, ErrFranchiseMerchantInOtherFranchise):
+		status = http.StatusConflict
+		errorStatus = "franchise_merchant_in_other_franchise"
+		errorMsg = "This establishment already belongs to another franchise."
+
+	case errors.Is(err, ErrFranchiseMerchantNotInFranchise):
+		status = http.StatusNotFound
+		errorStatus = "franchise_merchant_not_in_franchise"
+		errorMsg = "This establishment does not belong to this franchise."
+
+	case errors.Is(err, ErrFranchiseMemberNotFound):
+		status = http.StatusNotFound
+		errorStatus = "franchise_member_not_found"
+		errorMsg = "This user does not manage this franchise."
+
+	case errors.Is(err, ErrFranchiseMemberExists):
+		status = http.StatusConflict
+		errorStatus = "franchise_member_exists"
+		errorMsg = "This user already manages this franchise."
+
+	case errors.Is(err, ErrFranchiseUserNotFound):
+		status = http.StatusNotFound
+		errorStatus = "franchise_user_not_found"
+		errorMsg = "No WelloResto account uses this email."
+
+	case errors.Is(err, ErrFranchiseRoleInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "franchise_role_invalid"
+		errorMsg = "The role must be owner or manager."
+
+	case errors.Is(err, ErrFranchiseLastOwner):
+		status = http.StatusConflict
+		errorStatus = "franchise_last_owner"
+		errorMsg = "A franchise must keep at least one owner."
 
 	case errors.Is(err, ErrPlanningShiftSwapStatusInvalid):
 		status = http.StatusBadRequest

@@ -61,6 +61,9 @@ type MerchantData struct {
 	Description *string      `json:"description,omitempty"`
 	CuisineType *string      `json:"cuisine_type,omitempty"`
 	SEO         *MerchantSEO `json:"seo,omitempty"`
+	// Franchise : nil si l'établissement n'est dans aucune franchise ou masqué
+	// sur son hub.
+	Franchise *MerchantFranchise `json:"franchise"`
 
 	OrderTypes         OrderTypes   `json:"order_types"`
 	PaymentTypes         PaymentTypes `json:"payment_types"`
@@ -109,6 +112,10 @@ type MerchantSEORow struct {
 	Activated      bool
 	Blocked        bool
 	MainSlug       *string
+	// FranchiseName / FranchiseSlug : franchise dont le hub affiche
+	// l'établissement, nil sinon.
+	FranchiseName *string
+	FranchiseSlug *string
 }
 
 // SitemapEntry : une page établissement référençable.
@@ -200,46 +207,57 @@ type Discount struct {
 	Available          bool    `json:"available"`
 }
 
-// --- Brand ---
+// --- Franchise (hub /franchise/{slug}) ---
 
-type BrandResponse struct {
-	Status    string            `json:"status"`
-	Brand     *BrandData        `json:"brand,omitempty"`
-	Merchants []MerchantSummary `json:"merchants"`
-	Error     string            `json:"error,omitempty"`
+type FranchiseHubResponse struct {
+	Status    string                 `json:"status"`
+	Franchise *FranchisePublic       `json:"franchise,omitempty"`
+	Merchants []FranchiseHubMerchant `json:"merchants"`
 }
 
-type BrandData struct {
-	BrandID     string  `json:"brand_id"`
+type FranchisePublic struct {
+	FranchiseID string  `json:"franchise_id"`
 	Name        string  `json:"name"`
 	Slug        string  `json:"slug"`
+	Description *string `json:"description"`
 	LogoURL     *string `json:"logo_url"`
 	BannerURL   *string `json:"banner_url"`
-	Description *string `json:"description"`
+	// BrandColor : couleur du hub (#RRGGBB), nil = thème par défaut.
+	BrandColor *string `json:"brand_color"`
 }
 
-type MerchantSummary struct {
-	MerchantID      string     `json:"merchant_id"`
-	BusinessName    string     `json:"business_name"`
-	IsOpen          bool       `json:"is_open"`
+// FranchiseHubMerchant : un établissement du hub. Pas de distance : le
+// navigateur la calcule depuis Address.Lat/Lng, la position du client ne
+// quitte pas son téléphone et la réponse reste la même pour tous (cachable).
+type FranchiseHubMerchant struct {
+	MerchantID   string  `json:"merchant_id"`
+	BusinessName string  `json:"business_name"`
+	Slug         string  `json:"slug"`
+	URL          string  `json:"url"`
+	LogoURL      *string `json:"logo_url"`
+	Address      Address `json:"address"`
+	IsOpen       bool    `json:"is_open"`
+	// NextOpening : prochaine ouverture ("2006-01-02 15:04:05", heure locale de
+	// l'établissement), nil si ouvert ou inconnue.
+	NextOpening     *string    `json:"next_opening"`
 	PreparationTime int        `json:"preparation_time"`
-	DistanceKm      *float64   `json:"distance_km"`
-	Address         Address    `json:"address"`
 	OrderTypes      OrderTypes `json:"order_types"`
-	URL             string     `json:"url"`
+	// ReservationURL : page de réservation en ligne, nil si l'établissement ne
+	// prend pas de réservation.
+	ReservationURL *string `json:"reservation_url"`
 }
 
-// BrandMerchantRow is used internally to scan merchant rows from the DB.
-// BrandMerchantRow is used internally to scan merchant rows from the DB.
-type BrandMerchantRow struct {
+// FranchiseHubRow : lecture brute de GetFranchiseHub.
+type FranchiseHubRow struct {
 	MerchantID        string
 	FullName          string
 	Address           string
+	ZipCode           string
+	City              string
 	Lat               float64
 	Lng               float64
 	Timezone          string
 	LogoURL           *string
-	BannerURL         *string
 	TakeawayEnabled   bool
 	TakeawayAvailable bool
 	DeliveryEnabled   bool
@@ -252,7 +270,16 @@ type BrandMerchantRow struct {
 	// par son échéance côté SQL (cf. snoActiveExtraPrepMinutes).
 	ExtraPrepMinutes int
 	Slug             string
-	DistanceKm       *float64
+	// ReservationCode : bookings_settings.code quand la réservation en ligne est
+	// ouverte.
+	ReservationCode *string
+}
+
+// MerchantFranchise : franchise d'un établissement visible sur son hub (lien
+// « autres établissements » de la page restaurant).
+type MerchantFranchise struct {
+	Name string `json:"name"`
+	Slug string `json:"slug"`
 }
 
 // --- Delivery Zone Check ---

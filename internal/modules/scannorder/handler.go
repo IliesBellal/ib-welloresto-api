@@ -148,27 +148,25 @@ func (h *Handler) CreateOrderSNO(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "scannorder", "create_order_sno", create_order)
 }
 
-func (h *Handler) GetBrand(w http.ResponseWriter, r *http.Request) {
+// GetFranchise — GET /scannorder/franchises/{franchise_slug} : hub public
+// d'une franchise.
+func (h *Handler) GetFranchise(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
 
-	slug := chi.URLParam(r, "brand_slug")
-	latStr := r.URL.Query().Get("lat")
-	lngStr := r.URL.Query().Get("lng")
-
-	resp, err := h.service.GetBrand(ctx, slug, latStr, lngStr)
+	resp, err := h.service.GetFranchiseHub(ctx, chi.URLParam(r, "franchise_slug"))
 	if err != nil {
-		log.Error("GetBrand failed", zap.Error(err))
-		models.SendErrorJSON(w, "scannorder", "get_brand", err)
+		log.Error("GetFranchiseHub failed", zap.Error(err))
+		models.SendErrorJSON(w, "scannorder", "get_franchise", err)
 		return
 	}
 
-	if resp.Brand == nil {
-		models.SendJSON(w, http.StatusNotFound, "scannorder", "get_brand", map[string]string{"error": "brand_not_found", "message": "Brand not found"})
+	if resp.Franchise == nil {
+		models.SendJSON(w, http.StatusNotFound, "scannorder", "get_franchise", map[string]string{"error": "franchise_not_found", "message": "Franchise not found"})
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "scannorder", "get_brand", resp)
+	models.SendJSON(w, http.StatusOK, "scannorder", "get_franchise", resp)
 }
 
 func (h *Handler) CheckDeliveryZone(w http.ResponseWriter, r *http.Request) {
