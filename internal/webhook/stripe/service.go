@@ -369,7 +369,7 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 				if s.merchantSMS != nil {
 					s.merchantSMS.SendOrderConfirmationSMS(ctx, merchantID, session.CustomerDetails.Phone, smsData)
 				} else {
-					go s.smsService.SendOrderConfirmationSMS("Wello", session.CustomerDetails.Phone, smsData)
+					go s.smsService.SendOrderConfirmationSMS("WelloResto", session.CustomerDetails.Phone, smsData)
 				}
 			}
 		}
@@ -399,6 +399,12 @@ func (s *StripeWebhookService) HandleCheckoutSessionCanceled(ctx context.Context
 		DeletionComment:  "Session de paiement expirée ou annulée",
 	})
 	if errors.Is(err, models.ErrOrderClosed) {
+		return nil
+	}
+	// Commande introuvable (autre environnement sur le même compte Stripe,
+	// commande purgée) : un retry Stripe ne la fera pas apparaître, on acquitte.
+	if errors.Is(err, sql.ErrNoRows) {
+		log.Printf("Warning: checkout session canceled for unknown order %s (merchant %s), ignored", orderID, merchantID)
 		return nil
 	}
 
@@ -1135,11 +1141,11 @@ func (s *StripeWebhookService) HandlePayoutPaid(ctx context.Context, data json.R
 		// Une même adresse peut recevoir les virements de plusieurs établissements.
 		Establishment: mailer.Establishment{ID: merchant.ID, Name: merchant.BusinessName, Address: merchant.Address},
 		MerchantName:  merchant.BusinessName,
-		PayoutID:     payout.ID,
-		Amount:       amount,
-		ArrivalDate:  arrivalDate,
-		Status:       payout.Status,
-		MerchantLogo: "http://storage.welloresto.fr/img/defaults/wr_logo_invoice.png",
+		PayoutID:      payout.ID,
+		Amount:        amount,
+		ArrivalDate:   arrivalDate,
+		Status:        payout.Status,
+		MerchantLogo:  "http://storage.welloresto.fr/img/defaults/wr_logo_invoice.png",
 	}
 
 	go s.email.SendPayoutPaidNotification(merchant.Email, merchant.BusinessName, emailData)

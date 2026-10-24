@@ -100,8 +100,16 @@ func (c *StripeManager) CreateCheckoutSession(req CheckoutSessionRequestObject) 
 	// Retour client vers la page de suivi : id public uniquement, l'id interne
 	// ne reste que dans les metadata lues par le webhook (docs/
 	// SCANNORDER_PUBLIC_ORDER_ID.md, D7).
-	successURL := helpers.ScanNOrderOrderURL(req.BaseURL, qrCode, helpers.SafeString(order.PublicID))
-	cancelURL := successURL
+	trackingURL := helpers.ScanNOrderOrderURL(req.BaseURL, qrCode, helpers.SafeString(order.PublicID))
+	successURL := trackingURL
+	cancelURL := trackingURL
+	// ?payment= distingue le retour payé du retour sans paiement : la page de
+	// suivi n'affiche le bouton « Payer » que dans le second cas (le webhook
+	// peut arriver après le retour du client).
+	if trackingURL != "" {
+		successURL = trackingURL + "?payment=success"
+		cancelURL = trackingURL + "?payment=canceled"
+	}
 	captureMethod := stripe.PaymentIntentCaptureMethodManual
 
 	if sessionType == "partial_order" {
