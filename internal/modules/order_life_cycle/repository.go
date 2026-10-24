@@ -2743,18 +2743,36 @@ func (r *OrdersLifeCycleRepository) resolveLineDiscounts(ctx context.Context, me
 	}
 	log := logger.FromContext(ctx)
 
-	// Cas 1 : reward_id explicite. Sinon, les discount_id numériques à classer.
-	var candidates []string
-	seen := map[string]bool{}
+	// Identifiants à contrôler en base. Un reward_id explicite et un discount_id
+	// numérique sont tous deux des déclarations du client : ni l'un ni l'autre
+	// n'est cru sans vérification.
+	var rewardClaims, discountClaims []string
+	seenReward, seenDiscount := map[string]bool{}, map[string]bool{}
+	claim := func(set map[string]bool, list *[]string, id string) {
+		if !set[id] {
+			set[id] = true
+			*list = append(*list, id)
+		}
+	}
 	for i := range products {
 		p := &products[i]
 		if p.RewardID != nil {
-			if id, ok := lineKeyID(*p.RewardID); ok {
-				p.RewardID, p.DiscountID = &id, nil
-				continue
+			id, ok := lineKeyID(*p.RewardID)
+			if !ok {
+				log.Warn("invalid reward_id dropped", zap.String("reward_id", *p.RewardID), zap.String("product_id", p.ProductID))
+				p.RewardID = nil
+			} else {
+				p.RewardID = &id
+				claim(seenReward, &rewardClaims, id)
+				// Pendant la transition (models.RewardLineInDiscountID), la même
+				// ligne renvoie l'identifiant de récompense dans discount_id : ce
+				// n'est pas une remise.
+				if p.DiscountID != nil {
+					if d, ok := lineKeyID(*p.DiscountID); ok && d == id {
+						p.DiscountID = nil
+					}
+				}
 			}
-			log.Warn("invalid reward_id dropped", zap.String("reward_id", *p.RewardID), zap.String("product_id", p.ProductID))
-			p.RewardID = nil
 		}
 		if p.DiscountID == nil {
 			continue
@@ -2766,26 +2784,30 @@ func (r *OrdersLifeCycleRepository) resolveLineDiscounts(ctx context.Context, me
 			continue
 		}
 		p.DiscountID = &id
-		if !seen[id] {
-			seen[id] = true
-			candidates = append(candidates, id)
-		}
+		claim(seenDiscount, &discountClaims, id)
 	}
-	if len(candidates) == 0 {
+	if len(rewardClaims) == 0 && len(discountClaims) == 0 {
 		return nil
 	}
 
 	db := dbx.GetDB(ctx, r.database)
-	discountIDs, err := queryIDSet(ctx, db, `
-		SELECT discount_id_new::text FROM discounts WHERE merchant_id = ? AND discount_id_new = ANY(?)`,
-		merchantID, candidates)
-	if err != nil {
-		return fmt.Errorf("resolve discount_id: %w", err)
+	var discountIDs map[string]bool
+	if len(discountClaims) > 0 {
+		var err error
+		discountIDs, err = queryIDSet(ctx, db, `
+			SELECT discount_id_new::text FROM discounts WHERE merchant_id = ? AND discount_id_new = ANY(?)`,
+			merchantID, discountClaims)
+		if err != nil {
+			return fmt.Errorf("resolve discount_id: %w", err)
+		}
 	}
 
-	// Les récompenses ne sont cherchées que pour ce que les remises du
-	// marchand n'expliquent pas, ou pour détecter une ambiguïté quand la
-	// commande en consomme.
+	// Une récompense « produit offert » n'est valable sur une ligne que si cette
+	// commande la consomme : elle figure dans used_rewards (création), ou
+	// customer_rewards.used_on_order_id la rattache déjà à la commande
+	// (modification). Les identifiants de discount_id ne sont cherchés ici que
+	// pour ce que les remises du marchand n'expliquent pas, ou pour détecter
+	// une ambiguïté.
 	used := make([]string, 0, len(usedRewards))
 	for _, rw := range usedRewards {
 		if rw != nil {
@@ -2796,11 +2818,13 @@ func (r *OrdersLifeCycleRepository) resolveLineDiscounts(ctx context.Context, me
 	}
 	var rewardIDs map[string]bool
 	if orderID != nil || len(used) > 0 {
+		lookup := append(append([]string{}, rewardClaims...), discountClaims...)
+		var err error
 		rewardIDs, err = queryIDSet(ctx, db, `
 			SELECT reward_id::text FROM customer_rewards
 			WHERE reward_type = 'free_product' AND reward_id = ANY(?)
 			  AND (reward_id = ANY(?) OR used_on_order_id = ?)`,
-			candidates, used, orderID)
+			lookup, used, orderID)
 		if err != nil {
 			return fmt.Errorf("resolve reward_id: %w", err)
 		}
@@ -2808,6 +2832,16 @@ func (r *OrdersLifeCycleRepository) resolveLineDiscounts(ctx context.Context, me
 
 	for i := range products {
 		p := &products[i]
+		if p.RewardID != nil && !rewardIDs[*p.RewardID] {
+			log.Warn("reward_id not consumed by this order, dropped",
+				zap.String("reward_id", *p.RewardID), zap.String("product_id", p.ProductID))
+			p.RewardID = nil
+		}
+		if p.RewardID != nil {
+			// Une ligne est une récompense OU une remise, jamais les deux.
+			p.DiscountID = nil
+			continue
+		}
 		if p.DiscountID == nil {
 			continue
 		}
@@ -2828,7 +2862,6 @@ func (r *OrdersLifeCycleRepository) resolveLineDiscounts(ctx context.Context, me
 	}
 	return nil
 }
-
 // lineKeyID valide un identifiant de remise ou de récompense reçu d'un client
 // avant de le passer à Postgres : entier positif tenant dans une colonne
 // integer. Toute autre valeur ferait échouer la requête (22P02, 22003) et
@@ -2860,6 +2893,7 @@ func queryIDSet(ctx context.Context, db *dbx.DB, query string, args ...interface
 	}
 	return out, rows.Err()
 }
+
 // insertExtrasWithoutsConfigs does bulk inserts for extras, withouts, configurations
 //
 // optionCosts is the batch already resolved by insertOrderItems (PROMPT 11,

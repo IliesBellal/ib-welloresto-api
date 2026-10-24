@@ -155,8 +155,12 @@ func TestResolveLineDiscounts_Postgres(t *testing.T) {
 		{ProductID: "7", RewardID: str("abc")},                             // 6. reward_id invalide
 		{ProductID: "8", DiscountID: id(rewardCollision)},                  // 7. remise ET récompense : reste une remise
 		{ProductID: "9", DiscountID: id(rewardFixed)},                      // 8. fixed_discount : jamais une ligne
-		{ProductID: "10"},                                                  // 9. rien
-		{ProductID: "11", DiscountID: str("99999999999")},                  // 10. hors integer
+		{ProductID: "10"}, // 9. rien
+		{ProductID: "11", DiscountID: str("99999999999")},                         // 10. hors integer
+		{ProductID: "12", RewardID: id(rewardFixed), DiscountID: id(rewardFixed)}, // 11. reward_id explicite de type fixed_discount
+		{ProductID: "13", RewardID: id(rewardOK), DiscountID: id(discountMine)},   // 12. reward_id valide + remise : une seule attribution
+		{ProductID: "14", RewardID: id(987098), DiscountID: id(987098)},           // 13. reward_id explicite inconnu
+		{ProductID: "15", RewardID: id(rewardOld)},                                // 14. reward_id explicite valide, sans écho
 	}
 	if err := repo.resolveLineDiscounts(ctx, merchantID, nil, used(rewardOK, rewardOld, rewardCollision, rewardFixed), products); err != nil {
 		t.Fatalf("resolveLineDiscounts (create): %v", err)
@@ -172,6 +176,10 @@ func TestResolveLineDiscounts_Postgres(t *testing.T) {
 	check("8 fixed_discount", products[8], want{nil, nil})
 	check("9 rien", products[9], want{nil, nil})
 	check("10 hors integer", products[10], want{nil, nil})
+	check("11 reward_id explicite fixed_discount", products[11], want{nil, nil})
+	check("12 reward_id valide + remise : la récompense l'emporte", products[12], want{nil, id(rewardOK)})
+	check("13 reward_id explicite inconnu", products[13], want{nil, nil})
+	check("14 reward_id explicite valide", products[14], want{nil, id(rewardOld)})
 
 	// --- Sans récompense dans la commande : aucune requête sur customer_rewards,
 	// donc une récompense « libre » reste un identifiant inconnu. ---
@@ -186,12 +194,16 @@ func TestResolveLineDiscounts_Postgres(t *testing.T) {
 	edit := []models.OrderProductPayload{
 		{ProductID: "1", DiscountID: id(rewardUpdate)},
 		{ProductID: "2", DiscountID: id(discountMine)},
+		{ProductID: "3", RewardID: id(rewardUpdate)}, // POS à jour : reward_id explicite
+		{ProductID: "4", RewardID: id(rewardOK)},     // récompense non rattachée à cette commande
 	}
 	if err := repo.resolveLineDiscounts(ctx, merchantID, &orderID, nil, edit); err != nil {
 		t.Fatalf("resolveLineDiscounts (update): %v", err)
 	}
 	check("modification : récompense rattachée", edit[0], want{nil, id(rewardUpdate)})
 	check("modification : remise", edit[1], want{id(discountMine), nil})
+	check("modification : reward_id explicite rattaché", edit[2], want{nil, id(rewardUpdate)})
+	check("modification : reward_id non rattaché à la commande", edit[3], want{nil, nil})
 
 	// --- Écriture réelle : la ligne offerte n'a plus de discount_id, donc ni
 	// valeur fiscale ni ligne discount_redemptions ; reward_id est enregistré. ---

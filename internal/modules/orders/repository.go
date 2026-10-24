@@ -1034,8 +1034,37 @@ func (r *OrdersRepository) GetDiscountProductOptions(ctx context.Context, mercha
 	return out, rows.Err()
 }
 
+// rewardSelectSQL : colonnes et jointure communes aux deux lectures de
+// récompenses de GetRewards.
+const rewardSelectSQL = `
+	SELECT
+	    cr.reward_id,
+	    cr.reward_type,
+	    cr.reward_order_type,
+	    cr.reward_value,
+	    cr.loyalty_program_id,
+	    cr.creation_date,
+	    cr.is_used,
+	    COALESCE(clp.min_order_value, 0) AS min_order_value,
+	    clp.max_discount_value,
+	    COALESCE(clp.max_rewards_per_order, 0) AS max_rewards_per_order
+	FROM customer_rewards cr
+	INNER JOIN customer_loyalty_programs clp ON clp.id = cr.loyalty_program_id
+`
+
+// GetRewards renvoie les récompenses applicables au calcul de prix :
+//
+//  1. celles que le client de la commande peut encore utiliser, choisies parmi
+//     CustomerRequest.AvailableRewards (non utilisées) ;
+//  2. celles déjà consommées par la commande en cours de MODIFICATION, qui y
+//     restent applicables au recalcul (appliedRewardIDs).
+//
+// Sans le cas 2, modifier une commande dont la récompense « produit offert »
+// est déjà consommée (ScanNOrder, ou POS) refaisait payer la ligne offerte au
+// plein tarif : le recalcul ne retrouvait plus la récompense, filtrée parce
+// qu'elle est utilisée.
 func (r *OrdersRepository) GetRewards(ctx context.Context, req *models.PricingRequest) ([]*models.DBReward, error) {
-	if req.Order.Customer == nil || len(req.Order.Customer.AvailableRewards) == 0 {
+	if req.Order.Customer == nil {
 		return []*models.DBReward{}, nil
 	}
 
@@ -1049,76 +1078,89 @@ func (r *OrdersRepository) GetRewards(ctx context.Context, req *models.PricingRe
 	if req.Order.Customer.CustomerID == nil || *req.Order.Customer.CustomerID == "" {
 		return []*models.DBReward{}, nil
 	}
-
-	rewardIDs := make([]string, 0)
-	for _, rw := range req.Order.Customer.AvailableRewards {
-		rewardIDs = append(rewardIDs, rw.RewardID)
-	}
-
-	placeholders := strings.TrimRight(strings.Repeat("?,", len(rewardIDs)), ",")
-
-	query := fmt.Sprintf(`
-		SELECT
-		    cr.reward_id,
-		    cr.reward_type,
-		    cr.reward_order_type,
-		    cr.reward_value,
-		    cr.loyalty_program_id,
-		    cr.creation_date,
-		    cr.is_used,
-		    COALESCE(clp.min_order_value, 0) AS min_order_value,
-		    clp.max_discount_value,
-		    COALESCE(clp.max_rewards_per_order, 0) AS max_rewards_per_order
-		FROM customer_rewards cr
-		INNER JOIN customer_loyalty_programs clp ON clp.id = cr.loyalty_program_id
-		WHERE cr.reward_id IN (%s)
-		  AND cr.customer_id = ?
-		  AND cr.usage_date IS NULL
-		  AND cr.is_used = FALSE
-	`, placeholders)
-
-	args := make([]interface{}, 0, len(rewardIDs)+1)
-	for _, id := range rewardIDs {
-		args = append(args, id)
-	}
-	args = append(args, *req.Order.Customer.CustomerID)
-
-	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query, args...)
-	if err != nil {
-		logger.FromContext(ctx).Error(err.Error())
-		return nil, err
-	}
-	defer rows.Close()
+	customerID := *req.Order.Customer.CustomerID
+	db := dbx.GetDB(ctx, r.database)
 
 	outMap := map[string]*models.DBReward{}
+	collect := func(rows *sql.Rows) error {
+		defer rows.Close()
+		for rows.Next() {
+			rw := &models.DBReward{}
+			var maxDiscountValue sql.NullInt64
+			if err := rows.Scan(
+				&rw.RewardID,
+				&rw.RewardType,
+				&rw.RewardOrderType,
+				&rw.RewardValue,
+				&rw.LoyaltyProgramID,
+				&rw.CreationDate,
+				&rw.IsUsed,
+				&rw.MinOrderValue,
+				&maxDiscountValue,
+				&rw.MaxRewardsPerOrder,
+			); err != nil {
+				return err
+			}
+			if maxDiscountValue.Valid {
+				v := int(maxDiscountValue.Int64)
+				rw.MaxDiscountValue = &v
+			}
+			rw.ProductIDs = []string{}
+			outMap[rw.RewardID] = rw
+		}
+		return rows.Err()
+	}
 
-	for rows.Next() {
-		rw := &models.DBReward{}
-		var maxDiscountValue sql.NullInt64
-		err := rows.Scan(
-			&rw.RewardID,
-			&rw.RewardType,
-			&rw.RewardOrderType,
-			&rw.RewardValue,
-			&rw.LoyaltyProgramID,
-			&rw.CreationDate,
-			&rw.IsUsed,
-			&rw.MinOrderValue,
-			&maxDiscountValue,
-			&rw.MaxRewardsPerOrder,
-		)
+	// 1. Récompenses encore utilisables.
+	if len(req.Order.Customer.AvailableRewards) > 0 {
+		rewardIDs := make([]string, 0, len(req.Order.Customer.AvailableRewards))
+		for _, rw := range req.Order.Customer.AvailableRewards {
+			rewardIDs = append(rewardIDs, rw.RewardID)
+		}
+		placeholders := strings.TrimRight(strings.Repeat("?,", len(rewardIDs)), ",")
+
+		args := make([]interface{}, 0, len(rewardIDs)+1)
+		for _, id := range rewardIDs {
+			args = append(args, id)
+		}
+		args = append(args, customerID)
+
+		rows, err := db.QueryContext(ctx, fmt.Sprintf(rewardSelectSQL+`
+			WHERE cr.reward_id IN (%s)
+			  AND cr.customer_id = ?
+			  AND cr.usage_date IS NULL
+			  AND cr.is_used = FALSE
+		`, placeholders), args...)
 		if err != nil {
 			logger.FromContext(ctx).Error(err.Error())
 			return nil, err
 		}
-
-		if maxDiscountValue.Valid {
-			v := int(maxDiscountValue.Int64)
-			rw.MaxDiscountValue = &v
+		if err := collect(rows); err != nil {
+			logger.FromContext(ctx).Error(err.Error())
+			return nil, err
 		}
+	}
 
-		rw.ProductIDs = []string{}
-		outMap[rw.RewardID] = rw
+	// 2. Récompenses déjà consommées par la commande en cours de modification.
+	applied, err := r.appliedRewardIDs(ctx, req, customerID)
+	if err != nil {
+		logger.FromContext(ctx).Error(err.Error())
+		return nil, err
+	}
+	if len(applied) > 0 {
+		rows, err := db.QueryContext(ctx, rewardSelectSQL+`
+			WHERE cr.reward_id = ANY(?)
+			  AND cr.customer_id = ?
+			  AND cr.reward_type = 'free_product'
+		`, applied, customerID)
+		if err != nil {
+			logger.FromContext(ctx).Error(err.Error())
+			return nil, err
+		}
+		if err := collect(rows); err != nil {
+			logger.FromContext(ctx).Error(err.Error())
+			return nil, err
+		}
 	}
 
 	if len(outMap) == 0 {
@@ -1141,7 +1183,7 @@ func (r *OrdersRepository) GetRewards(ctx context.Context, req *models.PricingRe
 		args2 = append(args2, id)
 	}
 
-	rows2, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, query2, args2...)
+	rows2, err := db.QueryContext(ctx, query2, args2...)
 	if err != nil {
 		logger.FromContext(ctx).Error(err.Error())
 		return nil, err
@@ -1167,6 +1209,69 @@ func (r *OrdersRepository) GetRewards(ctx context.Context, req *models.PricingRe
 	return out, nil
 }
 
+// appliedRewardIDs renvoie les récompenses « produit offert » déjà consommées
+// par la commande que la requête est en train de recalculer.
+//
+// Le POS n'envoie pas l'identifiant de la commande au recalcul, mais l'
+// order_item_id de ses lignes déjà enregistrées : la base dit alors quelle
+// récompense chacune porte (orderitems.reward_id). Rien n'est cru sur parole :
+// la ligne doit appartenir au marchand, la récompense doit avoir été
+// consommée par la commande de cette ligne et appartenir au client de la
+// commande, et seul le produit offert est repris (une réduction en montant ou
+// en pourcentage passe par un paiement REWARD déjà enregistré, qu'un
+// recalcul ne doit pas doubler).
+func (r *OrdersRepository) appliedRewardIDs(ctx context.Context, req *models.PricingRequest, customerID string) ([]string, error) {
+	itemIDs := positiveIntIDs(req.Order.Products)
+	if len(itemIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := dbx.GetDB(ctx, r.database).QueryContext(ctx, `
+		SELECT DISTINCT oi.reward_id::text
+		FROM orderitems oi
+		INNER JOIN customer_rewards cr ON cr.reward_id = oi.reward_id AND cr.used_on_order_id = oi.order_id
+		WHERE oi.order_item_id = ANY(?)
+		  AND oi.merchant_id = ?
+		  AND cr.customer_id = ?
+		  AND cr.reward_type = 'free_product'
+	`, itemIDs, req.MerchantID, customerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// positiveIntIDs extrait les order_item_id numériques (entiers strictement
+// positifs tenant dans un integer) des lignes d'une requête : toute autre
+// valeur ferait échouer la requête SQL (22P02, 22003) et donc le calcul de prix.
+func positiveIntIDs(products []models.OrderProductPayload) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, p := range products {
+		if p.OrderItemID == nil {
+			continue
+		}
+		n, err := strconv.ParseInt(strings.TrimSpace(*p.OrderItemID), 10, 32)
+		if err != nil || n <= 0 {
+			continue
+		}
+		id := strconv.FormatInt(n, 10)
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
+}
 func (r *OrdersRepository) GetEstimatedDistributionTime(ctx context.Context, req *models.PricingRequest, count int) (int, error) {
 	sec, _, err := distributiontime.EstimatedSeconds(ctx, r.database, req.MerchantID, count)
 	if err != nil {
