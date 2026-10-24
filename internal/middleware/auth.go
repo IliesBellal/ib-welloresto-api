@@ -22,8 +22,8 @@ var ErrUnunauthenticated = errors.New("utilisateur non authentifié")
 // Cela permet de ne pas coupler le middleware directement au repo concret
 type AuthService interface {
 	GetUserByToken(ctx context.Context, token string) (*auth.UserLoginRow, error)
-	UpdateMFAStatus(ctx context.Context, userID string, status string) error
 	IsMFAVerificationRequired(ctx context.Context, user *auth.UserLoginRow) bool
+	StartMFAChallenge(ctx context.Context, user *auth.UserLoginRow)
 }
 
 // Auth est le middleware d'authentification principal
@@ -92,7 +92,11 @@ func Auth(service AuthService) func(http.Handler) http.Handler {
 				if r.URL.Path != "/auth/verify" {
 					// ✅ IMPORTANT : Ajouter les headers CORS AVANT d'envoyer la réponse
 					// Sinon le navigateur bloque la réponse avec une erreur CORS
-					service.UpdateMFAStatus(r.Context(), user.UserID, models.MFAStatusPending)
+					// Passe le statut en pending et envoie le code par email (une session
+					// déjà ouverte n'est pas passée par Login, qui est le seul autre
+					// endroit où il part). Dédupliqué côté service : toutes les requêtes
+					// parallèles d'un refresh arrivent ici.
+					service.StartMFAChallenge(r.Context(), user)
 					SetCORSHeaders(w, r)
 					// On envoie directement le JSON (plutôt que SendErrorJSON) pour pouvoir y glisser
 					// le recipient masqué : peu importe d'où vient la demande de MFA (login, ce

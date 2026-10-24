@@ -62,6 +62,45 @@ func (s *AuthService) UpdateMFAStatus(ctx context.Context, userID string, status
 	return s.repo.UpdateMFAStatus(ctx, userID, status)
 }
 
+// StartMFAChallenge est appelée par le middleware quand une requête du back-office
+// est refusée faute de MFA valide : elle passe le statut en pending et envoie le
+// code par email, comme le fait Login. Sans elle, un refresh de page (token déjà
+// émis, donc pas de Login) ouvrait la popup sans qu'aucun code ne soit parti.
+//
+// Le back-office lance plusieurs requêtes en parallèle et chacune reçoit ce refus,
+// et le user lu depuis le cache Redis porte un mfa_otp_sent_at périmé : le cooldown
+// ne protège donc pas ici. Chaque envoi écrase le code précédent, donc on n'envoie
+// que s'il n'y a pas déjà un code en cours de validité pour ce token (le bouton
+// « Renvoyer » reste disponible pour en redemander un après OTPResendCooldown), et
+// on regroupe les appels simultanés d'un même user via singleflight.
+func (s *AuthService) StartMFAChallenge(ctx context.Context, user *UserLoginRow) {
+	if s.redis == nil {
+		return
+	}
+
+	// L'annulation de la requête appelante (refresh du navigateur) ne doit pas
+	// interrompre l'envoi partagé par les autres requêtes de la rafale.
+	ctx = context.WithoutCancel(ctx)
+	log := logger.FromContext(ctx)
+
+	s.sfGroup.Do("mfa_challenge:"+user.UserID, func() (interface{}, error) {
+		if err := s.repo.UpdateMFAStatus(ctx, user.UserID, models.MFAStatusPending); err != nil {
+			log.Error("Erreur lors de la mise à jour du statut MFA: " + err.Error())
+		}
+
+		if _, live := s.redis.Get(ctx, helpers.GetMFACacheKey(user.Token)); live {
+			return nil, nil
+		}
+		if !s.canSendMFAOTP(ctx, user) {
+			return nil, nil
+		}
+		if err := s.SendMFACode(ctx, user, false); err != nil {
+			log.Error("Envoi du code MFA impossible pour le user " + user.UserID + ": " + err.Error())
+		}
+		return nil, nil
+	})
+}
+
 func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*UserLoginRow, error) {
 	if s.redis == nil {
 		return s.repo.GetUserByToken(ctx, token)
@@ -880,6 +919,15 @@ func (s *AuthService) SendVerificationCode(ctx context.Context, token, mode stri
 	user, err := s.repo.GetUserByToken(ctx, token)
 	if err != nil || user == nil {
 		return "", errors.New("session invalide ou expirée")
+	}
+
+	// Le MFA a son propre circuit (clé Redis lue par VerifyMFA, cooldown, colonne
+	// mfa_otp_sent_at) : le bouton « Renvoyer le code » de la popup MFA passe par ici.
+	if strings.ToUpper(mode) == "MFA" {
+		if err := s.SendMFACode(ctx, user, false); err != nil {
+			return "", err
+		}
+		return helpers.MaskEmail(user.Email), nil
 	}
 
 	otp, err := helpers.GenerateOTP()
