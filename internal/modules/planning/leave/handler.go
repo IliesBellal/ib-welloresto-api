@@ -45,14 +45,20 @@ func (h *Handler) ListCurrentUserLeaveRequests(w http.ResponseWriter, r *http.Re
 		models.SendErrorJSON(w, "planning", "list_current_user_leave_requests", err)
 		return
 	}
-	status := strings.TrimSpace(r.URL.Query().Get("status"))
-	items, metadata, err := h.svc.ListCurrentUserLeaveRequestsPaginated(r.Context(), PlanningLeaveRequestListFilters{
-		Status:   status,
+	filters := PlanningLeaveRequestListFilters{
+		Status:   strings.TrimSpace(r.URL.Query().Get("status")),
 		Page:     pagination.Page,
 		PageSize: pagination.PageSize,
 		FromDate: fromDate,
 		ToDate:   toDate,
-	})
+	}
+	// Sans page ni page_size (app Flutter) : liste complète, comme avant la
+	// pagination — le client ne lit pas le bloc pagination.
+	list := h.svc.ListCurrentUserLeaveRequestsPaginated
+	if r.URL.Query().Get("page") == "" && r.URL.Query().Get("page_size") == "" {
+		list = h.svc.ListAllCurrentUserLeaveRequests
+	}
+	items, metadata, err := list(r.Context(), filters)
 	if err != nil {
 		models.SendErrorJSON(w, "planning", "list_current_user_leave_requests", err)
 		return

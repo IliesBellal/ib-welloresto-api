@@ -41,15 +41,32 @@ func (s *Service) ResolveCurrentEmployeeID(ctx context.Context) (string, error) 
 	return employeeID, nil
 }
 
+// unpaginatedSelfLeavePageSize : taille de l'unique page renvoyée quand le client
+// ne demande pas de pagination (app Flutter, qui n'envoie ni page ni page_size).
+// C'est le comportement d'avant la pagination, volontairement au-dessus de
+// MaxPlanningPageSize : plafonner à 100 tronquerait l'historique sans le dire.
+const unpaginatedSelfLeavePageSize = 200
+
 func (s *Service) ListCurrentUserLeaveRequests(ctx context.Context, status string) ([]PlanningLeaveRequestSelfView, error) {
-	items, _, err := s.ListCurrentUserLeaveRequestsPaginated(ctx, PlanningLeaveRequestListFilters{Status: status})
+	items, _, err := s.ListAllCurrentUserLeaveRequests(ctx, PlanningLeaveRequestListFilters{Status: status})
 	if err != nil {
 		return nil, err
 	}
 	return items, nil
 }
 
+// ListAllCurrentUserLeaveRequests renvoie les demandes du user connecté sans
+// pagination (une page de unpaginatedSelfLeavePageSize) ; filters.Page et
+// filters.PageSize sont ignorés.
+func (s *Service) ListAllCurrentUserLeaveRequests(ctx context.Context, filters PlanningLeaveRequestListFilters) ([]PlanningLeaveRequestSelfView, models.PaginationMetadata, error) {
+	return s.listCurrentUserLeaveRequests(ctx, filters, sharedpkg.PaginationParams{Page: 1, PageSize: unpaginatedSelfLeavePageSize})
+}
+
 func (s *Service) ListCurrentUserLeaveRequestsPaginated(ctx context.Context, filters PlanningLeaveRequestListFilters) ([]PlanningLeaveRequestSelfView, models.PaginationMetadata, error) {
+	return s.listCurrentUserLeaveRequests(ctx, filters, sharedpkg.NormalizePlanningPagination(filters.Page, filters.PageSize))
+}
+
+func (s *Service) listCurrentUserLeaveRequests(ctx context.Context, filters PlanningLeaveRequestListFilters, pagination sharedpkg.PaginationParams) ([]PlanningLeaveRequestSelfView, models.PaginationMetadata, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, models.PaginationMetadata{}, models.ErrUnauthorized
@@ -64,15 +81,11 @@ func (s *Service) ListCurrentUserLeaveRequestsPaginated(ctx context.Context, fil
 	if filters.FromDate != nil && filters.ToDate != nil && filters.ToDate.Before(*filters.FromDate) {
 		return nil, models.PaginationMetadata{}, models.ErrPlanningLeaveInvalidRange
 	}
-	pagination := sharedpkg.NormalizePlanningPagination(filters.Page, filters.PageSize)
-	filters.Page = pagination.Page
-	filters.PageSize = pagination.PageSize
-	filters.EmployeeID = employeeID
 	items, totalItems, err := s.repo.ListPlanningLeaveRequests(ctx, user.MerchantID, PlanningLeaveRequestListFilters{
-		EmployeeID: filters.EmployeeID,
+		EmployeeID: employeeID,
 		Status:     strings.TrimSpace(filters.Status),
-		Page:       filters.Page,
-		PageSize:   filters.PageSize,
+		Page:       pagination.Page,
+		PageSize:   pagination.PageSize,
 		FromDate:   filters.FromDate,
 		ToDate:     filters.ToDate,
 	})
