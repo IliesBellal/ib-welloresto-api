@@ -86,6 +86,8 @@ var Columns = []Column{
 	{"menu_import_drafts", "created_by", false},
 	{"order_item_remakes", "created_by", false},
 	{"order_changes_log", "changed_by_user_id", false},
+	{"customer", "blocked_by", false},
+	{"upsell_suggestions", "staff_member_id", false},
 	{"notifications", "notification_user_id", false},
 	{"welloresto_stripe_customers", "creator_user_id", false},
 	{"access_observation", "user_id", false},
@@ -356,6 +358,89 @@ func apply(ctx context.Context, db *sql.DB, only scope) (Report, error) {
 		return Report{}, err
 	}
 	return rep, nil
+}
+
+// Leftover est une colonne texte HORS de Columns qui contient encore un ancien
+// identifiant ("user-…"), avant ou après la renumérotation.
+type Leftover struct {
+	Table, Column string
+	Rows          int64
+}
+
+// auditIgnored : colonnes qui contiennent légitimement un ancien id sans
+// pouvoir être réécrites. audit_logs.resource_id fait partie de la charge
+// utile signée du journal d'audit (fiscal.AuditLogPayload) ; les contenus JSON
+// (old_values, new_values, journaux de requêtes) ne sont de toute façon pas
+// parcourus.
+var auditIgnored = map[string]bool{
+	"audit_logs.resource_id":       true,
+	"users.user_id":                true,
+	"user_id_remap.legacy_user_id": true,
+	"user_id_remap.user_id":        true,
+}
+
+// Audit cherche, dans TOUTES les colonnes texte de la base, les anciens
+// identifiants (utilisateurs encore à renuméroter, ou déjà renumérotés dans
+// user_id_remap) que Columns ne couvre pas. L'inventaire de Columns vient du
+// schéma et du contenu d'un environnement de test : une colonne présente
+// seulement en production, ou vide ailleurs, lui échapperait, et la
+// renumérotation y laisserait un identifiant orphelin.
+//
+// Lecture seule, mais elle parcourt chaque colonne texte de chaque table :
+// à lancer hors des heures de service.
+func Audit(ctx context.Context, db *sql.DB) ([]Leftover, error) {
+	q := dbx.GetDB(ctx, db)
+	listed := map[string]bool{}
+	for _, c := range Columns {
+		listed[c.String()] = true
+	}
+
+	rows, err := q.QueryContext(ctx, `
+		SELECT c.table_name, c.column_name
+		FROM information_schema.columns c
+		JOIN information_schema.tables t
+		  ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+		WHERE c.table_schema = current_schema() AND t.table_type = 'BASE TABLE'
+		  AND c.data_type IN ('character varying', 'text', 'character')
+		ORDER BY c.table_name, c.column_name`)
+	if err != nil {
+		return nil, fmt.Errorf("userids: audit schema: %w", err)
+	}
+	var candidates []Column
+	for rows.Next() {
+		var col Column
+		if err := rows.Scan(&col.Table, &col.Name); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("userids: audit schema: %w", err)
+		}
+		if !listed[col.String()] && !auditIgnored[col.String()] {
+			candidates = append(candidates, col)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("userids: audit schema: %w", err)
+	}
+
+	legacy, _ := scope(nil).legacyIDs()
+	var out []Leftover
+	for _, col := range candidates {
+		var n int64
+		if err := q.QueryRowContext(ctx, fmt.Sprintf(
+			`SELECT count(*) FROM %s WHERE %s IN (%s)`, quoteIdent(col.Table), quoteIdent(col.Name), legacy),
+		).Scan(&n); err != nil {
+			return nil, fmt.Errorf("userids: audit %s: %w", col, err)
+		}
+		if n > 0 {
+			out = append(out, Leftover{Table: col.Table, Column: col.Name, Rows: n})
+		}
+	}
+	return out, nil
+}
+
+// quoteIdent protège un nom de table ou de colonne lu dans le catalogue.
+func quoteIdent(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 // existingColumns renvoie les colonnes "table.colonne" de Columns présentes

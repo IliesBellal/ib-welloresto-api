@@ -12,12 +12,19 @@
 // d'écrire quoi que ce soit : une session en cache écrirait l'ancien id dans
 // des paiements, qui seraient ensuite signés avec.
 //
+// Avec --audit : cherche les anciens identifiants dans TOUTES les colonnes texte de la
+// base qui ne figurent pas dans l'inventaire (userids.Columns). À lancer en
+// production avant --apply, et après : l'inventaire vient d'un environnement de
+// test, une colonne propre à la production lui échapperait. Lecture seule mais
+// longue (elle parcourt chaque colonne texte) : hors des heures de service.
+//
 // Prérequis : migrations 186 (séquence) et 187 (user_id_remap) appliquées, et
 // le code qui lit user_id_remap déployé. Rejouable.
 //
 // Usage :
 //
 //	POSTGRES_URL=... go run ./cmd/renumber_users
+//	POSTGRES_URL=... go run ./cmd/renumber_users --audit
 //	POSTGRES_URL=... REDIS_URL=... go run ./cmd/renumber_users --apply
 package main
 
@@ -40,6 +47,7 @@ import (
 
 func main() {
 	apply := flag.Bool("apply", false, "renuméroter (défaut : aperçu seulement)")
+	audit := flag.Bool("audit", false, "chercher les anciens ids dans toutes les colonnes texte hors inventaire (lecture seule, long)")
 	flag.Parse()
 
 	postgresURL := os.Getenv("POSTGRES_URL")
@@ -58,6 +66,22 @@ func main() {
 	}
 	defer db.Close()
 	ctx := context.Background()
+
+	if *audit {
+		left, err := userids.Audit(ctx, db)
+		if err != nil {
+			log.Fatalf("audit : %v", err)
+		}
+		if len(left) == 0 {
+			fmt.Println("Aucune colonne texte hors inventaire ne contient d'ancien identifiant.")
+			return
+		}
+		fmt.Println("Colonnes HORS inventaire qui contiennent encore un ancien identifiant (à ajouter à userids.Columns) :")
+		for _, l := range left {
+			fmt.Printf("  %-40s %-28s %d ligne(s)\n", l.Table, l.Column, l.Rows)
+		}
+		os.Exit(1)
+	}
 
 	if !*apply {
 		rep, err := userids.Plan(ctx, db)

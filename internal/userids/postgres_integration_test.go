@@ -183,3 +183,49 @@ func expectValue(t *testing.T, db *sql.DB, desc, q, want string, args ...interfa
 		t.Fatalf("%s = %q, want %q", desc, got, want)
 	}
 }
+
+// Audit doit signaler un ancien identifiant resté dans une colonne texte que
+// l'inventaire (Columns) ne couvre pas — c'est son seul rôle : rattraper ce
+// que l'inventaire, établi sur un autre environnement, ne connaît pas.
+func TestAudit_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+	requireMigrations(t, db)
+
+	const legacy = "user-itest-audit-a"
+	cleanup := func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM labels WHERE label_type = 'itest-audit'`)
+		_, _ = db.ExecContext(ctx, `DELETE FROM users WHERE user_id = $1`, legacy)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	if _, err := db.ExecContext(ctx, `INSERT INTO users (user_id, name, first_name, last_name, password, email, token)
+		VALUES ($1, 'itest-audit-a', 'A', 'Audit', 'x', 'itest-audit-a@example.com', 'itest-audit-tok')`, legacy); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	// labels.label n'est pas dans l'inventaire : c'est exactement une colonne oubliée.
+	if _, err := db.ExecContext(ctx, `INSERT INTO labels (label_value, label_type, lang, label) VALUES ('itest-audit-1', 'itest-audit', 'FR', $1)`, legacy); err != nil {
+		t.Fatalf("seed label: %v", err)
+	}
+
+	found, err := Audit(ctx, db)
+	if err != nil {
+		t.Fatalf("Audit: %v", err)
+	}
+	var hit *Leftover
+	for i := range found {
+		if found[i].Table == "labels" && found[i].Column == "label" {
+			hit = &found[i]
+		}
+		// Une colonne de l'inventaire ne doit jamais être signalée.
+		for _, col := range Columns {
+			if col.Table == found[i].Table && col.Name == found[i].Column {
+				t.Fatalf("Audit reports %s, which is in the inventory", col)
+			}
+		}
+	}
+	if hit == nil || hit.Rows != 1 {
+		t.Fatalf("Audit must report labels.label with 1 row, got %+v", found)
+	}
+}
