@@ -380,21 +380,35 @@ func (r *Repository) UpdateEmployeeUserLink(ctx context.Context, merchantID, emp
 	return r.GetEmployeeByID(ctx, merchantID, employeeID)
 }
 
+// SoftDeleteEmployee désactive l'employé et le retire de ses shifts à partir
+// d'aujourd'hui (date du jour dans le fuseau de l'établissement) : ces shifts
+// redeviennent « non assignés » et visibles comme tels dans le planning. Les
+// shifts passés restent rattachés, pour l'historique des heures et des stats
+// de performance / masse salariale.
 func (r *Repository) SoftDeleteEmployee(ctx context.Context, merchantID, employeeID string) error {
-	db := dbx.GetDB(ctx, r.db)
-	now := time.Now().UTC()
-	res, err := db.ExecContext(ctx, `
+	return dbutils.RunInTx(ctx, r.db, func(txCtx context.Context) error {
+		db := dbx.GetDB(txCtx, r.db)
+		now := time.Now().UTC()
+		res, err := db.ExecContext(txCtx, `
 		UPDATE employees
 		SET active = FALSE, enabled = FALSE, deleted_at = ?, updated_at = ?
 		WHERE merchant_id = ? AND id = ? AND enabled = TRUE
 	`, now, now, merchantID, employeeID)
-	if err != nil {
+		if err != nil {
+			return err
+		}
+		if affected, _ := res.RowsAffected(); affected == 0 {
+			return sql.ErrNoRows
+		}
+
+		_, err = db.ExecContext(txCtx, `
+		UPDATE planning_shifts
+		SET employee_id = NULL, updated_at = ?
+		WHERE merchant_id = ? AND employee_id = ? AND enabled = TRUE
+			AND shift_date >= (SELECT CAST(now() AT TIME ZONE m.timezone AS DATE) FROM merchant m WHERE CAST(m.id AS TEXT) = ?)
+	`, now, merchantID, employeeID, merchantID)
 		return err
-	}
-	if affected, _ := res.RowsAffected(); affected == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
+	})
 }
 
 type scannable interface {

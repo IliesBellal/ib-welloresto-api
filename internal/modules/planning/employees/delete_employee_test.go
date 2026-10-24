@@ -13,7 +13,9 @@ import (
 	"welloresto-api/internal/modules/auth"
 )
 
-func TestServiceDeleteEmployeeNullifiesAssignedShifts(t *testing.T) {
+// Seuls les shifts à partir d'aujourd'hui (fuseau de l'établissement) perdent
+// leur employé : les shifts passés gardent l'historique.
+func TestServiceDeleteEmployeeNullifiesUpcomingShifts(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("sqlmock.New() error = %v", err)
@@ -36,8 +38,9 @@ func TestServiceDeleteEmployeeNullifiesAssignedShifts(t *testing.T) {
 		UPDATE planning_shifts
 		SET employee_id = NULL, updated_at = ?
 		WHERE merchant_id = ? AND employee_id = ? AND enabled = TRUE
+			AND shift_date >= (SELECT CAST(now() AT TIME ZONE m.timezone AS DATE) FROM merchant m WHERE CAST(m.id AS TEXT) = ?)
 	`)).
-		WithArgs(sqlmock.AnyArg(), "merchant_1", "emp_1").
+		WithArgs(sqlmock.AnyArg(), "merchant_1", "emp_1", "merchant_1").
 		WillReturnResult(sqlmock.NewResult(0, 3))
 	mock.ExpectCommit()
 
