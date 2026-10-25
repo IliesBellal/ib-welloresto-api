@@ -42,6 +42,15 @@ Objectif d'Ilies : le maximum sans bandeau de consentement, avec une architectur
 | D22 | **Conservation 25 mois** : tâche quotidienne `CleanupOldAudienceEvents`. | Durée maximale admise par la CNIL pour une mesure exemptée. |
 | D23 | **Évolutif vers le consentement** : le front classe chaque outil de mesure par catégorie (`audience` exemptée, toujours active ; `analytics` et `marketing` désactivées tant qu'aucun bandeau n'existe). Ajouter Google Analytics ou un pixel = brancher un « récepteur » dans sa catégorie et afficher le bandeau ; rien ne change côté API ni dans les événements. | Le jour où un pixel est demandé, on ajoute le bandeau sans réécrire la mesure. |
 
+
+### Statistiques de la franchise (décisions du 2026-10-25)
+
+| # | Décision | Pourquoi |
+|---|---|---|
+| D24 | Menu Franchise du back-office en deux entrées : **Gestion** (`/franchise`) et **Statistiques** (`/franchise/statistiques`), même sélecteur de franchise. Pas d'onglet Franchise dans la page Analyse. | Analyse suit le périmètre et la permission d'analyse de chaque établissement ; la franchise suit ses gestionnaires (et, avec les invitations, un franchiseur sans droit sur les établissements franchisés). |
+| D25 | **Tous les gestionnaires** (owner et manager) voient les statistiques : visites du hub et leur provenance, clics Commander / Réserver, commandes et CA **venus du hub** par établissement, évolution par jour. Pas le CA ScanNOrder complet des établissements. À revoir avec les invitations de franchisés (v2). | Mesurer le hub sans exposer l'activité complète des établissements. |
+| D26 | L'onglet ScanNOrder de la page Analyse redevient une vue d'établissement : le hub y est une source parmi d'autres (visites, commandes, CA), avec un lien vers les statistiques de la franchise. | Ne plus mêler des chiffres de franchise (visites du hub) à ceux d'un établissement. |
+
 **À faire côté légal** : mentionner cette mesure d'audience anonyme (finalité, durée de 25 mois, absence de croisement) dans la politique de confidentialité de ScanNOrder.
 
 ## Modèle de données (migration 193)
@@ -114,6 +123,7 @@ Remplace `GET /scannorder/brands/{slug}` (que rien n'appelait). 404 `franchise_n
 - `POST /scannorder/events` `{visit_id?, events: [{type, merchant_id?, franchise_slug?, product_id?, source?}]}` (25 événements au plus par lot, 120 lots/min par IP) → 204 ; type ou forme invalide → 400 ; établissement ou franchise inconnus ignorés. Table `sno_events` (migration 194).
 - `POST /scannorder/{slug}/orders` accepte `visit_source` et `hub_franchise_slug` (D18, D21) → `sno_order_attributions`.
 - `POST /analytics/scannorder` `{date_from, date_to, merchant_ids?}` (reports.sales.read, périmètre `pos.analytics` comme les autres onglets) → `{scope, totals: {sno_orders, sno_revenue_ttc_cents, all_revenue_ttc_cents}, audience_since, funnel: {visits, product_views, add_to_cart, checkout_start, payment_redirect, orders}, sources: [{source, visits, orders, revenue_ttc_cents}], top_products: [{product_id, name, views, add_to_cart}], hub: {in_franchise, franchises, views, order_clicks, reservation_clicks, orders, revenue_ttc_cents}, daily: [{date, visits, sno_orders, hub_orders, order_clicks}], by_merchant: [...]}`. Commandes au sens des onglets CA / Commandes (`AnalyticsOrdersScope`).
+- `GET /franchises/{id}/stats?date_from&date_to` (gestionnaires, 366 jours au plus) → `{tracking_since, totals: {hub_views, order_clicks, reservation_clicks, hub_orders, hub_revenue_ttc_cents}, sources: [{source, views}], daily: [{date, hub_views, order_clicks, hub_orders}], merchants: [{merchant_id, business_name, order_clicks, reservation_clicks, hub_orders, hub_revenue_ttc_cents}]}` (D24, D25).
 - `GET /scannorder/sitemap` gagne `franchises: [{slug, updated_at}]` : les hubs qui affichent au moins un établissement.
 - La page restaurant (`GET /scannorder/{slug}`) gagne `merchant.franchise: {name, slug}` (nil si aucune franchise ou masqué sur le hub), pour le lien « autres établissements ».
 

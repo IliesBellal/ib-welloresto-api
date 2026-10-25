@@ -44,6 +44,9 @@ type Store interface {
 	DetachMerchant(ctx context.Context, franchiseID, merchantID string) error
 	SetMerchantHubVisible(ctx context.Context, franchiseID, merchantID string, visible bool) error
 	MerchantFranchiseID(ctx context.Context, merchantID string) (*string, bool, error)
+
+	FranchiseTimezone(ctx context.Context, franchiseID string) (string, error)
+	FranchiseStats(ctx context.Context, franchiseID string, merchantIDs []string, startUTC, endUTC time.Time, tz string) (*StatsResponse, error)
 }
 
 // Cache : purge des réponses ScanNOrder qui affichent la franchise (hub, et

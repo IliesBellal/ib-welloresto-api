@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
+	"time"
 
 	"welloresto-api/internal/models"
 )
@@ -223,6 +224,19 @@ func (f *fakeStore) SetMerchantHubVisible(_ context.Context, id, merchantID stri
 func (f *fakeStore) MerchantFranchiseID(_ context.Context, merchantID string) (*string, bool, error) {
 	cur, ok := f.merchantOf[merchantID]
 	return cur, ok, nil
+}
+
+func (f *fakeStore) FranchiseTimezone(context.Context, string) (string, error) {
+	return "Europe/Paris", nil
+}
+
+// FranchiseStats : 3 clics et 1 commande de 12 € sur m1, le 2026-06-02.
+func (f *fakeStore) FranchiseStats(_ context.Context, _ string, merchantIDs []string, _, _ time.Time, _ string) (*StatsResponse, error) {
+	return &StatsResponse{
+		Totals:    StatsTotals{HubViews: 10, OrderClicks: 3, HubOrders: 1, HubRevenueTTC: 1200},
+		Daily:     []StatsDay{{Date: "2026-06-02", HubViews: 10, OrderClicks: 3, HubOrders: 1}},
+		Merchants: []StatsMerchant{{MerchantID: "m1", OrderClicks: 3, HubOrders: 1, HubRevenueTTC: 1200}},
+	}, nil
 }
 
 type fakeCache struct {
@@ -505,5 +519,33 @@ func TestList_CanCreate(t *testing.T) {
 	got, err = svc.List(ctx, carol)
 	if err != nil || len(got.Franchises) != 0 || got.CanCreate {
 		t.Fatalf("carol List = %+v, %v", got, err)
+	}
+}
+
+func TestStats_MembersOnlyAndOneRowPerEstablishment(t *testing.T) {
+	svc, _, _ := setup(t)
+	ctx := context.Background()
+	d := mustCreate(t, svc, alice, "Burger Co")
+	id := d.Franchise.FranchiseID
+	if _, err := svc.AddMerchants(ctx, alice, id, AddMerchantsRequest{MerchantIDs: []string{"m1", "m2"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := svc.Stats(ctx, bob, id, "2026-06-01", "2026-06-03")
+	wantErr(t, err, models.ErrFranchiseNotFound)
+	_, err = svc.Stats(ctx, alice, id, "2026-06-03", "2026-06-01")
+	wantErr(t, err, models.ErrInvalidInput)
+	_, err = svc.Stats(ctx, alice, id, "2025-01-01", "2026-06-01")
+	wantErr(t, err, models.ErrInvalidInput)
+
+	got, err := svc.Stats(ctx, alice, id, "2026-06-01", "2026-06-03")
+	if err != nil {
+		t.Fatalf("Stats error = %v", err)
+	}
+	if len(got.Daily) != 3 || got.Daily[1].OrderClicks != 3 || got.Daily[0].HubViews != 0 {
+		t.Fatalf("daily = %+v, want 3 days with activity on the 2nd", got.Daily)
+	}
+	if len(got.Merchants) != 2 || got.Merchants[0].MerchantID != "m1" || got.Merchants[1].HubOrders != 0 {
+		t.Fatalf("merchants = %+v, want m1 (active) then m2 (empty)", got.Merchants)
 	}
 }

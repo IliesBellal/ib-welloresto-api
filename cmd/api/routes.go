@@ -2092,6 +2092,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			r.Put("/logo", franchisesHandler.UploadLogo)
 			r.Put("/banner", franchisesHandler.UploadBanner)
 
+			r.Get("/stats", franchisesHandler.Stats)
 			r.Get("/candidates", franchisesHandler.Candidates)
 			r.Post("/merchants", franchisesHandler.AddMerchants)
 			r.Patch("/merchants/{merchant_id}", franchisesHandler.UpdateMerchant)
