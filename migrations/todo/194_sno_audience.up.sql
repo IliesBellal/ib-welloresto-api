@@ -47,6 +47,8 @@ COMMENT ON TABLE sno_events IS 'Mesure d''audience anonyme de ScanNOrder (hub et
 CREATE TABLE IF NOT EXISTS sno_order_attributions (
     order_id     integer PRIMARY KEY,
     merchant_id  varchar(64) NOT NULL,
+    -- Jamais renseigné : relier la visite anonyme à une commande nominative
+    -- sortirait de l'exemption (docs/franchises.md, D21).
     visit_id     uuid,
     source       varchar(32),
     -- Franchise dont le hub a mené à la commande (clic Commander dans les 2 h).

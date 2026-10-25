@@ -247,10 +247,10 @@ type PricingRequest struct {
 
 	// Origine de la commande, sur CreateOrderSNO (table sno_order_attributions,
 	// mesure d'audience anonyme — docs/franchises.md). Ignorés par le pricing.
-	// VisitID : identifiant aléatoire de l'onglet ; VisitSource : qr_table,
-	// direct, search, social, referral, hub ou utm_source ; HubFranchiseSlug :
-	// la commande suit un clic « Commander » sur le hub de cette franchise.
-	VisitID          string `json:"visit_id,omitempty"`
+	// VisitSource : qr_table, direct, search, social, referral, hub ou
+	// utm_source ; HubFranchiseSlug : la commande suit un clic « Commander » sur
+	// le hub de cette franchise. Aucun identifiant de visite n'est accepté :
+	// il relierait la visite anonyme à une commande nominative.
 	VisitSource      string `json:"visit_source,omitempty"`
 	HubFranchiseSlug string `json:"hub_franchise_slug,omitempty"`
 }

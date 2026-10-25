@@ -177,15 +177,14 @@ func (s *Service) RecordEvents(ctx context.Context, req SNOEventsRequest) error 
 }
 
 // recordOrderAttribution enregistre l'origine d'une commande ScanNOrder :
-// source de la visite et hub de franchise (clic Commander dans les 2 h).
-// Best-effort : un échec est journalisé, jamais remonté à la commande.
+// catégorie de provenance de la visite et hub de franchise (clic Commander
+// dans les 2 h). L'identifiant de visite n'est PAS conservé avec la commande :
+// une commande est nominative, l'y rattacher relierait la visite anonyme à une
+// personne (hors exemption CNIL, D21). Best-effort : un échec est journalisé,
+// jamais remonté à la commande.
 func (s *Service) recordOrderAttribution(ctx context.Context, req *models.PricingRequest, merchantID, orderID string) {
 	if orderID == "" {
 		return
-	}
-	visitID := ""
-	if parsed, err := uuid.Parse(strings.TrimSpace(req.VisitID)); err == nil {
-		visitID = parsed.String()
 	}
 	source := normalizeSource(req.VisitSource)
 
@@ -201,10 +200,10 @@ func (s *Service) recordOrderAttribution(ctx context.Context, req *models.Pricin
 		}
 	}
 
-	if visitID == "" && source == "" && franchiseID == "" {
+	if source == "" && franchiseID == "" {
 		return
 	}
-	if err := s.repo.InsertOrderAttribution(ctx, orderID, merchantID, visitID, source, franchiseID); err != nil {
+	if err := s.repo.InsertOrderAttribution(ctx, orderID, merchantID, source, franchiseID); err != nil {
 		logger.FromContext(ctx).Warn("order attribution failed", zap.String("order_id", orderID), zap.Error(err))
 	}
 }
@@ -289,13 +288,14 @@ func (r *Repository) InsertEvents(ctx context.Context, visitID string, events []
 	return err
 }
 
-// InsertOrderAttribution : une seule origine par commande.
-func (r *Repository) InsertOrderAttribution(ctx context.Context, orderID, merchantID, visitID, source, franchiseID string) error {
+// InsertOrderAttribution : une seule origine par commande (visit_id laissé vide,
+// voir recordOrderAttribution).
+func (r *Repository) InsertOrderAttribution(ctx context.Context, orderID, merchantID, source, franchiseID string) error {
 	db := dbx.GetDB(ctx, r.database)
 	_, err := db.ExecContext(ctx, `
-		INSERT INTO sno_order_attributions (order_id, merchant_id, visit_id, source, franchise_id)
-		VALUES (CAST(? AS integer), ?, CAST(? AS uuid), ?, ?)
+		INSERT INTO sno_order_attributions (order_id, merchant_id, source, franchise_id)
+		VALUES (CAST(? AS integer), ?, ?, ?)
 		ON CONFLICT (order_id) DO NOTHING`,
-		orderID, merchantID, nullable(visitID), nullable(source), nullable(franchiseID))
+		orderID, merchantID, nullable(source), nullable(franchiseID))
 	return err
 }
