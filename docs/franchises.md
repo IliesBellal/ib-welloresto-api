@@ -27,8 +27,22 @@ Regroupement d'établissements sous une **franchise** : une page hub ScanNOrder 
 | D14 | **Précommander** : fermé avec commande programmée possible (`advance_orders_enabled`) → « Fermé · ouvre à … » et bouton « Précommander » ; fermé sans commande programmée → pas de bouton de commande. | Une visite à la fermeture devient une commande, sans proposer une commande impossible. |
 | D15 | **Offres sur les cartes** : remises actives maintenant, valables à emporter ou en livraison (`discounts`, même forme que `/discounts`). | Premier levier de clic des marketplaces. |
 | D16 | **Statistiques** : onglet **ScanNOrder** de la page Analyse (par établissement, périmètre et période de la page) : CA, commandes, panier moyen et part du ScanNOrder, puis le hub : affichages, clics Commander / Réserver, commandes et CA attribués, conversion. | Prouver la valeur du hub au franchiseur et à chaque établissement. |
-| D17 | **Mesure anonyme** : on compte des événements (affichage du hub, clics), jamais des personnes : ni identifiant de visiteur, ni IP, ni cookie. Les affichages sont comptés par franchise (un affichage montre tous ses établissements). | Pas de consentement à demander, pas de donnée personnelle. |
-| D18 | **Attribution d'une commande au hub** : clic « Commander » sur le hub, puis commande dans les 2 h sur le même établissement (mémorisé dans le navigateur, envoyé en `hub_franchise_slug` à la création). Table `franchise_hub_orders`, pas de colonne sur `orders`. | Rien ne change dans l'écriture ni la signature des commandes. |
+| D17 | **Mesure anonyme** : on compte des événements, jamais des personnes : ni IP, ni cookie, ni identifiant persistant (voir D19 à D23). Les affichages du hub sont comptés par franchise (un affichage montre tous ses établissements). | Exemption de consentement de la CNIL pour la mesure d'audience : pas de bandeau. |
+| D18 | **Attribution d'une commande au hub** : clic « Commander » sur le hub, puis commande dans les 2 h sur le même établissement (mémorisé dans l'onglet, envoyé en `hub_franchise_slug` à la création). Table `sno_order_attributions`, pas de colonne sur `orders`. | Rien ne change dans l'écriture ni la signature des commandes. |
+
+### Mesure d'audience ScanNOrder (décisions du 2026-10-25)
+
+Objectif d'Ilies : le maximum sans bandeau de consentement, avec une architecture qui permette d'ajouter plus tard ce qui en demande un. Aucun restaurateur n'a demandé de pixel publicitaire à ce jour.
+
+| # | Décision | Pourquoi |
+|---|---|---|
+| D19 | **Entonnoir anonyme** sur les pages restaurant : `menu_view` (avec sa source), `product_view`, `add_to_cart`, `checkout_start`, `payment_redirect`, `order_created` ; et pour le hub : `hub_view`, `hub_order_click`, `hub_reservation_click`. Table unique `sno_events`. | Savoir où les clients décrochent et d'où ils viennent ; aujourd'hui on ne voyait que les commandes. |
+| D20 | **Visite** = identifiant tiré au hasard par onglet (sessionStorage), oublié à la fermeture ou après 30 min d'inactivité. Jamais persistant : pas de visiteurs uniques ni de clients récurrents. | Rester dans l'exemption de la CNIL. Les visiteurs uniques demanderont un consentement. |
+| D21 | **Source d'une visite** : `utm_source` ou `src` dans l'URL, sinon `hub` (venu du hub), `qr_table` (QR de table), `search` / `social` / `referral` (selon le site d'origine), `direct` (dont les scans du QR principal, sans site d'origine). L'origine de chaque commande est posée à sa création (`visit_id`, `visit_source`, `hub_franchise_slug`) dans `sno_order_attributions` : CA par source. | Savoir quels supports (QR, Google, Instagram, hub) rapportent. |
+| D22 | **Conservation 25 mois** : tâche quotidienne `CleanupOldAudienceEvents`. | Durée maximale admise par la CNIL pour une mesure exemptée. |
+| D23 | **Évolutif vers le consentement** : le front classe chaque outil de mesure par catégorie (`audience` exemptée, toujours active ; `analytics` et `marketing` désactivées tant qu'aucun bandeau n'existe). Ajouter Google Analytics ou un pixel = brancher un « récepteur » dans sa catégorie et afficher le bandeau ; rien ne change côté API ni dans les événements. | Le jour où un pixel est demandé, on ajoute le bandeau sans réécrire la mesure. |
+
+**À faire côté légal** : mentionner cette mesure d'audience anonyme (finalité, durée de 25 mois, absence de croisement) dans la politique de confidentialité de ScanNOrder.
 
 ## Modèle de données (migration 193)
 
@@ -97,9 +111,9 @@ Remplace `GET /scannorder/brands/{slug}` (que rien n'appelait). 404 `franchise_n
 - `next_opening` : prochaine ouverture (`YYYY-MM-DD HH:MM:SS`, heure locale), seulement quand fermé.
 - Statut ouvert/fermé : même calcul que la page restaurant (`GetMerchantOpenState` : ouverture ScanNOrder, horaires, jours fériés, vacances). Calculé en parallèle (4 à la fois) ; un échec affiche l'établissement fermé sans faire échouer le hub.
 - Chaque établissement porte aussi `advance_orders_enabled` (D14) et `discounts` (D15).
-- `POST /scannorder/franchises/{slug}/events` `{event_type: view | order_click | reservation_click, merchant_id?}` → 204 (limité à 120/min par IP ; slug ou établissement inconnu ignoré, type invalide → 400). Table `franchise_hub_events` (migration 194).
-- `POST /scannorder/{slug}/orders` accepte `hub_franchise_slug` (D18) → `franchise_hub_orders`.
-- `POST /analytics/scannorder` `{date_from, date_to, merchant_ids?}` (reports.sales.read, périmètre `pos.analytics` comme les autres onglets) → `{scope, totals: {sno_orders, sno_revenue_ttc_cents, all_revenue_ttc_cents}, hub: {in_franchise, franchises, views, order_clicks, reservation_clicks, orders, revenue_ttc_cents, tracking_since}, daily: [{date, sno_orders, hub_orders, order_clicks}], by_merchant: [...]}`. Commandes au sens des onglets CA / Commandes (`AnalyticsOrdersScope`).
+- `POST /scannorder/events` `{visit_id?, events: [{type, merchant_id?, franchise_slug?, product_id?, source?}]}` (25 événements au plus par lot, 120 lots/min par IP) → 204 ; type ou forme invalide → 400 ; établissement ou franchise inconnus ignorés. Table `sno_events` (migration 194).
+- `POST /scannorder/{slug}/orders` accepte `visit_id`, `visit_source`, `hub_franchise_slug` (D18, D21) → `sno_order_attributions`.
+- `POST /analytics/scannorder` `{date_from, date_to, merchant_ids?}` (reports.sales.read, périmètre `pos.analytics` comme les autres onglets) → `{scope, totals: {sno_orders, sno_revenue_ttc_cents, all_revenue_ttc_cents}, audience_since, funnel: {visits, product_views, add_to_cart, checkout_start, payment_redirect, orders}, sources: [{source, visits, orders, revenue_ttc_cents}], top_products: [{product_id, name, views, add_to_cart}], hub: {in_franchise, franchises, views, order_clicks, reservation_clicks, orders, revenue_ttc_cents}, daily: [{date, visits, sno_orders, hub_orders, order_clicks}], by_merchant: [...]}`. Commandes au sens des onglets CA / Commandes (`AnalyticsOrdersScope`).
 - `GET /scannorder/sitemap` gagne `franchises: [{slug, updated_at}]` : les hubs qui affichent au moins un établissement.
 - La page restaurant (`GET /scannorder/{slug}`) gagne `merchant.franchise: {name, slug}` (nil si aucune franchise ou masqué sur le hub), pour le lien « autres établissements ».
 

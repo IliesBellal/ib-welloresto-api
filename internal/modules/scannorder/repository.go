@@ -1103,16 +1103,6 @@ func (r *Repository) GetFranchiseHub(ctx context.Context, slug string) (*Franchi
 	return franchise, merchants, nil
 }
 
-// GetFranchiseIDBySlug : "" si le slug est inconnu.
-func (r *Repository) GetFranchiseIDBySlug(ctx context.Context, slug string) (string, error) {
-	db := dbx.GetDB(ctx, r.database)
-	var id string
-	err := db.QueryRowContext(ctx, `SELECT franchise_id FROM franchises WHERE slug = ?`, slug).Scan(&id)
-	if err == sql.ErrNoRows {
-		return "", nil
-	}
-	return id, err
-}
 
 // MerchantInFranchise : l'établissement appartient à la franchise.
 func (r *Repository) MerchantInFranchise(ctx context.Context, franchiseID, merchantID string) (bool, error) {
@@ -1124,29 +1114,6 @@ func (r *Repository) MerchantInFranchise(ctx context.Context, franchiseID, merch
 	return ok, err
 }
 
-// InsertHubEvent enregistre un affichage du hub (merchantID vide) ou un clic.
-func (r *Repository) InsertHubEvent(ctx context.Context, franchiseID, merchantID, eventType string) error {
-	db := dbx.GetDB(ctx, r.database)
-	var merchant interface{}
-	if merchantID != "" {
-		merchant = merchantID
-	}
-	_, err := db.ExecContext(ctx, `
-		INSERT INTO franchise_hub_events (franchise_id, merchant_id, event_type) VALUES (?, ?, ?)`,
-		franchiseID, merchant, eventType)
-	return err
-}
-
-// InsertHubOrder attribue une commande au hub (une seule fois par commande).
-func (r *Repository) InsertHubOrder(ctx context.Context, orderID, franchiseID, merchantID string) error {
-	db := dbx.GetDB(ctx, r.database)
-	_, err := db.ExecContext(ctx, `
-		INSERT INTO franchise_hub_orders (order_id, franchise_id, merchant_id)
-		VALUES (CAST(? AS integer), ?, ?)
-		ON CONFLICT (order_id) DO NOTHING`,
-		orderID, franchiseID, merchantID)
-	return err
-}
 
 // GetUpsellProducts retrieves the IDs of "popular" products (is_popular = 1) eligible for
 // upsell. Product groups are excluded since they are not orderable on their own — only their

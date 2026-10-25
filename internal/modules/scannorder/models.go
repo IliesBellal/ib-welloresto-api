@@ -284,20 +284,6 @@ type FranchiseHubRow struct {
 	AdvanceOrdersEnabled bool
 }
 
-// Événements du hub (franchise_hub_events, migration 194).
-const (
-	HubEventView             = "view"
-	HubEventOrderClick       = "order_click"
-	HubEventReservationClick = "reservation_click"
-)
-
-// FranchiseHubEventRequest : POST /scannorder/franchises/{slug}/events.
-// MerchantID est requis pour les clics, ignoré pour un affichage.
-type FranchiseHubEventRequest struct {
-	EventType  string `json:"event_type"`
-	MerchantID string `json:"merchant_id,omitempty"`
-}
-
 // MerchantFranchise : franchise d'un établissement visible sur son hub (lien
 // « autres établissements » de la page restaurant).
 type MerchantFranchise struct {

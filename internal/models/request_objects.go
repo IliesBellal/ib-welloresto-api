@@ -245,9 +245,13 @@ type PricingRequest struct {
 	// trigger upsell acceptance tracking (Phase C). Unused by pricing calls.
 	UpsellSuggestionID *string `json:"upsell_suggestion_id,omitempty"`
 
-	// HubFranchiseSlug, sur CreateOrderSNO : la commande suit un clic
-	// « Commander » sur le hub de cette franchise (attribution des statistiques
-	// du hub, table franchise_hub_orders). Ignoré par le pricing.
+	// Origine de la commande, sur CreateOrderSNO (table sno_order_attributions,
+	// mesure d'audience anonyme — docs/franchises.md). Ignorés par le pricing.
+	// VisitID : identifiant aléatoire de l'onglet ; VisitSource : qr_table,
+	// direct, search, social, referral, hub ou utm_source ; HubFranchiseSlug :
+	// la commande suit un clic « Commander » sur le hub de cette franchise.
+	VisitID          string `json:"visit_id,omitempty"`
+	VisitSource      string `json:"visit_source,omitempty"`
 	HubFranchiseSlug string `json:"hub_franchise_slug,omitempty"`
 }
 

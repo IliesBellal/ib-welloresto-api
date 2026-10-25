@@ -1145,8 +1145,8 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- SCANNORDER ---
 	r.Route("/scannorder", func(r chi.Router) {
 		r.Get("/franchises/{franchise_slug}", scannHandler.GetFranchise)
-		// Statistiques du hub (anonymes) : envoyées par le navigateur, bornées par IP.
-		r.With(httprate.LimitByIP(120, 1*time.Minute)).Post("/franchises/{franchise_slug}/events", scannHandler.RecordFranchiseHubEvent)
+		// Mesure d'audience anonyme (hub et pages restaurant), par lots, bornée par IP.
+		r.With(httprate.LimitByIP(120, 1*time.Minute)).Post("/events", scannHandler.RecordEvents)
 		r.Get("/sitemap", scannHandler.GetSitemap)
 		r.Get("/{merchant_slug}", scannHandler.GetMerchant)
 		r.Get("/{merchant_slug}/slots", scannHandler.GetSlots)

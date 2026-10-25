@@ -140,6 +140,8 @@ func SetupTasks(
 	// purge mensuelle laissait la table monter jusqu'à rétention + 30 jours.
 	add("0 5 * * *", taskManager.CleanupOldRequestLogs)
 	add("30 5 * * *", taskManager.CleanupOldDiagnosticEvents)
+	// Mesure d'audience ScanNOrder : conservation 25 mois (CNIL, exemption de consentement).
+	add("45 5 * * *", taskManager.CleanupOldAudienceEvents)
 
 	// Démarrage du Cron en arrière-plan
 	c.Start()
