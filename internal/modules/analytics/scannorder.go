@@ -2,8 +2,9 @@ package analytics
 
 // Onglet ScanNOrder de la page Analyse : canal ScanNOrder des établissements
 // sélectionnés, entonnoir de conversion et sources des visites (mesure
-// d'audience anonyme), et apport du hub de leur franchise. Décisions :
-// docs/franchises.md (D16 à D23). Tables : migration 194.
+// d'audience anonyme). Le hub de franchise n'y est qu'une source : ses
+// statistiques sont servies par GET /franchises/{id}/stats. Décisions :
+// docs/mesure-audience.md. Tables : migration 194.
 
 import (
 	"context"
@@ -65,26 +66,17 @@ type ScanNOrderProductRow struct {
 	AddToCart int64  `json:"add_to_cart"`
 }
 
+// ScanNOrderHubTotals : franchises du périmètre, pour le lien vers leurs
+// statistiques (D26).
 type ScanNOrderHubTotals struct {
-	// InFranchise : au moins un établissement du périmètre est dans une
-	// franchise (sinon l'onglet invite à en créer une).
 	InFranchise bool     `json:"in_franchise"`
 	Franchises  []string `json:"franchises"`
-	// Views : affichages des hubs de ces franchises (tous établissements
-	// confondus — un affichage montre toute la liste).
-	Views             int64 `json:"views"`
-	OrderClicks       int64 `json:"order_clicks"`
-	ReservationClicks int64 `json:"reservation_clicks"`
-	Orders            int64 `json:"orders"`
-	RevenueTTCCents   int64 `json:"revenue_ttc_cents"`
 }
 
 type ScanNOrderDay struct {
-	Date        string `json:"date"`
-	Visits      int64  `json:"visits"`
-	SNOOrders   int64  `json:"sno_orders"`
-	HubOrders   int64  `json:"hub_orders"`
-	OrderClicks int64  `json:"order_clicks"`
+	Date      string `json:"date"`
+	Visits    int64  `json:"visits"`
+	SNOOrders int64  `json:"sno_orders"`
 }
 
 type ScanNOrderMerchantRow struct {
@@ -92,10 +84,6 @@ type ScanNOrderMerchantRow struct {
 	Visits             int64  `json:"visits"`
 	SNOOrders          int64  `json:"sno_orders"`
 	SNORevenueTTCCents int64  `json:"sno_revenue_ttc_cents"`
-	OrderClicks        int64  `json:"order_clicks"`
-	ReservationClicks  int64  `json:"reservation_clicks"`
-	HubOrders          int64  `json:"hub_orders"`
-	HubRevenueTTCCents int64  `json:"hub_revenue_ttc_cents"`
 }
 
 type ScanNOrderAnalyticsResponse struct {
@@ -135,7 +123,16 @@ func (h *Handler) GetScanNOrder(w http.ResponseWriter, r *http.Request) {
 
 // --- Service ---
 
-func (s *Service) GetScanNOrder(ctx context.Context, req ScanNOrderAnalyticsRequest) (*ScanNOrderAnalyticsResponse, error) {
+// channelScope : périmètre commun des onglets de canal (ScanNOrder, Borne) —
+// établissements accessibles demandés, jours locaux du premier établissement.
+type channelScope struct {
+	MerchantIDs      []string
+	DateFrom, DateTo time.Time
+	TZ               *time.Location
+	StartUTC, EndUTC time.Time
+}
+
+func (s *Service) resolveChannelScope(ctx context.Context, requested []string, dateFromStr, dateToStr string) (*channelScope, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, models.ErrUnauthorized
@@ -144,7 +141,7 @@ func (s *Service) GetScanNOrder(ctx context.Context, req ScanNOrderAnalyticsRequ
 	if err != nil {
 		return nil, err
 	}
-	merchantIDs, err := ValidateRequestedMerchants(req.MerchantIDs, accessible)
+	merchantIDs, err := ValidateRequestedMerchants(requested, accessible)
 	if err != nil {
 		return nil, err
 	}
@@ -152,11 +149,11 @@ func (s *Service) GetScanNOrder(ctx context.Context, req ScanNOrderAnalyticsRequ
 		return nil, ErrMerchantNotAccessible
 	}
 
-	dateFrom, err := time.Parse("2006-01-02", req.DateFrom)
+	dateFrom, err := time.Parse("2006-01-02", dateFromStr)
 	if err != nil {
 		return nil, ErrInvalidRequest
 	}
-	dateTo, err := time.Parse("2006-01-02", req.DateTo)
+	dateTo, err := time.Parse("2006-01-02", dateToStr)
 	if err != nil || dateTo.Before(dateFrom) {
 		return nil, ErrInvalidRequest
 	}
@@ -170,8 +167,24 @@ func (s *Service) GetScanNOrder(ctx context.Context, req ScanNOrderAnalyticsRequ
 		return nil, fmt.Errorf("invalid merchant timezone %q: %w", tzString, err)
 	}
 	startUTC, endUTC := timeutil.LocalDayRangeBounds(dateFrom, dateTo, tz)
+	return &channelScope{MerchantIDs: merchantIDs, DateFrom: dateFrom, DateTo: dateTo, TZ: tz, StartUTC: startUTC, EndUTC: endUTC}, nil
+}
 
-	data, err := s.repo.GetScanNOrderStats(ctx, merchantIDs, startUTC, endUTC, tz)
+// eachDay appelle fn pour chaque jour de la période, bornes incluses.
+func (c *channelScope) eachDay(fn func(key string)) {
+	for d := c.DateFrom; !d.After(c.DateTo); d = d.AddDate(0, 0, 1) {
+		fn(d.Format("2006-01-02"))
+	}
+}
+
+func (s *Service) GetScanNOrder(ctx context.Context, req ScanNOrderAnalyticsRequest) (*ScanNOrderAnalyticsResponse, error) {
+	scope, err := s.resolveChannelScope(ctx, req.MerchantIDs, req.DateFrom, req.DateTo)
+	if err != nil {
+		return nil, err
+	}
+	merchantIDs := scope.MerchantIDs
+
+	data, err := s.repo.GetScanNOrderStats(ctx, merchantIDs, scope.StartUTC, scope.EndUTC, scope.TZ)
 	if err != nil {
 		return nil, err
 	}
@@ -186,8 +199,7 @@ func (s *Service) GetScanNOrder(ctx context.Context, req ScanNOrderAnalyticsRequ
 		Hub:           data.Hub,
 	}
 
-	// Une ligne par établissement du périmètre, même sans activité ; totaux du
-	// hub = somme des établissements (clics et commandes sont par établissement).
+	// Une ligne par établissement du périmètre, même sans activité.
 	byMerchant := map[string]*ScanNOrderMerchantRow{}
 	for _, row := range data.ByMerchant {
 		r := row
@@ -198,10 +210,6 @@ func (s *Service) GetScanNOrder(ctx context.Context, req ScanNOrderAnalyticsRequ
 		if !ok {
 			row = &ScanNOrderMerchantRow{MerchantID: id}
 		}
-		resp.Hub.OrderClicks += row.OrderClicks
-		resp.Hub.ReservationClicks += row.ReservationClicks
-		resp.Hub.Orders += row.HubOrders
-		resp.Hub.RevenueTTCCents += row.HubRevenueTTCCents
 		resp.ByMerchant = append(resp.ByMerchant, *row)
 	}
 
@@ -210,14 +218,13 @@ func (s *Service) GetScanNOrder(ctx context.Context, req ScanNOrderAnalyticsRequ
 	for _, d := range data.Daily {
 		days[d.Date] = d
 	}
-	for d := dateFrom; !d.After(dateTo); d = d.AddDate(0, 0, 1) {
-		key := d.Format("2006-01-02")
+	scope.eachDay(func(key string) {
 		day, ok := days[key]
 		if !ok {
 			day = ScanNOrderDay{Date: key}
 		}
 		resp.Daily = append(resp.Daily, day)
-	}
+	})
 	return resp, nil
 }
 
@@ -275,7 +282,7 @@ func (r *Repository) GetScanNOrderStats(ctx context.Context, merchantIDs []strin
 			return fmt.Errorf("scannorder totals: %w", err)
 		}
 
-		// Par établissement : ScanNOrder et commandes venues du hub.
+		// Par établissement.
 		byMerchant := map[string]*ScanNOrderMerchantRow{}
 		get := func(id string) *ScanNOrderMerchantRow {
 			if row, ok := byMerchant[id]; ok {
@@ -288,41 +295,34 @@ func (r *Repository) GetScanNOrderStats(ctx context.Context, merchantIDs []strin
 		if err := scanQueryRows(ctx, db, `
 			SELECT o.merchant_id,
 			       COUNT(*) FILTER (WHERE `+sno+`),
-			       COALESCE(SUM(o.price) FILTER (WHERE `+sno+`), 0),
-			       COUNT(a.order_id) FILTER (WHERE a.franchise_id IS NOT NULL),
-			       COALESCE(SUM(o.price) FILTER (WHERE a.franchise_id IS NOT NULL), 0)
+			       COALESCE(SUM(o.price) FILTER (WHERE `+sno+`), 0)
 			FROM orders o
-			LEFT JOIN sno_order_attributions a ON a.order_id = o.order_id
 			WHERE `+where+`
 			GROUP BY o.merchant_id`, args, func(sc interface{ Scan(...interface{}) error }) error {
 			var id string
-			var snoOrders, snoRevenue, hubOrders, hubRevenue int64
-			if err := sc.Scan(&id, &snoOrders, &snoRevenue, &hubOrders, &hubRevenue); err != nil {
+			var snoOrders, snoRevenue int64
+			if err := sc.Scan(&id, &snoOrders, &snoRevenue); err != nil {
 				return err
 			}
 			row := get(id)
-			row.SNOOrders, row.SNORevenueTTCCents, row.HubOrders, row.HubRevenueTTCCents = snoOrders, snoRevenue, hubOrders, hubRevenue
+			row.SNOOrders, row.SNORevenueTTCCents = snoOrders, snoRevenue
 			return nil
 		}); err != nil {
 			return fmt.Errorf("scannorder by merchant: %w", err)
 		}
 
-		// Audience par établissement : visites et clics du hub.
+		// Visites par établissement.
 		if err := scanQueryRows(ctx, db, `
-			SELECT e.merchant_id,
-			       COUNT(DISTINCT e.visit_id) FILTER (WHERE e.event_type = 'menu_view'),
-			       COUNT(*) FILTER (WHERE e.event_type = 'hub_order_click'),
-			       COUNT(*) FILTER (WHERE e.event_type = 'hub_reservation_click')
+			SELECT e.merchant_id, COUNT(DISTINCT e.visit_id)
 			FROM sno_events e
-			WHERE `+eventsWhere+`
+			WHERE `+eventsWhere+` AND e.event_type = 'menu_view'
 			GROUP BY e.merchant_id`, eventsArgs, func(sc interface{ Scan(...interface{}) error }) error {
 			var id string
-			var visits, orderClicks, reservationClicks int64
-			if err := sc.Scan(&id, &visits, &orderClicks, &reservationClicks); err != nil {
+			var visits int64
+			if err := sc.Scan(&id, &visits); err != nil {
 				return err
 			}
-			row := get(id)
-			row.Visits, row.OrderClicks, row.ReservationClicks = visits, orderClicks, reservationClicks
+			get(id).Visits = visits
 			return nil
 		}); err != nil {
 			return fmt.Errorf("audience by merchant: %w", err)
@@ -432,7 +432,7 @@ func (r *Repository) GetScanNOrderStats(ctx context.Context, merchantIDs []strin
 			return fmt.Errorf("top products: %w", err)
 		}
 
-		// Franchises du périmètre et affichages de leurs hubs.
+		// Franchises du périmètre.
 		if err := scanQueryRows(ctx, db, `
 			SELECT DISTINCT f.name
 			FROM franchises f
@@ -449,18 +449,6 @@ func (r *Repository) GetScanNOrderStats(ctx context.Context, merchantIDs []strin
 			return fmt.Errorf("scope franchises: %w", err)
 		}
 		out.Hub.InFranchise = len(out.Hub.Franchises) > 0
-		if out.Hub.InFranchise {
-			if err := db.QueryRowContext(ctx, `
-				SELECT COUNT(*)
-				FROM sno_events e
-				WHERE e.event_type = 'hub_view' AND e.created_at >= ? AND e.created_at < ?
-				  AND e.franchise_id IN (
-					SELECT m.franchise_id FROM merchant m
-					WHERE CAST(m.id AS TEXT) = ANY(?) AND m.franchise_id IS NOT NULL
-				  )`, startUTC, endUTC, merchantIDs).Scan(&out.Hub.Views); err != nil {
-				return fmt.Errorf("hub views: %w", err)
-			}
-		}
 
 		// Série quotidienne (jour local de l'établissement).
 		days := map[string]*ScanNOrderDay{}
@@ -474,37 +462,32 @@ func (r *Repository) GetScanNOrderStats(ctx context.Context, merchantIDs []strin
 		}
 		if err := scanQueryRows(ctx, db, `
 			SELECT to_char(o.creation_date AT TIME ZONE ?, 'YYYY-MM-DD') AS day,
-			       COUNT(*) FILTER (WHERE `+sno+`),
-			       COUNT(a.order_id) FILTER (WHERE a.franchise_id IS NOT NULL)
+			       COUNT(*) FILTER (WHERE `+sno+`)
 			FROM orders o
-			LEFT JOIN sno_order_attributions a ON a.order_id = o.order_id
 			WHERE `+where+`
 			GROUP BY day`, append([]interface{}{tzName}, args...), func(sc interface{ Scan(...interface{}) error }) error {
 			var key string
-			var snoOrders, hubOrders int64
-			if err := sc.Scan(&key, &snoOrders, &hubOrders); err != nil {
+			var snoOrders int64
+			if err := sc.Scan(&key, &snoOrders); err != nil {
 				return err
 			}
-			d := day(key)
-			d.SNOOrders, d.HubOrders = snoOrders, hubOrders
+			day(key).SNOOrders = snoOrders
 			return nil
 		}); err != nil {
 			return fmt.Errorf("scannorder daily: %w", err)
 		}
 		if err := scanQueryRows(ctx, db, `
 			SELECT to_char(e.created_at AT TIME ZONE ?, 'YYYY-MM-DD') AS day,
-			       COUNT(DISTINCT e.visit_id) FILTER (WHERE e.event_type = 'menu_view'),
-			       COUNT(*) FILTER (WHERE e.event_type = 'hub_order_click')
+			       COUNT(DISTINCT e.visit_id)
 			FROM sno_events e
-			WHERE `+eventsWhere+`
+			WHERE `+eventsWhere+` AND e.event_type = 'menu_view'
 			GROUP BY day`, append([]interface{}{tzName}, eventsArgs...), func(sc interface{ Scan(...interface{}) error }) error {
 			var key string
-			var visits, clicks int64
-			if err := sc.Scan(&key, &visits, &clicks); err != nil {
+			var visits int64
+			if err := sc.Scan(&key, &visits); err != nil {
 				return err
 			}
-			d := day(key)
-			d.Visits, d.OrderClicks = visits, clicks
+			day(key).Visits = visits
 			return nil
 		}); err != nil {
 			return fmt.Errorf("audience daily: %w", err)

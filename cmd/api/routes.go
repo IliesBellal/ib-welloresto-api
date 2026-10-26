@@ -643,6 +643,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		// clé Stripe live.
 		StripeTestMode:    strings.HasPrefix(cfg.Stripe.APIKey, "sk_test_") || strings.HasPrefix(cfg.Stripe.APIKey, "rk_test_"),
 		ScanNOrderBaseURL: cfg.ScanNOrder.SNORedirectBaseURL,
+		AudienceEnabled:   cfg.Kiosk.AudienceEnabled,
 	}
 	kioskService := kioskModule.NewService(kioskCfg, kioskRepo, selectedDB, redisClient, menuService, ordersService, ordersLifeCycleService, upsellService, notificationService, terminalService, availabilitiesService)
 	kioskService.SetOnboardingService(onboardingService)
@@ -1067,6 +1068,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			r.With(salesRead).Post("/upsell", analyticsH.GetUpsell)
 			r.With(salesRead).Post("/discounts", analyticsH.GetDiscounts)
 			r.With(salesRead).Post("/scannorder", analyticsH.GetScanNOrder)
+			r.With(salesRead).Post("/kiosk", analyticsH.GetKiosk)
 
 			// PROMPT 10 / 18 / 19: nominative rankings are gated by their own
 			// key ALONE, not reports.sales.read + that key (hence per-route
@@ -2176,6 +2178,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			r.Post("/orders/{order_id}/counter-payment", kioskHandler.ConfirmCounterPayment)
 			r.Post("/orders/{order_id}/switch-to-counter-payment", kioskHandler.SwitchToCounterPayment)
 			r.Post("/status/unavailable", kioskHandler.ReportUnavailable)
+			r.Post("/events", kioskHandler.RecordEvents)
 
 			// Paiement carte (Stripe Terminal) — DEPRECATED, SDK-driven,
 			// conservé jusqu'à bascule de l'app kiosk vers le modèle

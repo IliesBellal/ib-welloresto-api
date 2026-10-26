@@ -2,7 +2,7 @@ package scannorder
 
 // Mesure d'audience anonyme de ScanNOrder (hub de franchise et pages
 // restaurant) : POST /scannorder/events et origine des commandes. Tables :
-// migration 194. Règles (exemption CNIL, pas de bandeau) : docs/franchises.md,
+// migration 194. Règles (exemption CNIL, pas de bandeau) : docs/mesure-audience.md,
 // D17 et D19 à D23.
 
 import (

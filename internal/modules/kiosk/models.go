@@ -333,6 +333,11 @@ type KioskSettingsResponse struct {
 	// le lecteur de carte. null si pas de ligne stripe_accounts pour ce merchant
 	// ou si Terminal n'est pas activé (colonne NULL) — jamais une erreur.
 	TerminalLocationID *string `json:"terminal_location_id"`
+
+	// AudienceEnabled — la borne envoie sa mesure d'audience (POST
+	// /kiosk/events). Interrupteur de la plateforme (KIOSK_AUDIENCE_ENABLED),
+	// pas un réglage de l'établissement ; absent du back-office.
+	AudienceEnabled bool `json:"audience_enabled,omitempty"`
 }
 
 // UpdateKioskSettingsRequest — logo_url et idle_image_url ne sont PAS des

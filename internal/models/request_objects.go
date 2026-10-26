@@ -246,7 +246,7 @@ type PricingRequest struct {
 	UpsellSuggestionID *string `json:"upsell_suggestion_id,omitempty"`
 
 	// Origine de la commande, sur CreateOrderSNO (table sno_order_attributions,
-	// mesure d'audience anonyme — docs/franchises.md). Ignorés par le pricing.
+	// mesure d'audience anonyme — docs/mesure-audience.md). Ignorés par le pricing.
 	// VisitSource : qr_table, direct, search, social, referral, hub ou
 	// utm_source ; HubFranchiseSlug : la commande suit un clic « Commander » sur
 	// le hub de cette franchise. Aucun identifiant de visite n'est accepté :
