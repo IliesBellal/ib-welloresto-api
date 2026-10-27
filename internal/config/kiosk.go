@@ -17,11 +17,6 @@ type KioskConfig struct {
 	DeviceRefreshTokenTTLDays int
 	AccessTokenTTLMinutes     int
 	Pepper                    string
-	// AudienceEnabled : KIOSK_AUDIENCE_ENABLED (défaut true). false coupe la
-	// mesure d'audience des bornes sans mise à jour de l'app : la borne cesse
-	// d'envoyer au prochain chargement de ses paramètres, et l'API ignore ce
-	// qui arrive encore (docs/mesure-audience.md, D30).
-	AudienceEnabled bool
 }
 
 func loadKioskConfig() KioskConfig {
@@ -39,7 +34,6 @@ func loadKioskConfig() KioskConfig {
 		// jusqu'à 3 h (access token auto-porteur, voir RevokeKiosk).
 		AccessTokenTTLMinutes: getEnvInt("KIOSK_ACCESS_TOKEN_TTL_MINUTES", 180),
 		Pepper:                pepper,
-		AudienceEnabled:       os.Getenv("KIOSK_AUDIENCE_ENABLED") != "false",
 	}
 }
 

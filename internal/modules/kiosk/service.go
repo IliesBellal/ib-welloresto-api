@@ -1070,7 +1070,7 @@ func (s *Service) GetSettingsForKiosk(ctx context.Context, merchantID string) (*
 	if closed {
 		resp.CardPaymentEnabled = false
 	}
-	resp.AudienceEnabled = s.cfg.AudienceEnabled
+	resp.AudienceEnabled = audienceEnabled
 	// Les médias ne sont envoyés que si le ruban est activé : inutile de faire
 	// télécharger à une borne des visuels qu'elle n'affichera pas.
 	if row.MarketingRibbonEnabled {

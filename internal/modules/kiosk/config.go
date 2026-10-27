@@ -25,7 +25,4 @@ type Config struct {
 	// ScanNOrderBaseURL : SCANNORDER_BASE_URL, base du lien de suivi imprimé
 	// en QR (qr_payload, tracking_url). Vide = helpers.DefaultScanNOrderBaseURL.
 	ScanNOrderBaseURL string
-	// AudienceEnabled : interrupteur de la mesure d'audience des bornes
-	// (KIOSK_AUDIENCE_ENABLED), voir audience.go.
-	AudienceEnabled bool
 }

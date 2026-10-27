@@ -57,23 +57,8 @@ func TestValidKioskEvents_OutOfRangeValuesBecomeNull(t *testing.T) {
 	}
 }
 
-func TestRecordEvents_DisabledStoresNothing(t *testing.T) {
-	svc, mock := newReclaimTestService(t)
-	svc.cfg.AudienceEnabled = false
-
-	err := svc.RecordEvents(context.Background(), &AuthenticatedKiosk{KioskID: "kiosk-1", MerchantID: "merch-1"},
-		KioskEventsRequest{Events: []KioskEvent{{Type: EventSessionStart, SessionID: testSession}}})
-	if err != nil {
-		t.Fatalf("RecordEvents: %v", err)
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestRecordEvents_RejectsOversizedBatch(t *testing.T) {
 	svc, _ := newReclaimTestService(t)
-	svc.cfg.AudienceEnabled = true
 
 	events := make([]KioskEvent, maxKioskEventsPerBatch+1)
 	err := svc.RecordEvents(context.Background(), &AuthenticatedKiosk{KioskID: "kiosk-1", MerchantID: "merch-1"}, KioskEventsRequest{Events: events})
@@ -85,7 +70,6 @@ func TestRecordEvents_RejectsOversizedBatch(t *testing.T) {
 // La borne et l'établissement viennent du jeton, jamais du corps.
 func TestRecordEvents_InsertsWithAuthenticatedKiosk(t *testing.T) {
 	svc, mock := newReclaimTestService(t)
-	svc.cfg.AudienceEnabled = true
 
 	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO kiosk_events (event_type, merchant_id, kiosk_id, session_id, elapsed_ms, product_id, amount_cents, detail, step) VALUES`)).
 		WithArgs(

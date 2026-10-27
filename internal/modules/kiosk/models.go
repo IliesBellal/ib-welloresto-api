@@ -335,8 +335,9 @@ type KioskSettingsResponse struct {
 	TerminalLocationID *string `json:"terminal_location_id"`
 
 	// AudienceEnabled — la borne envoie sa mesure d'audience (POST
-	// /kiosk/events). Interrupteur de la plateforme (KIOSK_AUDIENCE_ENABLED),
-	// pas un réglage de l'établissement ; absent du back-office.
+	// /kiosk/events). Toujours vrai pour la borne (audienceEnabled) ; absent
+	// du back-office. Le champ reste dans le contrat : une borne ne mesure
+	// rien tant qu'elle ne l'a pas reçu (API antérieure).
 	AudienceEnabled bool `json:"audience_enabled,omitempty"`
 }
 

@@ -643,7 +643,6 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		// clé Stripe live.
 		StripeTestMode:    strings.HasPrefix(cfg.Stripe.APIKey, "sk_test_") || strings.HasPrefix(cfg.Stripe.APIKey, "rk_test_"),
 		ScanNOrderBaseURL: cfg.ScanNOrder.SNORedirectBaseURL,
-		AudienceEnabled:   cfg.Kiosk.AudienceEnabled,
 	}
 	kioskService := kioskModule.NewService(kioskCfg, kioskRepo, selectedDB, redisClient, menuService, ordersService, ordersLifeCycleService, upsellService, notificationService, terminalService, availabilitiesService)
 	kioskService.SetOnboardingService(onboardingService)

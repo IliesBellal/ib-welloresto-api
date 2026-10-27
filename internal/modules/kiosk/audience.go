@@ -21,6 +21,12 @@ import (
 	"welloresto-api/internal/models"
 )
 
+// audienceEnabled : la mesure des bornes est active, sans réglage
+// d'environnement (décision Ilies, 2026-10-27). La couper demande de passer
+// cette constante à false et de redéployer : les bornes cessent alors
+// d'envoyer au prochain chargement de leurs paramètres.
+const audienceEnabled = true
+
 const (
 	EventSessionStart      = "session_start"
 	EventFulfillmentChosen = "fulfillment_chosen"
@@ -77,7 +83,7 @@ type kioskEventRow struct {
 }
 
 // RecordEvents — POST /kiosk/events. 204 dans tous les cas où le corps est
-// lisible, y compris mesure coupée ou événements ignorés.
+// lisible, y compris événements ignorés.
 func (h *Handler) RecordEvents(w http.ResponseWriter, r *http.Request) {
 	authenticatedKiosk := middleware.GetKiosk(r)
 	if authenticatedKiosk == nil {
@@ -101,7 +107,7 @@ func (s *Service) RecordEvents(ctx context.Context, kiosk *AuthenticatedKiosk, r
 	if len(req.Events) > maxKioskEventsPerBatch {
 		return models.ErrInvalidInput
 	}
-	if !s.cfg.AudienceEnabled || len(req.Events) == 0 {
+	if !audienceEnabled || len(req.Events) == 0 {
 		return nil
 	}
 	rows := validKioskEvents(req.Events)
