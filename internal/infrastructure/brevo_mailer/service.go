@@ -275,6 +275,7 @@ func (b *BrevoMailer) sendEmailViaBrevo(from_name, from_email, to, subject, html
 		"subject":     subject,
 		"htmlContent": htmlContent,
 	}
+	withCopy(payload, to)
 
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -333,6 +334,7 @@ func (b *BrevoMailer) sendEmailViaBrevoWithAttachment(from_name, from_email, to,
 			},
 		},
 	}
+	withCopy(payload, to)
 
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -380,6 +382,7 @@ func (b *BrevoMailer) sendEmailViaBrevoWithAttachments(from_name, from_email, to
 	if len(files) > 0 {
 		payload["attachment"] = files
 	}
+	withCopy(payload, to)
 
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {

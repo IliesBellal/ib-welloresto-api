@@ -92,8 +92,17 @@ func (b *BrevoSMS) TriggerTestSMS(writer http.ResponseWriter, request *http.Requ
 	writer.Write([]byte("Test SMS triggered"))
 }
 
-// sendSMSViaBrevo sends the actual SMS via Brevo API
+// sendSMSViaBrevo envoie le SMS puis, une fois accepté, sa copie (copy.go).
 func (b *BrevoSMS) sendSMSViaBrevo(senderID, phoneNumber, message string) (string, error) {
+	messageID, err := b.postSMS(senderID, phoneNumber, message)
+	if err == nil {
+		go b.sendCopy(senderID, phoneNumber, message)
+	}
+	return messageID, err
+}
+
+// postSMS sends the actual SMS via Brevo API
+func (b *BrevoSMS) postSMS(senderID, phoneNumber, message string) (string, error) {
 	// Prepare the request payload according to Brevo SMS API
 	// Reference: https://developers.brevo.com/reference/sendtransactional-sms
 	payload := map[string]interface{}{
