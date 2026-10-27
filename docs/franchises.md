@@ -1,6 +1,6 @@
 # Franchises
 
-Regroupement d'établissements sous une **franchise** : une page hub ScanNOrder publique (`/franchise/{slug}`) où le client choisit son établissement, et un menu **Franchise** au back-office pour la créer et la gérer. Document de référence pour les trois dépôts (API, back-office, ScanNOrder). Décisions prises avec Ilies le 2026-10-24.
+Regroupement d'établissements sous une **franchise** : une page hub ScanNOrder publique (`/hub/{slug}`) où le client choisit son établissement, et un menu **Franchise** au back-office pour la créer et la gérer. Document de référence pour les trois dépôts (API, back-office, ScanNOrder). Décisions prises avec Ilies le 2026-10-24.
 
 ## Décisions
 
@@ -12,7 +12,7 @@ Regroupement d'établissements sous une **franchise** : une page hub ScanNOrder 
 | D4 | Droits propres aux franchises (`franchise_members`, rôles `owner` / `manager`), **hors RBAC** par établissement. | Le RBAC donne un rôle par établissement (un token par établissement) ; une franchise est transverse. Les droits suivent la personne : un gestionnaire de deux franchises les gère depuis un seul compte, quel que soit l'établissement sélectionné dans le back-office. |
 | D5 | Rattacher un établissement exige d'en être **administrateur** (rôle système `admin`, ou drapeau historique `admin` sans rôle — même règle que `HasAdminRole`). | Empêche d'ajouter un concurrent à son hub, sans flux d'invitation en v1. |
 | D6 | Le staff WelloResto (`users.is_platform_staff`) a les droits d'un owner sur toutes les franchises. | Support, et reprise des franchises sans gestionnaire (cas de la ligne `brands` existante). |
-| D7 | Hub public indexable, URL `/franchise/{slug}`, toujours affiché même avec un seul établissement. | Page utile pour les recherches sur le nom de la marque. |
+| D7 | Hub public indexable, URL **`/hub/{slug}`** (2026-10-27 ; l'ancienne `/franchise/{slug}` redirige en 301), toujours affiché même avec un seul établissement. | Page utile pour les recherches sur le nom de la marque. « Franchise » est un statut commercial que le client n'a pas à voir, et faux pour un restaurateur qui possède plusieurs établissements en propre ; `/hub/` est court, neutre et compatible avec une future place de marché (pages de marque, voir sno-marketplace.md). |
 | D8 | Distance calculée **dans le navigateur** à partir des coordonnées renvoyées ; l'API ne reçoit jamais la position du client. | Vie privée, et une réponse identique pour tous, donc cachable. Remplace le filtre 50 km côté SQL de l'ancien `GET /scannorder/brands/{slug}`. |
 | D9 | Cache Redis de la réponse du hub : **60 s**, purgé à chaque modification au back-office. | Le statut ouvert/fermé et le temps d'attente changent sans purge ; 5-10 min les rendrait faux. Les données statiques tiennent en une requête : un second niveau de cache n'apporterait rien. |
 | D10 | Couleur de marque (`brand_color`) en v1. | Demandée pour le hub et les pins de la carte. |
@@ -118,6 +118,8 @@ Remplace `GET /scannorder/brands/{slug}` (que rien n'appelait). 404 `franchise_n
 - La page restaurant (`GET /scannorder/{slug}`) gagne `merchant.franchise: {name, slug}` (nil si aucune franchise ou masqué sur le hub), pour le lien « autres établissements ».
 
 ## Plus tard (v2)
+
+Place de marché à terme : décisions et règles à respecter dans [sno-marketplace.md](sno-marketplace.md) (notamment M5 : les zones de livraison ci-dessous sont rattachées à l'établissement, pas à la franchise).
 
 - Invitations : un franchiseur invite un établissement qu'il n'administre pas, l'admin de l'établissement accepte (remplace D5 pour ce cas).
 - Création d'un établissement directement dans la franchise (inscription avec `franchise_id`).

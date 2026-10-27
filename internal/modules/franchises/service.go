@@ -231,9 +231,10 @@ func (s *Service) detail(ctx context.Context, f *Franchise, role string) (*Detai
 	return &DetailResponse{Franchise: *f, HubURL: s.HubURL(f.Slug), Role: role, Merchants: merchants}, nil
 }
 
-// HubURL : adresse publique du hub.
+// HubURL : adresse publique du hub (/hub/{slug} ; l'ancienne adresse
+// /franchise/{slug} redirige, docs/franchises.md D7).
 func (s *Service) HubURL(slug string) string {
-	return s.hubBaseURL + "/franchise/" + slug
+	return s.hubBaseURL + "/hub/" + slug
 }
 
 func (s *Service) Update(ctx context.Context, actor Actor, franchiseID string, req UpdateRequest) (*DetailResponse, error) {

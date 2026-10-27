@@ -127,7 +127,7 @@ type SitemapEntry struct {
 
 type SitemapResponse struct {
 	Merchants []SitemapEntry `json:"merchants"`
-	// Franchises : hubs (/franchise/{slug}) affichant au moins un établissement.
+	// Franchises : hubs (/hub/{slug}) affichant au moins un établissement.
 	Franchises []SitemapEntry `json:"franchises"`
 }
 
@@ -209,7 +209,7 @@ type Discount struct {
 	Available          bool    `json:"available"`
 }
 
-// --- Franchise (hub /franchise/{slug}) ---
+// --- Franchise (hub /hub/{slug}) ---
 
 type FranchiseHubResponse struct {
 	Status    string                 `json:"status"`

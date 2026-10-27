@@ -1,7 +1,7 @@
 package scannorder
 
 // Hub public d'une franchise : GET /scannorder/franchises/{slug}, page
-// /franchise/{slug} du front ScanNOrder. Gestion au back-office : module
+// /hub/{slug} du front ScanNOrder. Gestion au back-office : module
 // franchises. Décisions : docs/franchises.md.
 
 import (

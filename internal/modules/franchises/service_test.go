@@ -297,7 +297,7 @@ func TestCreate_RequiresAdminOfAnEstablishment(t *testing.T) {
 	if d.Role != RoleOwner || d.Franchise.Slug != "burger-co" {
 		t.Fatalf("created = role %q slug %q, want owner burger-co", d.Role, d.Franchise.Slug)
 	}
-	if d.HubURL != "https://scannorder.example/franchise/burger-co" {
+	if d.HubURL != "https://scannorder.example/hub/burger-co" {
 		t.Fatalf("HubURL = %q", d.HubURL)
 	}
 }
