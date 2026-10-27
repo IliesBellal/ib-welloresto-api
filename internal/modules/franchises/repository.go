@@ -53,10 +53,12 @@ func (r *Repository) GetFranchise(ctx context.Context, franchiseID string) (*Fra
 	db := dbx.GetDB(ctx, r.db)
 	f := &Franchise{}
 	err := db.QueryRowContext(ctx, `
-		SELECT franchise_id, name, slug, description, logo_url, banner_url, brand_color, creation_date
+		SELECT franchise_id, name, slug, description, logo_url, banner_url, brand_color, creation_date,
+		       announcement_enabled, announcement_text, announcement_url, to_char(announcement_ends_on, 'YYYY-MM-DD')
 		FROM franchises
 		WHERE franchise_id = ?`, franchiseID).Scan(
 		&f.FranchiseID, &f.Name, &f.Slug, &f.Description, &f.LogoURL, &f.BannerURL, &f.BrandColor, &f.CreatedAt,
+		&f.Announcement.Enabled, &f.Announcement.Text, &f.Announcement.URL, &f.Announcement.EndsOn,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -89,9 +91,13 @@ func (r *Repository) UpdateFranchise(ctx context.Context, f *Franchise) error {
 	db := dbx.GetDB(ctx, r.db)
 	_, err := db.ExecContext(ctx, `
 		UPDATE franchises
-		SET name = ?, slug = ?, description = ?, brand_color = ?, updated_at = ?
+		SET name = ?, slug = ?, description = ?, brand_color = ?,
+		    announcement_enabled = ?, announcement_text = ?, announcement_url = ?, announcement_ends_on = CAST(? AS date),
+		    updated_at = ?
 		WHERE franchise_id = ?`,
-		f.Name, f.Slug, f.Description, f.BrandColor, time.Now().UTC(), f.FranchiseID)
+		f.Name, f.Slug, f.Description, f.BrandColor,
+		f.Announcement.Enabled, f.Announcement.Text, f.Announcement.URL, f.Announcement.EndsOn,
+		time.Now().UTC(), f.FranchiseID)
 	return err
 }
 

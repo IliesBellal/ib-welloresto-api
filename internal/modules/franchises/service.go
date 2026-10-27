@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -61,6 +62,9 @@ const (
 	minSlugLen        = 3
 	maxSlugLen        = 50
 	maxDescriptionLen = 500
+	// Bandeau d'annonce du hub (D34) : une phrase, lisible sur mobile.
+	maxAnnouncementLen    = 140
+	maxAnnouncementURLLen = 500
 )
 
 var (
@@ -263,6 +267,11 @@ func (s *Service) Update(ctx context.Context, actor Actor, franchiseID string, r
 		}
 		f.BrandColor = nilIfEmpty(strings.ToUpper(c))
 	}
+	if req.Announcement != nil {
+		if err := applyAnnouncement(&f.Announcement, *req.Announcement); err != nil {
+			return nil, err
+		}
+	}
 	if req.Slug != nil {
 		slug, err := normalizeSlug(*req.Slug)
 		if err != nil {
@@ -289,6 +298,45 @@ func (s *Service) Update(ctx context.Context, actor Actor, franchiseID string, r
 		s.invalidateMerchantsOf(ctx, f.FranchiseID)
 	}
 	return s.detail(ctx, f, role)
+}
+
+// applyAnnouncement applique une modification du bandeau d'annonce (D34) :
+// texte de 140 caractères au plus, obligatoire pour l'activer ; lien https
+// facultatif ; date de fin facultative (YYYY-MM-DD).
+func applyAnnouncement(a *Announcement, req AnnouncementUpdate) error {
+	if req.Text != nil {
+		t := strings.Join(strings.Fields(*req.Text), " ")
+		if utf8.RuneCountInString(t) > maxAnnouncementLen {
+			return models.ErrFranchiseAnnouncementInvalid
+		}
+		a.Text = nilIfEmpty(t)
+	}
+	if req.URL != nil {
+		raw := strings.TrimSpace(*req.URL)
+		if raw != "" {
+			u, err := url.Parse(raw)
+			if err != nil || u.Scheme != "https" || u.Host == "" || len(raw) > maxAnnouncementURLLen {
+				return models.ErrFranchiseAnnouncementInvalid
+			}
+		}
+		a.URL = nilIfEmpty(raw)
+	}
+	if req.EndsOn != nil {
+		d := strings.TrimSpace(*req.EndsOn)
+		if d != "" {
+			if _, err := time.Parse("2006-01-02", d); err != nil {
+				return models.ErrFranchiseAnnouncementInvalid
+			}
+		}
+		a.EndsOn = nilIfEmpty(d)
+	}
+	if req.Enabled != nil {
+		a.Enabled = *req.Enabled
+	}
+	if a.Enabled && a.Text == nil {
+		return models.ErrFranchiseAnnouncementInvalid
+	}
+	return nil
 }
 
 // SetImage enregistre l'URL d'un logo ou d'une bannière déjà envoyé sur R2

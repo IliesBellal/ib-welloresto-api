@@ -226,6 +226,14 @@ type FranchisePublic struct {
 	BannerURL   *string `json:"banner_url"`
 	// BrandColor : couleur du hub (#RRGGBB), nil = thème par défaut.
 	BrandColor *string `json:"brand_color"`
+	// Announcement : bandeau d'annonce, seulement quand il est affiché
+	// (activé, avec un texte, date de fin non dépassée), D34.
+	Announcement *HubAnnouncement `json:"announcement,omitempty"`
+}
+
+type HubAnnouncement struct {
+	Text string  `json:"text"`
+	URL  *string `json:"url,omitempty"`
 }
 
 // FranchiseHubMerchant : un établissement du hub. Pas de distance : le

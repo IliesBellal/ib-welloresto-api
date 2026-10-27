@@ -30,6 +30,19 @@ type Franchise struct {
 	BannerURL   *string   `json:"banner_url"`
 	BrandColor  *string   `json:"brand_color"`
 	CreatedAt   time.Time `json:"created_at"`
+	// Announcement : bandeau d'annonce du hub (migration 196, D34).
+	Announcement Announcement `json:"announcement"`
+}
+
+// Announcement : bandeau d'annonce du hub, tel que réglé au back-office.
+// Affiché sur le hub quand Enabled, avec un texte, jusqu'à EndsOn inclus.
+type Announcement struct {
+	Enabled bool    `json:"enabled"`
+	Text    *string `json:"text"`
+	// URL : lien facultatif (https) ouvert au clic.
+	URL *string `json:"url"`
+	// EndsOn : dernier jour d'affichage (YYYY-MM-DD, jour local), nil = sans fin.
+	EndsOn *string `json:"ends_on"`
 }
 
 // FranchiseSummary : une franchise de la liste « mes franchises ».
@@ -110,10 +123,19 @@ type CreateRequest struct {
 // UpdateRequest : champs absents = inchangés. Description ou brand_color
 // vides effacent la valeur.
 type UpdateRequest struct {
-	Name        *string `json:"name"`
-	Slug        *string `json:"slug"`
-	Description *string `json:"description"`
-	BrandColor  *string `json:"brand_color"`
+	Name         *string             `json:"name"`
+	Slug         *string             `json:"slug"`
+	Description  *string             `json:"description"`
+	BrandColor   *string             `json:"brand_color"`
+	Announcement *AnnouncementUpdate `json:"announcement"`
+}
+
+// AnnouncementUpdate : champs absents inchangés ; chaîne vide = efface.
+type AnnouncementUpdate struct {
+	Enabled *bool   `json:"enabled"`
+	Text    *string `json:"text"`
+	URL     *string `json:"url"`
+	EndsOn  *string `json:"ends_on"`
 }
 
 type AddMerchantsRequest struct {

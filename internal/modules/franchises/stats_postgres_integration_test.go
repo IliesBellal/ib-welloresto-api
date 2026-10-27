@@ -135,3 +135,37 @@ func TestFranchiseStats_Postgres(t *testing.T) {
 		t.Errorf("tracking since = %v", got.TrackingSince)
 	}
 }
+
+// TestFranchiseAnnouncementRoundTrip_Postgres : le bandeau d'annonce
+// (migration 196) s'enregistre et se relit à l'identique, date comprise.
+func TestFranchiseAnnouncementRoundTrip_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+	const franchiseID = "fra-itest-roundtrip"
+	if _, err := db.ExecContext(ctx, `INSERT INTO franchises (franchise_id, name, slug) VALUES ($1, 'ITest', 'itest-roundtrip')`, franchiseID); err != nil {
+		t.Fatalf("seed franchise: %v", err)
+	}
+	t.Cleanup(func() { _, _ = db.ExecContext(ctx, `DELETE FROM franchises WHERE franchise_id = $1`, franchiseID) })
+
+	repo := NewRepository(db)
+	f, err := repo.GetFranchise(ctx, franchiseID)
+	if err != nil || f == nil {
+		t.Fatalf("GetFranchise: %v", err)
+	}
+	if f.Announcement.Enabled || f.Announcement.Text != nil || f.Announcement.EndsOn != nil {
+		t.Fatalf("défaut = %+v", f.Announcement)
+	}
+	text, link, end := "Burger du mois", "https://exemple.fr", "2026-11-30"
+	f.Announcement = Announcement{Enabled: true, Text: &text, URL: &link, EndsOn: &end}
+	if err := repo.UpdateFranchise(ctx, f); err != nil {
+		t.Fatalf("UpdateFranchise: %v", err)
+	}
+	got, err := repo.GetFranchise(ctx, franchiseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.Announcement
+	if !a.Enabled || a.Text == nil || *a.Text != text || a.URL == nil || *a.URL != link || a.EndsOn == nil || *a.EndsOn != end {
+		t.Errorf("relu = %+v", a)
+	}
+}

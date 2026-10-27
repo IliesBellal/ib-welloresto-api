@@ -420,6 +420,7 @@ var (
 	ErrFranchiseSlugTaken                = errors.New("franchise_slug_taken")
 	ErrFranchiseBrandColorInvalid        = errors.New("franchise_brand_color_invalid")
 	ErrFranchiseDescriptionInvalid       = errors.New("franchise_description_invalid")
+	ErrFranchiseAnnouncementInvalid      = errors.New("franchise_announcement_invalid")
 	ErrFranchiseMerchantNotAdmin         = errors.New("franchise_merchant_not_admin")
 	ErrFranchiseMerchantInOtherFranchise = errors.New("franchise_merchant_in_other_franchise")
 	ErrFranchiseMerchantNotInFranchise   = errors.New("franchise_merchant_not_in_franchise")
@@ -1138,6 +1139,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusBadRequest
 		errorStatus = "franchise_brand_color_invalid"
 		errorMsg = "The brand color must be a #RRGGBB hex color."
+
+	case errors.Is(err, ErrFranchiseAnnouncementInvalid):
+		status = http.StatusBadRequest
+		errorStatus = "franchise_announcement_invalid"
+		errorMsg = "The announcement needs a text of at most 140 characters, an optional https link and a valid end date."
 
 	case errors.Is(err, ErrFranchiseDescriptionInvalid):
 		status = http.StatusBadRequest

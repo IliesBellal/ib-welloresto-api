@@ -1026,18 +1026,33 @@ func (r *Repository) GetFranchiseHub(ctx context.Context, slug string) (*Franchi
 	db := dbx.GetDB(ctx, r.database)
 
 	franchise := &FranchisePublic{}
+	// Bandeau : affiché jusqu'à sa date de fin incluse, au jour local du
+	// premier établissement de la franchise (Europe/Paris sinon).
+	var announcementText, announcementURL *string
 	err := db.QueryRowContext(ctx, `
-		SELECT franchise_id, name, slug, description, logo_url, banner_url, brand_color
-		FROM franchises
-		WHERE slug = ?`, slug).Scan(
+		SELECT f.franchise_id, f.name, f.slug, f.description, f.logo_url, f.banner_url, f.brand_color,
+		       CASE WHEN f.announcement_enabled
+		             AND COALESCE(f.announcement_text, '') <> ''
+		             AND (f.announcement_ends_on IS NULL
+		                  OR f.announcement_ends_on >= CAST(now() AT TIME ZONE COALESCE(
+		                       (SELECT m.timezone FROM merchant m WHERE m.franchise_id = f.franchise_id AND m.timezone <> '' ORDER BY m.id LIMIT 1),
+		                       'Europe/Paris') AS date))
+		            THEN f.announcement_text END,
+		       f.announcement_url
+		FROM franchises f
+		WHERE f.slug = ?`, slug).Scan(
 		&franchise.FranchiseID, &franchise.Name, &franchise.Slug,
 		&franchise.Description, &franchise.LogoURL, &franchise.BannerURL, &franchise.BrandColor,
+		&announcementText, &announcementURL,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil, nil
 	}
 	if err != nil {
 		return nil, nil, err
+	}
+	if announcementText != nil {
+		franchise.Announcement = &HubAnnouncement{Text: *announcementText, URL: announcementURL}
 	}
 
 	query := fmt.Sprintf(`

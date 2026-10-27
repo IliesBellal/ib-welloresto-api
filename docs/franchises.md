@@ -38,8 +38,9 @@ Décisions D19 à D23 (ScanNOrder) et D27 à D33 (bornes) : [mesure-audience.md]
 
 | # | Décision | Pourquoi |
 |---|---|---|
-| D24 | Menu Franchise du back-office en quatre entrées (2026-10-27) : **Établissements** (`/franchise`), **Hub** (`/franchise/hub` : lien, QR code, apparence), **Gestionnaires** (`/franchise/gestionnaires`) et **Statistiques** (`/franchise/statistiques`), même sélecteur de franchise (la dernière consultée est retenue sur l'appareil). Pas d'onglet Franchise dans la page Analyse. | Analyse suit le périmètre et la permission d'analyse de chaque établissement ; la franchise suit ses gestionnaires (et, avec les invitations, un franchiseur sans droit sur les établissements franchisés). |
+| D24 | Menu Franchise du back-office en trois entrées (2026-10-27, décision Ilies) : **Gestion** (`/franchise`, onglets Établissements, Paramètres — nom, logo, suppression — et Gestionnaires, onglet dans `?tab=`), **Hub** (`/franchise/hub` : adresse et QR code, présentation — description, couleur, bannière —, bandeau d'annonce) et **Statistiques** (`/franchise/statistiques`). Même sélecteur de franchise partout, la dernière consultée est retenue sur l'appareil ; `/franchise/gestionnaires` redirige vers l'onglet. Pas d'onglet Franchise dans la page Analyse. | Analyse suit le périmètre et la permission d'analyse de chaque établissement ; la franchise suit ses gestionnaires (et, avec les invitations, un franchiseur sans droit sur les établissements franchisés). |
 | D25 | **Tous les gestionnaires** (owner et manager) voient les statistiques : visites du hub et leur provenance, clics Commander / Réserver, commandes et CA **venus du hub** par établissement, évolution par jour. Pas le CA ScanNOrder complet des établissements. À revoir avec les invitations de franchisés (v2). | Mesurer le hub sans exposer l'activité complète des établissements. |
+| D34 | **Bandeau d'annonce du hub** (2026-10-27) : message de 140 caractères au plus en haut du hub, lien https facultatif, dernier jour d'affichage facultatif (inclus, jour local du premier établissement). L'API publique ne le renvoie que s'il doit être affiché. Migration 196. | Annoncer une ouverture, un plat du mois ou des horaires exceptionnels sans toucher au reste du hub. |
 | D26 | L'onglet ScanNOrder de la page Analyse redevient une vue d'établissement : le hub y est une source parmi d'autres (visites, commandes, CA), avec un lien vers les statistiques de la franchise. | Ne plus mêler des chiffres de franchise (visites du hub) à ceux d'un établissement. |
 
 **Côté légal** : voir [mesure-audience.md](mesure-audience.md#politique-de-confidentialité).
@@ -74,7 +75,7 @@ Une franchise que l'utilisateur ne gère pas répond `404 franchise_not_found` (
 | POST | `/franchises` | `{name, slug?}` → détail (201). Slug dérivé du nom s'il est absent (`-2`, `-3`… s'il est pris). |
 | GET | `/franchises/slug-availability?slug=&exclude_id=` | `{slug, valid, available}` |
 | GET | `/franchises/{id}` | détail : `{franchise, hub_url, role, merchants: [{merchant_id, business_name, address, zip_code, city, logo_url, hub_visible, scannorder_active, order_types: {take_away, delivery, in}, reservation_enabled}]}` |
-| PATCH | `/franchises/{id}` | `{name?, slug?, description?, brand_color?}` (vide = efface) → détail |
+| PATCH | `/franchises/{id}` | `{name?, slug?, description?, brand_color?, announcement?: {enabled?, text?, url?, ends_on?}}` (vide = efface ; activer demande un texte ; erreur `franchise_announcement_invalid` 400) → détail, dont `franchise.announcement` |
 | DELETE | `/franchises/{id}` | owner |
 | PUT | `/franchises/{id}/logo`, `/banner` | multipart, champ `photo` (JPEG/PNG/WebP, 5 Mo) → `{photo_url}` |
 | GET | `/franchises/{id}/candidates` | `{merchants: [{merchant_id, business_name, address, city, franchise_id, franchise_name}]}` — établissements administrés, ceux d'une autre franchise compris (à griser) |
@@ -111,6 +112,7 @@ Remplace `GET /scannorder/brands/{slug}` (que rien n'appelait). 404 `franchise_n
 - `next_opening` : prochaine ouverture (`YYYY-MM-DD HH:MM:SS`, heure locale), seulement quand fermé.
 - Statut ouvert/fermé : même calcul que la page restaurant (`GetMerchantOpenState` : ouverture ScanNOrder, horaires, jours fériés, vacances). Calculé en parallèle (4 à la fois) ; un échec affiche l'établissement fermé sans faire échouer le hub.
 - Chaque établissement porte aussi `advance_orders_enabled` (D14) et `discounts` (D15).
+- `franchise.announcement: {text, url?}`, présent seulement quand le bandeau doit être affiché (D34).
 - `POST /scannorder/events` (mesure d'audience) et `POST /scannorder/{slug}/orders` avec `visit_source` / `hub_franchise_slug` (D18) : voir [mesure-audience.md](mesure-audience.md#api).
 - `POST /analytics/scannorder` : voir [mesure-audience.md](mesure-audience.md#api) ; le bloc `hub` n'y garde que `in_franchise` et `franchises` (D26).
 - `GET /franchises/{id}/stats?date_from&date_to` (gestionnaires, 366 jours au plus) → `{tracking_since, totals: {hub_views, order_clicks, reservation_clicks, hub_orders, hub_revenue_ttc_cents}, sources: [{source, views}], daily: [{date, hub_views, order_clicks, hub_orders}], merchants: [{merchant_id, business_name, order_clicks, reservation_clicks, hub_orders, hub_revenue_ttc_cents}]}` (D24, D25).
