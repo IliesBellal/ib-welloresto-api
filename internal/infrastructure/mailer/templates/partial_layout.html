@@ -1,0 +1,33 @@
+{{/* Squelette commun à tous les mails (docs/emails-styles.md) : document,
+pré-en-tête masqué (la ligne grise affichée sous l'objet dans la boîte de
+réception) et colonne centrée de 600 px. Le contenu se compose de lignes <tr>.
+Appel :
+  {{ template "doc_start" (dict "Title" "…" "Pre" "…" "Bg" "#f4f4f2") }}
+  … lignes <tr> …
+  {{ template "doc_end" }} */}}
+{{ define "doc_start" }}<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="x-apple-disable-message-reformatting">
+    <meta name="color-scheme" content="light">
+    <meta name="supported-color-schemes" content="light">
+    <title>{{ .Title }}</title>
+</head>
+<body style="margin:0; padding:0; background-color:{{ .Bg }}; -webkit-text-size-adjust:100%;">
+{{ if .Pre }}<div style="display:none; max-height:0; overflow:hidden; mso-hide:all; font-size:1px; line-height:1px; color:{{ .Bg }};">{{ .Pre }}&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;</div>{{ end }}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{{ .Bg }}" style="background-color:{{ .Bg }};">
+    <tr>
+        <td align="center" style="padding:24px 12px 32px;">
+            <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px;">
+{{ end }}
+
+{{ define "doc_end" }}
+            </table>
+        </td>
+    </tr>
+</table>
+</body>
+</html>
+{{ end }}

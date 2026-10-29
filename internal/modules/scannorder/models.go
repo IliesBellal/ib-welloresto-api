@@ -65,7 +65,7 @@ type MerchantData struct {
 	// sur son hub.
 	Franchise *MerchantFranchise `json:"franchise"`
 
-	OrderTypes         OrderTypes   `json:"order_types"`
+	OrderTypes           OrderTypes   `json:"order_types"`
 	PaymentTypes         PaymentTypes `json:"payment_types"`
 	AdvanceOrdersEnabled bool         `json:"advance_orders_enabled"`
 
@@ -340,9 +340,15 @@ type DiscountsResponse struct {
 // models.Order.DeliverySession (json:"delivery_session") is shadowed by the outer field
 // of the same JSON name, so the internal session (which lists every other customer of the
 // tour) is never serialized on this public endpoint.
+//
+// The internal sequential order_id is shadowed the same way (always nil, so omitted):
+// the public_id is the only id a client may hold (docs/SCANNORDER_PUBLIC_ORDER_ID.md,
+// phase 2). The Go field name differs on purpose, so server code reading
+// publicOrder.OrderID still gets the embedded internal id.
 type PublicSNOOrder struct {
 	*models.Order
 	DeliverySession *PublicDeliverySession `json:"delivery_session"`
+	HiddenOrderID   *struct{}              `json:"order_id,omitempty"`
 }
 
 // PublicDeliverySession is the GDPR-safe projection of a delivery session exposed to the

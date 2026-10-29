@@ -5,6 +5,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/go-chi/httprate"
 )
 
 // helper to extract token either from Authorization header (Bearer ...) or token query param
@@ -61,4 +63,27 @@ func ClientIP(r *http.Request) string {
 		return host
 	}
 	return r.RemoteAddr
+}
+
+// ProxyClientIP : adresse du client utilisable pour un seuil de sécurité.
+// Derrière le proxy de l'hébergeur, la dernière entrée de X-Forwarded-For est
+// celle qu'il a ajoutée lui-même ; les entrées précédentes viennent du client
+// et sont falsifiables (contrairement à ce que lit ClientIP ou
+// httprate.KeyByRealIP). Sans en-tête, on retombe sur l'adresse de connexion.
+// IPv6 regroupée par /64 (httprate.CanonicalizeIP).
+func ProxyClientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		last := xff
+		if i := strings.LastIndex(xff, ","); i >= 0 {
+			last = xff[i+1:]
+		}
+		if ip := net.ParseIP(strings.TrimSpace(last)); ip != nil {
+			return httprate.CanonicalizeIP(ip.String())
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	return httprate.CanonicalizeIP(host)
 }

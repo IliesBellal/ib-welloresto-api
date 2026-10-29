@@ -1,0 +1,14 @@
+{{/* Premier échec de prélèvement (dunning.sendFirstFailureNotice) : ton
+informatif, sans reproche ; dit quoi vérifier côté banque. Données :
+MerchantName, Establishment. */}}
+{{ template "doc_start" (dict "Title" "Un point sur votre moyen de paiement" "Pre" "Le dernier prélèvement de votre abonnement n'a pas abouti" "Bg" "#f3f5fa") }}
+{{ template "p_band_start" "#b45309" }}
+    {{ template "p_title" (dict "Title" "Le prélèvement de votre abonnement n'a pas abouti" "Sub" .MerchantName) }}
+{{ template "p_band_end" }}
+{{ template "p_body_start" }}
+    {{ template "establishment" .Establishment }}
+    <p style="margin:0 0 14px; padding:0 4px; font-size:14px; line-height:22px; color:#3c4150;">Cela arrive souvent pour une raison simple : carte expirée, plafond atteint ou opposition de la banque. Un rapide appel à votre banque suffit en général.</p>
+    <p style="margin:0 0 14px; padding:0 4px; font-size:14px; line-height:22px; color:#3c4150;">Vous pouvez aussi mettre à jour votre moyen de paiement dans votre back-office, rubrique « Abonnement &amp; facturation ». Votre service continue normalement en attendant.</p>
+{{ template "p_body_end" }}
+{{ template "p_foot" "" }}
+{{ template "doc_end" }}

@@ -39,6 +39,8 @@ type AuthService struct {
 	pepper  string
 	sfGroup singleflight.Group
 
+	failedLogins *failedLoginGuard
+
 	// resetBaseURL is the back-office URL a password-reset link points to.
 	// Empty means no reset email is sent (see docs/PASSWORD_RESET.md).
 	resetBaseURL string
@@ -49,7 +51,7 @@ func NewAuthService(r AuthRepository, rc *redis.Client, email mailer.Service, sm
 	if rc != nil {
 		cache = rc
 	}
-	return &AuthService{repo: r, redis: cache, email: email, sms: sms, pepper: pepper, resetBaseURL: resetBaseURL}
+	return &AuthService{repo: r, redis: cache, email: email, sms: sms, pepper: pepper, resetBaseURL: resetBaseURL, failedLogins: newFailedLoginGuard()}
 }
 
 // lockoutState is serialised as JSON in Redis under PINLockoutPrefix+anchorToken.
@@ -376,11 +378,32 @@ func (s *AuthService) canSendMFAOTP(ctx context.Context, user *UserLoginRow) boo
 	return false
 }
 
+// LoginFrom : Login appelé par la route HTTP, avec le seuil d'échecs par
+// adresse pour les connexions par mot de passe (voir failedLoginGuard).
+// clientIP doit venir de helpers.ProxyClientIP (non falsifiable).
+func (s *AuthService) LoginFrom(ctx context.Context, clientIP string, payload LoginRequestPayload, token string, isBackoffice bool) (*LoginResponse, error) {
+	if token != "" {
+		return s.Login(ctx, payload, token, isBackoffice)
+	}
+	reservedAt := time.Now()
+	if !s.failedLogins.reserve(clientIP, reservedAt) {
+		return nil, models.ErrRateLimited
+	}
+	resp, err := s.Login(ctx, payload, token, isBackoffice)
+	if !errors.Is(err, models.ErrUserNotFound) {
+		s.failedLogins.release(clientIP, reservedAt, time.Now())
+	}
+	return resp, err
+}
+
 func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, token string, isBackoffice bool) (*LoginResponse, error) {
 	//appID := convertApp(payload.App)
 	username := payload.Username + payload.Email
 
 	user, err := s.repo.Login(ctx, username, payload.Password, token)
+	if token == "" && errors.Is(err, models.ErrUserNotFound) {
+		waitAfterFailedLogin(ctx)
+	}
 	if errors.Is(err, models.ErrAccountDisabled) {
 		// Bons identifiants, compte désactivé et sans lien actif : même
 		// réponse que le cas !user.Enabled ci-dessous.
@@ -436,34 +459,6 @@ func (s *AuthService) Login(ctx context.Context, payload LoginRequestPayload, to
 
 	return buildLoginResponse(user, merchants), nil
 }
-
-/*
-func (s *AuthService) LoginOld(ctx context.Context, payload LoginRequestPayload, token string) (*LoginResponse, error) {
-
-	appID := convertApp(payload.App)
-
-	var username string
-	var err error
-
-	username = payload.Username + payload.Email
-
-	user, err := s.repo.Login(ctx, username, payload.Password, token)
-	if err != nil {
-		return nil, err
-	}
-	if user == nil {
-		return newLoginStatusResponse("user_not_found", "no user found"), nil
-	}
-
-	if !user.Enabled {
-		return newLoginStatusResponse("account_disabled", "false"), nil
-	}
-
-	// MULTI-MERCHANT
-	merchants, _ := s.repo.GetMerchants(ctx, user.UserID)
-
-	return buildLoginResponse(user, merchants), nil
-}*/
 
 func newLoginStatusResponse(status string, enabled string) *LoginResponse {
 	return &LoginResponse{
@@ -806,6 +801,7 @@ func (s *AuthService) SendMFACode(ctx context.Context, user *UserLoginRow, fallb
 		log.Error("Erreur Redis lors de la sauvegarde de l'OTP pour le user " + user.UserID)
 		return errors.New("erreur interne du serveur")
 	}
+	s.resetOTPAttempts(ctx, cacheKey)
 	log.Info("OTP généré et stocké dans Redis pour le user " + user.UserID)
 
 	// 3. Envoyer le code
@@ -860,12 +856,16 @@ func (s *AuthService) VerifyMFA(ctx context.Context, token string, codeSaisi str
 	// 2. Comparaison en temps constant
 	if subtle.ConstantTimeCompare([]byte(storedCode), []byte(codeSaisi)) != 1 {
 		log.Warn("MFA OTP incorrect pour le user " + user.UserID)
+		if s.otpAttemptFailed(ctx, cacheKey) {
+			return models.ErrMFAExpired
+		}
 		return models.ErrOTPMismatch
 	}
 
 	// 3. Consommer l'OTP dès que le code est bon : il ne doit plus être rejouable,
 	// même si l'écriture en base échoue juste après.
 	_ = s.redis.Delete(ctx, cacheKey)
+	s.resetOTPAttempts(ctx, cacheKey)
 
 	// 4. Valider la session en base de données
 	if err := s.repo.MarkAsMFAVerified(ctx, user.UserID); err != nil {
@@ -930,6 +930,13 @@ func (s *AuthService) SendVerificationCode(ctx context.Context, token, mode stri
 		return helpers.MaskEmail(user.Email), nil
 	}
 
+	// Délai avant renvoi, comme pour le MFA : sans lui, chaque appel envoyait un
+	// SMS facturé.
+	sentKey := models.VerificationSentPrefix + strings.ToUpper(mode) + ":" + user.Token
+	if _, found := s.redis.Get(ctx, sentKey); found {
+		return "", models.ErrOTPWaitTime
+	}
+
 	otp, err := helpers.GenerateOTP()
 	if err != nil {
 		return "", errors.New("impossible de générer le code de vérification")
@@ -943,6 +950,8 @@ func (s *AuthService) SendVerificationCode(ctx context.Context, token, mode stri
 	if !saved {
 		return "", models.ErrRedisNotAvailable
 	}
+	s.resetOTPAttempts(ctx, cacheKey)
+	s.redis.Set(ctx, sentKey, "1", OTPResendCooldown)
 
 	var recipient string
 	if strings.ToUpper(mode) == "EMAIL" {
@@ -967,16 +976,64 @@ func (s *AuthService) ConfirmVerification(ctx context.Context, token string, mod
 	}
 	cacheKey := helpers.GetVerificationCacheKey(mode, token)
 
+	// Mêmes codes d'erreur que le MFA (avant : erreur 500 sans code), pour que
+	// le back-office distingue « code faux » de « code à redemander ».
 	storedCode, found := s.redis.Get(ctx, cacheKey)
-	if !found || storedCode != codeSaisi {
-		return errors.New("code invalide ou expiré")
+	if !found {
+		return models.ErrMFAExpired
+	}
+	if subtle.ConstantTimeCompare([]byte(storedCode), []byte(codeSaisi)) != 1 {
+		if s.otpAttemptFailed(ctx, cacheKey) {
+			return models.ErrMFAExpired
+		}
+		return models.ErrOTPMismatch
 	}
 
 	// Suppression du code consommé
 	_ = s.redis.Delete(ctx, cacheKey)
+	s.resetOTPAttempts(ctx, cacheKey)
 
 	// Mise à jour en base de données via le repository
 	return s.repo.MarkAsVerified(ctx, token, mode)
+}
+
+// waitAfterFailedLogin retient la réponse d'une connexion par mot de passe
+// échouée (identifiant inconnu ou mot de passe faux) pendant failedLoginDelay :
+// une attaque par essais successifs devient très lente, sans jamais bloquer le
+// compte (décision Ilies : pas de verrouillage). Les essais lancés en parallèle
+// ne sont pas freinés par ce délai. Une requête abandonnée par le client libère
+// l'attente aussitôt.
+func waitAfterFailedLogin(ctx context.Context) {
+	timer := time.NewTimer(failedLoginDelay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+	}
+}
+
+// otpAttemptFailed compte un code faux pour l'OTP stocké sous cacheKey. Au
+// models.OTPMaxAttempts-ième, l'OTP est supprimé et la fonction renvoie true :
+// sans cette limite, un code à 6 chiffres se devine par force brute pendant
+// sa durée de vie.
+func (s *AuthService) otpAttemptFailed(ctx context.Context, cacheKey string) bool {
+	key := models.OTPAttemptsPrefix + cacheKey
+	n := 0
+	if raw, found := s.redis.Get(ctx, key); found {
+		n, _ = strconv.Atoi(raw)
+	}
+	n++
+	if n >= models.OTPMaxAttempts {
+		_ = s.redis.Delete(ctx, cacheKey)
+		_ = s.redis.Delete(ctx, key)
+		return true
+	}
+	s.redis.Set(ctx, key, strconv.Itoa(n), models.VerificationCacheTTL)
+	return false
+}
+
+func (s *AuthService) resetOTPAttempts(ctx context.Context, cacheKey string) {
+	_ = s.redis.Delete(ctx, models.OTPAttemptsPrefix+cacheKey)
 }
 
 // customerFormRequirementsRawMessage converts the raw JSON bytes scanned from

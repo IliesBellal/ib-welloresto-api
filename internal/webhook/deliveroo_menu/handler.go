@@ -5,14 +5,16 @@ import (
 	"io"
 	"net/http"
 	"welloresto-api/internal/logger"
+	"welloresto-api/internal/webhook/deliveroosig"
 )
 
 type MenuWebhookHandler struct {
-	service *MenuWebhookService
+	service       *MenuWebhookService
+	webhookSecret string
 }
 
-func NewMenuWebhookHandler(service *MenuWebhookService) *MenuWebhookHandler {
-	return &MenuWebhookHandler{service: service}
+func NewMenuWebhookHandler(service *MenuWebhookService, webhookSecret string) *MenuWebhookHandler {
+	return &MenuWebhookHandler{service: service, webhookSecret: webhookSecret}
 }
 
 func (h *MenuWebhookHandler) HandleMenuWebhook(w http.ResponseWriter, r *http.Request) {
@@ -26,6 +28,10 @@ func (h *MenuWebhookHandler) HandleMenuWebhook(w http.ResponseWriter, r *http.Re
 		return
 	}
 	log.Info("WEBHOOK BODY RECEIVED: " + string(bodyBytes))
+	// La route accepte aussi GET : seul un POST porte une signature.
+	if r.Method == http.MethodPost {
+		deliveroosig.Observe(r.Context(), "menu", r.Header, bodyBytes, h.webhookSecret)
+	}
 
 	// 2. Décodage dans la structure spécifique au Menu
 	var payload MenuWebhookPayload

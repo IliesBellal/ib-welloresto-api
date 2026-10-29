@@ -265,10 +265,29 @@ func (s *reservationService) CreateReservation(ctx context.Context, qr string, i
 			TimeLabel:     startTime.Format("15:04"),
 			PartySize:     req.Booking.PartySize,
 			SMSEnabled:    merchant.SMSEnabled,
+			// Fichier d'agenda joint à la confirmation.
+			StartAt:         startTime,
+			EndAt:           startTime.Add(time.Duration(durationMinutes) * time.Minute),
+			MerchantAddress: merchantAddress(merchant),
+			Confirmed:       true,
 		})
 	}
 
 	return response
+}
+
+// merchantAddress met l'adresse de l'établissement sur une ligne (lieu du
+// fichier d'agenda d'une réservation).
+func merchantAddress(m *Merchant) string {
+	street := strings.TrimSpace(strings.TrimSpace(m.Address.StreetNumber) + " " + strings.TrimSpace(m.Address.Street))
+	city := strings.TrimSpace(strings.TrimSpace(m.Address.ZipCode) + " " + strings.TrimSpace(m.Address.City))
+	parts := make([]string, 0, 3)
+	for _, p := range []string{m.BusinessName, street, city} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 func (s *reservationService) normalizePhone(phone string) string {
@@ -384,6 +403,12 @@ func (s *reservationService) UpdateReservation(ctx context.Context, qr string, r
 				TimeLabel:     startTime.Format("15:04"),
 				PartySize:     req.Booking.PartySize,
 				SMSEnabled:    merchant.SMSEnabled,
+				// Sans acceptation automatique, la réservation modifiée repasse
+				// en attente : pas de mise à jour de l'agenda.
+				StartAt:         startTime,
+				EndAt:           startTime.Add(time.Duration(durationMinutes) * time.Minute),
+				MerchantAddress: merchantAddress(merchant),
+				Confirmed:       merchant.AutoAcceptReserveBookings,
 			})
 		}
 	}
@@ -422,12 +447,20 @@ func (s *reservationService) CancelReservation(ctx context.Context, qr string, b
 				loc = time.UTC
 			}
 			dateLabel, timeLabel := "", ""
+			var startAt, endAt time.Time
 			if startTime, perr := time.Parse(time.RFC3339, current.Booking.DateFrom); perr == nil {
 				startTime = startTime.In(loc)
 				dateLabel = bookingcore.FormatDateLabelFR(startTime)
 				timeLabel = startTime.Format("15:04")
+				startAt = startTime
+				endAt = startTime.Add(time.Duration(current.Booking.DurationMinutes) * time.Minute)
 			}
 			s.comm.SendCancellation(ctx, bookingcomm.BookingMessage{
+				// Retire l'événement de l'agenda si la réservation était confirmée.
+				StartAt:         startAt,
+				EndAt:           endAt,
+				MerchantAddress: merchantAddress(merchant),
+				Confirmed:       bookingcore.NormalizeLegacyStatus(current.Booking.Status) == bookingcore.StatusConfirmed,
 				MerchantID:    merchant.MerchantID,
 				BookingID:     stored.BookingID,
 				MerchantSlug:  qr,

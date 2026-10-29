@@ -1,0 +1,112 @@
+{{/* Cadre « Tableau de bord » des mails adressés par Wello Resto aux
+restaurateurs (style R2 ; choix du 2026-10-26, docs/emails-styles.md) :
+bandeau bleu Wello Resto portant le titre et le chiffre clé, détail en cartes
+blanches sur fond #f3f5fa. Couleur du bandeau selon l'urgence : bleu #0036d9
+(information), orange #b45309 (paiement en attente, sans date de suspension),
+rouge #a32121 (suspension annoncée). Fond de page : #f3f5fa.
+
+  {{ template "p_band_start" "#0036d9" }}
+    {{ template "p_title" (dict "Title" "…" "Sub" "…") }}
+    {{ template "p_figure" (dict "Label" "…" "Value" .Amount "Sub" "…") }}
+  {{ template "p_band_end" }}
+  {{ template "p_body_start" }}
+    {{ template "p_notice" .TestNotice }}
+    {{ template "establishment" .Establishment }}
+    {{ template "p_card_start" }}{{ template "p_row" (dict "K" "…" "V" "…") }}…{{ template "p_card_end" }}
+    {{ template "p_attach" (dict "Name" "…" "Note" "…") }}
+    {{ template "p_button" (dict "URL" .Link "Label" "…" "Color" "#0036d9") }}
+  {{ template "p_body_end" }}
+  {{ template "p_foot" "" }}
+
+Paragraphes : <p style="margin:0 0 14px; padding:0 4px; font-size:14px; line-height:22px; color:#3c4150;">. */}}
+
+{{ define "p_band_start" }}{{ $bg := or . "#0036d9" }}
+<tr>
+    <td bgcolor="{{ $bg }}" style="background-color:{{ $bg }}; padding:22px 28px 28px; border-radius:12px 12px 0 0; font-family:Helvetica, Arial, sans-serif; color:#ffffff;">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px;">
+            <tr>
+                <td width="24" height="24" align="center" valign="middle" bgcolor="#ffffff" style="width:24px; height:24px; background-color:#ffffff; border-radius:6px; font-family:Helvetica, Arial, sans-serif; font-size:13px; line-height:24px; font-weight:bold; color:{{ $bg }};">W</td>
+                <td style="padding-left:9px; font-family:Helvetica, Arial, sans-serif; font-size:15px; line-height:24px; font-weight:bold; color:#ffffff;">Wello Resto</td>
+            </tr>
+        </table>
+{{ end }}
+
+{{ define "p_band_end" }}
+    </td>
+</tr>
+{{ end }}
+
+{{ define "p_title" }}<h1 style="margin:0; font-family:Helvetica, Arial, sans-serif; font-size:22px; line-height:28px; font-weight:bold; color:#ffffff;">{{ .Title }}</h1>
+{{ if .Sub }}<p style="margin:6px 0 0; font-family:Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; color:#ffffff; opacity:0.85;">{{ .Sub }}</p>{{ end }}{{ end }}
+
+{{ define "p_figure" }}
+<p style="margin:24px 0 0; font-family:Helvetica, Arial, sans-serif; font-size:11px; line-height:16px; letter-spacing:1px; text-transform:uppercase; color:#ffffff; opacity:0.8;">{{ .Label }}</p>
+<p style="margin:2px 0 0; font-family:Helvetica, Arial, sans-serif; font-size:34px; line-height:40px; font-weight:bold; color:#ffffff;">{{ .Value }}</p>
+{{ if .Sub }}<p style="margin:4px 0 0; font-family:Helvetica, Arial, sans-serif; font-size:13px; line-height:19px; color:#ffffff; opacity:0.85;">{{ .Sub }}</p>{{ end }}{{ end }}
+
+{{ define "p_body_start" }}
+<tr>
+    <td bgcolor="#f3f5fa" style="background-color:#f3f5fa; padding:16px 0 4px; font-family:Helvetica, Arial, sans-serif; font-size:14px; line-height:22px; color:#3c4150;">
+{{ end }}
+
+{{ define "p_body_end" }}
+    </td>
+</tr>
+{{ end }}
+
+{{ define "p_card_start" }}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="background-color:#ffffff; border-radius:12px; margin:0 0 12px;">
+    <tr>
+        <td style="padding:4px 20px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">{{ end }}
+
+{{ define "p_row" }}
+                <tr>
+                    <td valign="top" style="padding:11px 12px 11px 0;{{ if not .Last }} border-bottom:1px solid #eef0f5;{{ end }} font-family:Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; color:#6b7080;">{{ .K }}</td>
+                    <td valign="top" align="right" style="padding:11px 0;{{ if not .Last }} border-bottom:1px solid #eef0f5;{{ end }} font-family:Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; font-weight:bold; color:#151922; text-align:right;">{{ .V }}</td>
+                </tr>
+{{ end }}
+
+{{ define "p_card_end" }}
+            </table>
+        </td>
+    </tr>
+</table>{{ end }}
+
+{{ define "p_attach" }}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="background-color:#ffffff; border-radius:12px; margin:0 0 12px;">
+    <tr>
+        <td width="40" valign="middle" style="padding:14px 0 14px 20px;"><span style="display:inline-block; background-color:#c62828; color:#ffffff; font-family:Helvetica, Arial, sans-serif; font-size:10px; line-height:14px; font-weight:bold; padding:4px 6px; border-radius:3px;">PDF</span></td>
+        <td valign="middle" style="padding:14px 20px 14px 10px; font-family:Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; color:#151922;">{{ .Name }}{{ if .Note }}<br><span style="font-size:12px; line-height:18px; color:#6b7080;">{{ .Note }}</span>{{ end }}</td>
+    </tr>
+</table>{{ end }}
+
+{{ define "p_alert" }}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#fdeeee" style="background-color:#fdeeee; border:1px solid #f3c6c6; border-radius:12px; margin:0 0 12px;">
+    <tr>
+        <td style="padding:14px 20px; font-family:Helvetica, Arial, sans-serif; font-size:14px; line-height:21px; color:#8a1c1c;"><strong>{{ .Strong }}</strong>{{ if .Text }} {{ .Text }}{{ end }}</td>
+    </tr>
+</table>{{ end }}
+
+{{ define "p_notice" }}{{ if . }}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#fff5e0" style="background-color:#fff5e0; border:1px solid #f0d9a6; border-radius:12px; margin:0 0 12px;">
+    <tr>
+        <td style="padding:12px 20px; font-family:Helvetica, Arial, sans-serif; font-size:13px; line-height:19px; color:#7a4a00;">{{ . }}</td>
+    </tr>
+</table>{{ end }}{{ end }}
+
+{{ define "p_button" }}{{ $bg := or .Color "#0036d9" }}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0 14px;">
+    <tr>
+        <td align="center" bgcolor="{{ $bg }}" style="background-color:{{ $bg }}; border-radius:10px;">
+            <a href="{{ .URL }}" target="_blank" style="display:block; padding:15px 20px; font-family:Helvetica, Arial, sans-serif; font-size:15px; line-height:20px; font-weight:bold; color:#ffffff; text-decoration:none; border-radius:10px;">{{ .Label }}</a>
+        </td>
+    </tr>
+</table>
+{{ end }}
+
+{{ define "p_foot" }}
+<tr>
+    <td style="padding:10px 4px 0; font-family:Helvetica, Arial, sans-serif; font-size:12px; line-height:18px; color:#7a8194;">
+        {{ if . }}{{ . }}<br>{{ end }}
+        Une question ? Écrivez-nous à <a href="mailto:{{ supportEmail }}" style="color:#0036d9; text-decoration:none;">{{ supportEmail }}</a><br>
+        Wello Resto
+    </td>
+</tr>
+{{ end }}

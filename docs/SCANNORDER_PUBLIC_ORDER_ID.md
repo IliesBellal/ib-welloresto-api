@@ -47,7 +47,7 @@ commandes, 2 975 avec `public_id`, toutes distinctes ; toutes les commandes cré
 | Modèles | `models/create_order_models.go` | `OrderRequest.PublicID` (`json:"-"`, jamais lu du client) ; `CreateOrderResult.PublicID` (`public_id`). |
 | Modèles | `models/orders_model.go`, `orders/orders_fetcher_builder.go` | `Order.PublicID` (`public_id`, nullable) lu dans la requête d'en-tête. Le cache Redis (TTL 10 min) peut servir quelques minutes des commandes sans le champ après déploiement : sans impact, la résolution ne passe pas par lui. |
 | ScanNOrder | `scannorder/repository.go` | `GetOrderIDByPublicID(qr, publicID)` : jointure `qrcodes` → filtre marchand. |
-| ScanNOrder | `scannorder/service.go` | `resolveOrderRef` (phase 1 : id interne laissé passer, `TODO phase 2`) en tête de `GetOrderSNO` et `CancelOrderSNO` ; garde `len(Orders) == 0` → `ErrNotFound` ; `order.PublicID` transmis au checkout. |
+| ScanNOrder | `scannorder/service.go` | `resolveOrderRef` (phase 2 depuis le 2026-10-28 : id interne refusé, `ErrNotFound`) en tête de `GetOrderSNO` et `CancelOrderSNO` ; garde `len(Orders) == 0` → `ErrNotFound` ; `order.PublicID` transmis au checkout. |
 | ScanNOrder | `scannorder/handler.go` | `ErrNotFound` → 404. |
 | Stripe | `infrastructure/stripe/checkout.go` | `success_url`/`cancel_url` via `ScanNOrderOrderURL` (id public) ; `partial_order` : `/` manquant corrigé. Metadata `order_id` inchangées. |
 | Webhook Stripe | `webhook/stripe/{service,repository,models}.go` | `GetOrder` lit `public_id`, `order_num` ; lien du mail et du SMS via `ScanNOrderOrderURL` (fini l'adresse `.onrender.com` en dur) ; SMS : `order_num` au lieu de l'id interne ; `SetScanNOrderBaseURL`. |
@@ -89,10 +89,13 @@ importé).
 5. **App borne** (sans `tracking_url`, l'ancienne API ne donne simplement pas de QR).
 6. **Phase 2** (lot séparé), une fois 4 et 5 en production et après expiration des sessions Stripe
    en cours :
-   - `resolveOrderRef` : refuser l'id interne (`models.ErrNotFound`) — `TODO phase 2` dans
-     `scannorder/service.go` ;
-   - front : retirer le repli `res.order_id` dans `CheckoutFlow.tsx` ;
-   - envisager de retirer `order_id` de la réponse publique `GET /scannorder/{slug}/orders/{id}`.
+   - `resolveOrderRef` : refuser l'id interne (`models.ErrNotFound`) — **fait le 2026-10-28**
+     sur staging (`TestResolveOrderRef_RefusesInternalID`). Avant la prod, vérifier qu'aucun
+     appel `…/orders/{entier}` ne figure dans `api_request_logs` ;
+   - front : retirer le repli `res.order_id` dans `CheckoutFlow.tsx` — reste à faire (sans
+     effet entre-temps : l'API renvoie toujours `public_id` à la création) ;
+   - envisager de retirer `order_id` de la réponse publique `GET /scannorder/{slug}/orders/{id}`
+     — reste à faire.
 
 ## 4. Statut d'exécution
 

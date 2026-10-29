@@ -71,6 +71,9 @@ type OrdersLifeCycleService struct {
 	accountingRepo       merchantHeaderProvider
 	mailerService        mailer.Service
 	bookingsSvc          bookingAutoTransitioner
+	// Envoi automatique des factures des commandes en ligne (cf. SetOnlineInvoices).
+	invoiceOutbound invoiceOutboundRecorder
+	invoiceBrands   invoiceBrandResolver
 }
 
 func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc *stripeclient.StripeManager, uberSvc *ubereats.UberEatsService, deliverooSvc *deliveroo.DeliverooService, deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository, log *zap.Logger, notificationsService *notification.NotificationService, customersService *customers.CustomersService, redis *redis.Client, auditService audit.AuditService, orders orderFetcher, receiptService receipt.ReceiptService, db *sql.DB, stocksRepo *stocks.StocksRepository, upsellTracker *upsell.Tracker, accountingRepo merchantHeaderProvider, mailerService mailer.Service, bookingsSvc bookingAutoTransitioner) *OrdersLifeCycleService {
@@ -1490,16 +1493,59 @@ func (s *OrdersLifeCycleService) SendInvoiceByEmail(ctx context.Context, orderID
 		EmailSentTo: email,
 	}
 
+	inv, err := s.orderInvoicePDF(ctx, user.MerchantID, orderID, &order, customerID, customerName)
+	if err != nil {
+		return response, err
+	}
+
+	// Envoi tracé (outbound_messages, domaine order_invoice) quand le mailer
+	// le permet : la tâche RunOnlineOrderInvoices ne renvoie pas une facture
+	// déjà envoyée depuis la caisse.
+	sender, tracked := s.mailerService.(onlineInvoiceMailer)
+	if !tracked || s.invoiceOutbound == nil {
+		if err := s.mailerService.SendInvoiceEmailToCustomer(email, customerName, inv.MerchantName, inv.ReceiptNumber, inv.PDF, inv.FileName); err != nil {
+			return response, &EmailDeliveryError{Err: err}
+		}
+		return response, nil
+	}
+	messageID, err := s.sendOrderInvoiceMail(ctx, sender, user.MerchantID, email, customerName, inv)
+	if err != nil {
+		return response, &EmailDeliveryError{Err: err}
+	}
+	// Le mail est parti : un échec d'écriture ne change pas la réponse, au
+	// pire la tâche automatique enverra une seconde fois la facture.
+	if err := s.journalOrderInvoice(ctx, orderID, email, messageID); err != nil {
+		logger.FromContext(ctx).Warn("invoice sent from POS but not journaled",
+			zap.String("order_id", orderID), zap.Error(err))
+	}
+
+	return response, nil
+}
+
+// orderInvoice est la facture PDF d'une commande close, prête à envoyer.
+type orderInvoice struct {
+	PDF           []byte
+	FileName      string
+	ReceiptNumber string
+	MerchantName  string
+	OrderNum      string
+}
+
+// orderInvoicePDF construit la facture PDF d'une commande close à partir de son
+// ticket de vente déjà figé (NF525, aucun recalcul). Partagée par l'envoi
+// depuis la caisse (SendInvoiceByEmail) et l'envoi automatique des commandes
+// en ligne (SendOnlineOrderInvoices).
+func (s *OrdersLifeCycleService) orderInvoicePDF(ctx context.Context, merchantID, orderID string, order *models.Order, customerID, customerName string) (*orderInvoice, error) {
 	// Ticket de vente et non avoir : un remboursement crée un reçu négatif plus
 	// récent rattaché à la même commande.
 	rcpt, err := s.receiptService.GetSaleReceiptByOrderID(ctx, orderID)
 	if err != nil {
-		return response, fmt.Errorf("failed to load fiscal receipt for order %s: %w", orderID, err)
+		return nil, fmt.Errorf("failed to load fiscal receipt for order %s: %w", orderID, err)
 	}
 
-	header, err := s.accountingRepo.GetMerchantHeader(ctx, user.MerchantID)
+	header, err := s.accountingRepo.GetMerchantHeader(ctx, merchantID)
 	if err != nil {
-		return response, fmt.Errorf("failed to load merchant header: %w", err)
+		return nil, fmt.Errorf("failed to load merchant header: %w", err)
 	}
 
 	orderNum := ""
@@ -1507,25 +1553,26 @@ func (s *OrdersLifeCycleService) SendInvoiceByEmail(ctx context.Context, orderID
 		orderNum = *order.OrderNum
 	}
 
-	customer := invoiceCustomerFromOrder(&order, customerID, customerName)
-	vatLines := computeInvoiceVATBreakdown(&order, s.deliveryFeesVATRateForInvoice(ctx, &order), int64(rcpt.TotalTTC), int64(rcpt.TotalHT))
+	customer := invoiceCustomerFromOrder(order, customerID, customerName)
+	vatLines := computeInvoiceVATBreakdown(order, s.deliveryFeesVATRateForInvoice(ctx, order), int64(rcpt.TotalTTC), int64(rcpt.TotalHT))
 
 	pdfBytes, err := buildInvoicePDF(rcpt, header, orderNum, customer, vatLines)
 	if err != nil {
-		return response, fmt.Errorf("failed to build invoice PDF: %w", err)
+		return nil, fmt.Errorf("failed to build invoice PDF: %w", err)
 	}
 
 	// Estimation post-base64 (~33% d'inflation) pour respecter la limite Brevo de 4 Mo.
 	if (len(pdfBytes)*4)/3 > maxBrevoAttachmentBytes {
-		return response, models.ErrInvoiceAttachmentTooLarge
+		return nil, models.ErrInvoiceAttachmentTooLarge
 	}
 
-	fileName := fmt.Sprintf("facture-%s.pdf", rcpt.ReceiptNumber)
-	if err := s.mailerService.SendInvoiceEmailToCustomer(email, customerName, header.MerchantName, rcpt.ReceiptNumber, pdfBytes, fileName); err != nil {
-		return response, &EmailDeliveryError{Err: err}
-	}
-
-	return response, nil
+	return &orderInvoice{
+		PDF:           pdfBytes,
+		FileName:      fmt.Sprintf("facture-%s.pdf", rcpt.ReceiptNumber),
+		ReceiptNumber: rcpt.ReceiptNumber,
+		MerchantName:  header.MerchantName,
+		OrderNum:      orderNum,
+	}, nil
 }
 
 // invoiceCustomerFromOrder construit l'identité du client de la facture : le nom

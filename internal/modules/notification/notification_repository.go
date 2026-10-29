@@ -74,25 +74,6 @@ func (r *NotificationRepository) DeleteAccessToken(ctx context.Context, token st
 	return err
 }
 
-func (r *NotificationRepository) GetValidFCMTokenOld(ctx context.Context) (string, error) {
-	db := dbx.GetDB(ctx, r.database)
-
-	var token string
-
-	err := db.QueryRowContext(ctx, fmt.Sprintf(`
-        SELECT access_token
-        FROM firebase_fcm_access_token
-        WHERE %s <= expiration_date
-        LIMIT 1
-    `, dbx.UTCNow())).Scan(&token)
-
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
-	}
-
-	return token, err
-}
-
 func (r *NotificationRepository) GetValidFCMToken(ctx context.Context) (string, time.Time, error) {
 	db := dbx.GetDB(ctx, r.database)
 	var token string

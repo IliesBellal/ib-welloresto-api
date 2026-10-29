@@ -158,10 +158,9 @@ func (s *Service) isCurrentlyOpen(ctx context.Context, merchantID string) (bool,
 
 // --- Notices ----------------------------------------------------------------
 //
-// Template names below are new Brevo templates this chantier introduces —
-// they must be created in Brevo before these sends produce real content (see
-// docs/decisions.md); the code path itself is complete and correct
-// regardless.
+// Template names below are files of internal/infrastructure/mailer/templates
+// (rendered locally, not Brevo templates). They were missing until 2026-10-26,
+// so every notice failed to render and was dropped (docs/emails-styles.md).
 
 func (s *Service) sendFirstFailureNotice(ctx context.Context, merchantID string) error {
 	contact, err := s.repo.GetMerchantOwnerContact(ctx, merchantID)
@@ -169,8 +168,8 @@ func (s *Service) sendFirstFailureNotice(ctx context.Context, merchantID string)
 		return err
 	}
 	// "SANS réclamation — dit quoi vérifier côté banque... pas 'vous devez'"
-	// — informational tone lives in the Brevo template content itself, not
-	// in this call site; only the template NAME and data are Go's concern.
+	// — informational tone lives in dunning_first_notice.html, not in this
+	// call site; only the template NAME and data are Go's concern.
 	est := establishmentOf(merchantID, contact)
 	s.email.SendAsync("Wello Resto", mailer.InvoiceEmail, contact.Email, "Un point sur votre moyen de paiement"+est.SubjectSuffix(), "dunning_first_notice.html", map[string]interface{}{
 		"MerchantName":  contact.MerchantName,

@@ -1,0 +1,16 @@
+{{/* Second échec de prélèvement (dunning.sendSecondFailureNotice) : la
+fenêtre avant suspension est ouverte. Données : MerchantName, Establishment,
+SuspensionDeadline (jj/mm/aaaa). */}}
+{{ template "doc_start" (dict "Title" "Action requise sur votre abonnement" "Pre" (printf "Régularisez avant le %s pour éviter la suspension" .SuspensionDeadline) "Bg" "#f3f5fa") }}
+{{ template "p_band_start" "#a32121" }}
+    {{ template "p_title" (dict "Title" "Action requise sur votre abonnement" "Sub" .MerchantName) }}
+    {{ template "p_figure" (dict "Label" "Suspension prévue le" "Value" .SuspensionDeadline "Sub" "Sans régularisation d'ici là") }}
+{{ template "p_band_end" }}
+{{ template "p_body_start" }}
+    {{ template "establishment" .Establishment }}
+    {{ template "p_alert" (dict "Strong" (printf "Sans régularisation avant le %s," .SuspensionDeadline) "Text" "votre compte sera suspendu.") }}
+    <p style="margin:0 0 14px; padding:0 4px; font-size:14px; line-height:22px; color:#3c4150;">Un second prélèvement de votre abonnement a échoué. Vérifiez auprès de votre banque (carte expirée, plafond, opposition) ou mettez à jour votre moyen de paiement dans votre back-office, rubrique « Abonnement &amp; facturation ».</p>
+    <p style="margin:0 0 14px; padding:0 4px; font-size:14px; line-height:22px; color:#3c4150;">Dès que le paiement passe, les relances s'arrêtent et tout redevient normal.</p>
+{{ template "p_body_end" }}
+{{ template "p_foot" "" }}
+{{ template "doc_end" }}

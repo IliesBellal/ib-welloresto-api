@@ -1,0 +1,15 @@
+{{/* Rappel de fin d'accès gratuit, 7 jours puis 1 jour avant
+(subscriptions.sendTrialReminder). Données : MerchantName, Establishment,
+DaysRemaining (int), TrialEndsAt (jj/mm/aaaa). */}}
+{{ template "doc_start" (dict "Title" "Votre accès gratuit se termine bientôt" "Pre" (printf "Fin de votre accès gratuit le %s" .TrialEndsAt) "Bg" "#f3f5fa") }}
+{{ template "p_band_start" "#0036d9" }}
+    {{ template "p_title" (dict "Title" "Votre accès gratuit se termine bientôt" "Sub" .MerchantName) }}
+    {{ template "p_figure" (dict "Label" "Fin de l'accès gratuit" "Value" .TrialEndsAt "Sub" (printf "Dans %s" (plural .DaysRemaining "jour" "jours"))) }}
+{{ template "p_band_end" }}
+{{ template "p_body_start" }}
+    {{ template "establishment" .Establishment }}
+    <p style="margin:0 0 14px; padding:0 4px; font-size:14px; line-height:22px; color:#3c4150;">Pour continuer à utiliser Wello Resto sans interruption après cette date, activez votre abonnement dans votre back-office, rubrique « Abonnement &amp; facturation ».</p>
+    <p style="margin:0 0 14px; padding:0 4px; font-size:14px; line-height:22px; color:#3c4150;">Une question sur les formules ? Écrivez-nous, nous vous aidons à choisir.</p>
+{{ template "p_body_end" }}
+{{ template "p_foot" "" }}
+{{ template "doc_end" }}

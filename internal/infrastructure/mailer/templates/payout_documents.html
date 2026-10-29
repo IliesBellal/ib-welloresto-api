@@ -1,43 +1,16 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>Votre relevé de versement</title>
-</head>
-<body style="font-family: 'UberMoveText', 'Open Sans', Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #ffffff;">
-
-<table width="100%" style="max-width: 712px; margin: auto;">
-    <tbody>
-    <tr>
-        <td align="left" style="padding: 40px 20px;">
-            {{ if .TestNotice }}
-            <p style="font-size:12px; color:#8a5a00; background-color:#fff4d6; border-radius:6px; padding:10px 12px; line-height:18px;">{{ .TestNotice }}</p>
-            {{ end }}
-            <h1 style="font-size:24px; color:#000; margin:0 0 16px 0;">Votre relevé de versement</h1>
-            {{ template "establishment" .Establishment }}
-            <p style="font-size:14px; color:#333; line-height:22px;">
-                Bonjour l'équipe {{ .MerchantName }},<br>
-                Un versement de <strong>{{ .Amount }}</strong> a été effectué sur votre compte bancaire
-                (arrivée le {{ .ArrivalDate }}, référence {{ .PayoutID }}).
-            </p>
-            <p style="font-size:14px; color:#333; line-height:22px;">
-                Le <strong>relevé de versement</strong> est joint à ce mail (PDF) : il détaille ce que contient ce virement
-                (commandes en ligne, borne, remboursements, frais de transactions). Vous pouvez le transmettre à
-                votre comptable pour justifier le virement.
-            </p>
-            {{ if .BackOfficeURL }}
-            <div style="padding: 10px 0 25px 0;">
-                <a href="{{ .BackOfficeURL }}" target="_blank" style="background-color:#000000; color:#ffffff; display:inline-block; padding: 13px 16px; border-radius: 10px; text-decoration:none; font-weight:bold; font-size:14px;">
-                    Consulter mes virements
-                </a>
-            </div>
-            {{ end }}
-            <p style="font-size:12px; color:#666; padding-top: 30px;">
-                Besoin d'aide ? Contactez-nous à <a href="mailto:{{ .SupportEmail }}" style="color:#000;">{{ .SupportEmail }}</a>
-            </p>
-        </td>
-    </tr>
-    </tbody>
-</table>
-</body>
-</html>
+{{ template "doc_start" (dict "Title" "Votre relevé de versement" "Pre" (printf "%s versés sur votre compte · relevé PDF joint" .Amount) "Bg" "#f3f5fa") }}
+{{ template "p_band_start" "#0036d9" }}
+    {{ template "p_title" (dict "Title" "Votre relevé de versement" "Sub" .MerchantName) }}
+    {{ template "p_figure" (dict "Label" "Versé sur votre compte" "Value" .Amount "Sub" (printf "Arrivée le %s · réf. %s" .ArrivalDate .PayoutID)) }}
+{{ template "p_band_end" }}
+{{ template "p_body_start" }}
+    {{ template "p_notice" .TestNotice }}
+    {{ template "establishment" .Establishment }}
+    {{ template "p_attach" (dict "Name" "Relevé de versement" "Note" "En pièce jointe, au format PDF") }}
+    <p style="margin:0 0 14px; padding:0 4px; font-size:14px; line-height:22px; color:#3c4150;">Le relevé détaille ce que contient ce virement : commandes en ligne, borne, remboursements et frais de transaction. Vous pouvez le transmettre tel quel à votre comptable pour justifier le virement.</p>
+    {{ if .BackOfficeURL }}
+    {{ template "p_button" (dict "URL" .BackOfficeURL "Label" "Consulter mes virements" "Color" "#0036d9") }}
+    {{ end }}
+{{ template "p_body_end" }}
+{{ template "p_foot" "" }}
+{{ template "doc_end" }}

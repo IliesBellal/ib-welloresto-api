@@ -74,9 +74,9 @@ func TestAuthRepository_Postgres(t *testing.T) {
 	}
 	t.Cleanup(func() { _, _ = db.ExecContext(ctx, `DELETE FROM subscriptions WHERE merchant_id = $1`, merchantID) })
 
-	passwordHash, err := helpers.HashPassword("itest-password")
+	passwordHash, err := helpers.HashUserPassword("itest-password")
 	if err != nil {
-		t.Fatalf("HashPassword: %v", err)
+		t.Fatalf("HashUserPassword: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO users (user_id, name, first_name, last_name, password, email, tel, token, enabled)

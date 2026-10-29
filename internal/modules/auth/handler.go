@@ -31,7 +31,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	isBackoffice := r.Header.Get("X-App-Source") == "backoffice"
 
 	// On passe isBackoffice au service
-	resp, err := h.svc.Login(r.Context(), req, token, isBackoffice)
+	resp, err := h.svc.LoginFrom(r.Context(), helpers.ProxyClientIP(r), req, token, isBackoffice)
 	if err != nil {
 		models.SendErrorJSON(w, "auth", "login", err)
 		return
@@ -40,26 +40,6 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// Si le MFA est requis, on renvoie un code 202 Accepted au lieu de 200 OK
 	if resp.Status == "MFA_REQUIRED" {
 		models.SendJSON(w, http.StatusAccepted, "auth", "login", resp)
-		return
-	}
-
-	models.SendJSON(w, http.StatusOK, "auth", "login", resp)
-}
-
-// Can be used with user and pwd, with token in get, or token in authorization
-func (h *AuthHandler) LoginOld(w http.ResponseWriter, r *http.Request) {
-
-	token := helpers.ExtractToken(r)
-	// Parse JSON body
-	var req LoginRequestPayload
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && token == "" {
-		models.SendJSON(w, http.StatusBadRequest, "auth", "login", map[string]string{"error": "invalid_request"})
-		return
-	}
-
-	resp, err := h.svc.Login(r.Context(), req, token, false)
-	if err != nil {
-		models.SendErrorJSON(w, "auth", "login", err)
 		return
 	}
 

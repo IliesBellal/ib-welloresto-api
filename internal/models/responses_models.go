@@ -813,7 +813,7 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 	case errors.Is(err, ErrMFAExpired):
 		status = http.StatusUnauthorized
 		errorStatus = "mfa_expired"
-		errorMsg = "The MFA code was provided too recently. Please try again later."
+		errorMsg = "The code has expired or too many wrong attempts were made. Please request a new code."
 
 	case errors.Is(err, ErrOTPWaitTime):
 		status = http.StatusForbidden

@@ -21,6 +21,11 @@ func (m *mockReminderMailer) SendAsync(fromName, fromEmail, to, subject, templat
 	m.calls++
 }
 
+// La confirmation part avec son fichier d'agenda (.ics) : c'est le même mail.
+func (m *mockReminderMailer) SendAsyncWithAttachment(fromName, fromEmail, to, subject, templateName string, data interface{}, attachmentBytes []byte, attachmentName string) {
+	m.calls++
+}
+
 func TestListBookingsForReminder_QueryShape(t *testing.T) {
 	db, mock, capture := newCapturingMockDB(t)
 	defer db.Close()

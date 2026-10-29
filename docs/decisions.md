@@ -1,3 +1,16 @@
+### Webhooks Stripe et Deliveroo en mode observation, connexion et ancien code PHP (2026-10-28)
+
+**Webhooks Stripe et Deliveroo.** Aucune signature n'était vérifiée : un faux `checkout.session.completed` pouvait marquer une commande payée. **Décision d'Ilies** : même « soft run » que Uber Eats (entrée du 2026-10-08), aucune interruption possible. Chaque webhook est journalisé (erreur si secret absent, en-tête absent ou signature fausse ; information si vérifiée) et **toujours traité**.
+- Stripe (`StripeWebhookService.VerifySignature`) : deux secrets, un par destination Stripe pointant vers `/webhooks/stripe` (`STRIPE_WEBHOOK_SECRET` pour le compte plateforme, `STRIPE_CONNECT_WEBHOOK_SECRET` pour les comptes connectés, cf. `KIOSK_DECISIONS.md` §2). Le journal indique lequel a concordé (`secret`) et si l'événement vient d'un compte connecté (`connect_event`). Seule la signature est vérifiée (`webhook.ValidatePayload`, tolérance 5 min) : `ConstructEvent` refuserait tout événement d'une autre version d'API que stripe-go.
+- Deliveroo (`internal/webhook/deliveroosig`, commandes et menu, POST seulement) : `DELIVEROO_WEBHOOK_SECRET`. HMAC-SHA256 hexadécimal de `GUID + séparateur + corps` (`X-Deliveroo-Sequence-Guid`, `X-Deliveroo-Hmac-Sha256`). La documentation Deliveroo donne deux séparateurs (`" "`, et `" \n "` pour les anciens événements POS) : les deux sont essayés, le journal indique celui qui concorde (`separator`), pour ne garder que celui-là au passage au rejet.
+- Ensuite : rejet plateforme par plateforme, après une période sans erreur, derrière une variable d'environnement.
+
+**Connexion par mot de passe : seuil par adresse IP.** Le délai de 2 s après échec ne freinait pas les essais en parallèle. Au-delà de 30 échecs en 15 min depuis une adresse (`helpers.ProxyClientIP`, dernière entrée de `X-Forwarded-For`), `429 rate_limited` immédiat jusqu'à la fenêtre suivante (`auth.failedLoginGuard`). Pas de blocage de compte (décision d'Ilies) ; connexions réussies et par jeton jamais comptées ; compteur en mémoire, par instance.
+
+**Ancien code PHP des mots de passe supprimé.** Les mots de passe chiffrés de la version PHP ont été retirés de la base (Ilies). Supprimés : `helpers.EncryptPHP` (AES-128-ECB, clé dans le code), la comparaison en clair qui l'accompagnait, la conversion bcrypt à la connexion et `helpers.HashPassword`. `PasswordMatches` n'accepte plus que bcrypt. Faille fermée au passage : la comparaison en clair acceptait un mot de passe vide sur un compte Google seul (`password = ''`).
+
+Tests : `TestLoginFrom_FailedAttemptsCappedPerIP`, `TestFailedLoginGuard_*`, `TestPasswordMatches`, `TestMatchSignature`, `TestVerifySignature_NeverBlocks`, `deliveroosig.TestVerify`. Statut : non commité, non déployé.
+
 ### Webhooks Uber Eats : vérification de la signature en mode observation (2026-10-08)
 
 **Contexte.** La signature `X-Uber-Signature` n'était jamais vérifiée : `VerifySignature` renvoyait toujours vrai, et le service des webhooks recevait une clé vide (`""` dans `cmd/api/routes.go`). Rejeter les webhooks dont la signature ne concorde pas aurait donc refusé toutes les commandes Uber Eats.

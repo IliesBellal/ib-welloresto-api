@@ -1,0 +1,17 @@
+{{/* Relance hebdomadaire (dunning.sendWeeklyReminder). Données :
+MerchantName, Establishment et, à partir de la 2e relance une fois la fenêtre
+de suspension ouverte, SuspensionDeadline (jj/mm/aaaa) : bandeau rouge avec
+elle, orange sans elle. */}}
+{{ template "doc_start" (dict "Title" "Rappel : votre moyen de paiement" "Pre" "Le paiement de votre abonnement est toujours en attente" "Bg" "#f3f5fa") }}
+{{ if .SuspensionDeadline }}{{ template "p_band_start" "#a32121" }}{{ else }}{{ template "p_band_start" "#b45309" }}{{ end }}
+    {{ template "p_title" (dict "Title" "Le paiement de votre abonnement est toujours en attente" "Sub" .MerchantName) }}
+    {{ if .SuspensionDeadline }}{{ template "p_figure" (dict "Label" "Suspension prévue le" "Value" .SuspensionDeadline "Sub" "Sans régularisation d'ici là") }}{{ end }}
+{{ template "p_band_end" }}
+{{ template "p_body_start" }}
+    {{ template "establishment" .Establishment }}
+    {{ if .SuspensionDeadline }}{{ template "p_alert" (dict "Strong" (printf "Sans régularisation avant le %s," .SuspensionDeadline) "Text" "votre compte sera suspendu.") }}{{ end }}
+    <p style="margin:0 0 14px; padding:0 4px; font-size:14px; line-height:22px; color:#3c4150;">Nous n'avons toujours pas pu prélever votre abonnement. Vérifiez auprès de votre banque (carte expirée, plafond, opposition) ou mettez à jour votre moyen de paiement dans votre back-office, rubrique « Abonnement &amp; facturation ».</p>
+    <p style="margin:0 0 14px; padding:0 4px; font-size:14px; line-height:22px; color:#3c4150;">Dès que le paiement passe, les relances s'arrêtent.</p>
+{{ template "p_body_end" }}
+{{ template "p_foot" "" }}
+{{ template "doc_end" }}

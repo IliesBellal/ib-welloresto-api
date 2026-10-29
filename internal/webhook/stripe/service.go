@@ -29,6 +29,8 @@ import (
 	"github.com/stripe/stripe-go/v78"
 	"github.com/stripe/stripe-go/v78/balancetransaction"
 	"github.com/stripe/stripe-go/v78/paymentintent"
+	"github.com/stripe/stripe-go/v78/webhook"
+	"go.uber.org/zap"
 )
 
 type StripeWebhookService struct {
@@ -67,6 +69,34 @@ type StripeWebhookService struct {
 	// subscriptionInvoices met les factures d'abonnement payées en file pour
 	// leur envoi (cf. SetSubscriptionInvoices). Nil : aucun envoi.
 	subscriptionInvoices subscriptionInvoiceRecorder
+	// brands habille la confirmation de commande aux couleurs de
+	// l'établissement (cf. SetBrandResolver). Nil : cadre par défaut.
+	brands brandResolver
+	// signatureSecrets : secrets whsec_ connus, essayés dans l'ordre par
+	// VerifySignature (cf. SetSignatureSecrets).
+	signatureSecrets []signatureSecret
+}
+
+type signatureSecret struct {
+	scope string // "account" ou "connect", pour le journal
+	value string
+}
+
+type brandResolver interface {
+	Resolve(ctx context.Context, merchantID, name string) mailer.MerchantBrand
+}
+
+// SetBrandResolver branche la lecture de l'identité (logo, couleur) des
+// établissements pour leurs mails clients (merchantbrand.Repository).
+func (s *StripeWebhookService) SetBrandResolver(brands brandResolver) {
+	s.brands = brands
+}
+
+func (s *StripeWebhookService) brand(ctx context.Context, merchantID, merchantName string) mailer.MerchantBrand {
+	if s.brands == nil {
+		return mailer.NewMerchantBrand(merchantName, "", "", "")
+	}
+	return s.brands.Resolve(ctx, merchantID, merchantName)
 }
 
 type subscriptionInvoiceRecorder interface {
@@ -345,10 +375,11 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 				log.Printf("Warning: no tracking URL for order %s (QR code or public id missing)", order.OrderID)
 			}
 			emailPayload := mailer.ScanNOrderConfirmationData{
+				Brand:        s.brand(ctx, merchantID, merchant.BusinessName),
 				OrderTotal:   fmt.Sprintf("%.2f", float64(order.Price)/100) + merchant.Currency,
 				MerchantLogo: merchant.LogoURL,
 				MerchantName: merchant.BusinessName,
-				OrderDate:    order.CreationDate.String(),
+				OrderDate:    order.CreationDate.Format("02/01/2006"),
 				TrackingURL:  trackingURL,
 				SupportEmail: "contact@welloresto.fr",
 			}
@@ -1039,7 +1070,7 @@ func (s *StripeWebhookService) HandleRefund(ctx context.Context, data json.RawMe
 
 	// Préparation des données pour le mail
 	refundData := mailer.RefundData{
-		Amount:        fmt.Sprintf("%.2f", float64(refundedCharge.Amount)/100) + " " + string(refundedCharge.Currency),
+		Amount:        fmt.Sprintf("%.2f %s", float64(refundedCharge.Amount)/100, strings.ToUpper(string(refundedCharge.Currency))),
 		PaymentMethod: paymentMethod,
 		PaymentDetail: paymentDetail,
 		CardLast4:     cardLast4,
@@ -1328,8 +1359,63 @@ func (s *StripeWebhookService) HandleAccountUpdated(ctx context.Context, data js
 	return nil
 }
 
-func (s *StripeWebhookService) VerifySignature(ctx context.Context, header http.Header, body []byte) {
-	// A implémenter avec webhook.ConstructEvent de la lib stripe-go
+// SetSignatureSecrets fixe les secrets de signature des deux destinations
+// webhook (compte plateforme, comptes connectés), cf. config.StripeConfig.
+func (s *StripeWebhookService) SetSignatureSecrets(account, connect string) {
+	s.signatureSecrets = nil
+	for _, sec := range []struct{ scope, value string }{{"account", account}, {"connect", connect}} {
+		if v := strings.TrimSpace(sec.value); v != "" {
+			s.signatureSecrets = append(s.signatureSecrets, signatureSecret{scope: sec.scope, value: v})
+		}
+	}
+}
+
+// VerifySignature contrôle l'en-tête Stripe-Signature en mode observation
+// (« soft run »), comme le webhook Uber Eats : le résultat est journalisé —
+// erreur si la signature manque ou ne concorde avec aucun secret, information
+// si elle est vérifiée, avec le secret qui a concordé — et l'événement est
+// TOUJOURS traité. Le rejet (400) ne sera activé qu'après une période sans
+// aucune erreur en production.
+//
+// Seule la signature est vérifiée (webhook.ValidatePayload), jamais la
+// version d'API de l'événement : webhook.ConstructEvent refuse tout événement
+// dont la version diffère de celle de stripe-go.
+func (s *StripeWebhookService) VerifySignature(ctx context.Context, header http.Header, body []byte, event StripeEvent) {
+	log := logger.FromContext(ctx)
+	sig := header.Get("Stripe-Signature")
+	fields := []zap.Field{
+		zap.String("event_id", event.ID),
+		zap.String("event_type", event.Type),
+		zap.Bool("connect_event", event.Account != ""),
+		zap.Bool("signature_present", sig != ""),
+	}
+	switch {
+	case len(s.signatureSecrets) == 0:
+		log.Error("[stripe webhook] signature not checked: STRIPE_WEBHOOK_SECRET and STRIPE_CONNECT_WEBHOOK_SECRET are empty (soft run, event processed)", fields...)
+		return
+	case sig == "":
+		log.Error("[stripe webhook] signature missing: no Stripe-Signature header (soft run, event processed)", fields...)
+		return
+	}
+	if scope, failures := s.matchSignature(body, sig); scope != "" {
+		log.Info("[stripe webhook] signature verified", append(fields, zap.String("secret", scope))...)
+	} else {
+		log.Error("[stripe webhook] signature mismatch (soft run, event processed)", append(fields, zap.Strings("failures", failures))...)
+	}
+}
+
+// matchSignature renvoie la portée du secret dont la signature concorde
+// ("account" ou "connect"), ou "" et la raison de l'échec pour chaque secret.
+func (s *StripeWebhookService) matchSignature(body []byte, sig string) (string, []string) {
+	failures := make([]string, 0, len(s.signatureSecrets))
+	for _, sec := range s.signatureSecrets {
+		err := webhook.ValidatePayload(body, sig, sec.value)
+		if err == nil {
+			return sec.scope, nil
+		}
+		failures = append(failures, sec.scope+": "+err.Error())
+	}
+	return "", failures
 }
 
 // --- Private Helpers ---

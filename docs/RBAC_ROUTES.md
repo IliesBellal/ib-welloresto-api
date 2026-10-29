@@ -151,7 +151,6 @@ doit masquer la tuile sur ce 403, pas casser la page d'accueil.
 | POST | `/scannorder/{merchant_slug}/pricing` | aucune | aucun |
 | POST | `/scannorder/{merchant_slug}/delivery/check` | aucune | aucun |
 | POST | `/scannorder/{merchant_slug}/orders` | aucune | aucun |
-| POST | `/scannorder/{merchant_slug}/create` (dépréciée) | aucune | aucun |
 | GET | `/scannorder/{merchant_slug}/orders/{order_id}` | aucune | aucun |
 | GET | `/scannorder/{merchant_slug}/products/{product_id}` | aucune | aucun |
 | DELETE | `/scannorder/{merchant_slug}/orders/{order_id}` | aucune | aucun |

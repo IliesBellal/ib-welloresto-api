@@ -424,15 +424,6 @@ LIMIT 1;
 		if !helpers.PasswordMatches(plainPwd, data.Password) {
 			return nil, models.ErrUserNotFound
 		}
-
-		// Migration automatique vers bcrypt pour les mots de passe legacy
-		if !strings.HasPrefix(data.Password, "$2") {
-			if newHash, err := helpers.HashPassword(plainPwd); err == nil {
-				if err := r.UpdatePassword(ctx, data.UserID, newHash); err == nil {
-					data.Password = newHash
-				}
-			}
-		}
 	}
 
 	if err := r.attachRolePermissions(ctx, data); err != nil {

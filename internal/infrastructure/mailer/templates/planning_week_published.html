@@ -1,60 +1,26 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Planning publié</title>
-</head>
-<body style="margin:0; padding:0; background-color:#f4f4f5; font-family: Arial, Helvetica, sans-serif;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f5; padding:24px 0;">
+{{/* Planning publié, envoyé au nom de l'établissement à un employé
+(planningcomm). Données (map) : Brand (mailer.MerchantBrand), MerchantName,
+EmployeeName, WeekLabel, PlanningURL, Shifts ([]planningcomm.ShiftSummary). */}}
+{{ template "doc_start" (dict "Title" "Planning publié" "Pre" (printf "Votre planning pour %s" .WeekLabel) "Bg" "#f5f5f7") }}
+{{ template "s_card_start_merchant" .Brand }}
+    {{ template "s_icon" (dict "Glyph" "calendar" "Color" .Brand.Color "TextColor" .Brand.TextColor) }}
+    {{ template "s_title" "Votre planning est publié" }}
+    <p style="margin:0 0 20px; font-size:15px; line-height:23px; color:#5a5f6b;">{{ if .EmployeeName }}Bonjour {{ .EmployeeName }}, voici{{ else }}Voici{{ end }} vos horaires pour <strong style="color:#121521;">{{ .WeekLabel }}</strong>.</p>
+    {{ if .Shifts }}
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 22px; border-top:1px solid #ededf1; text-align:left;">
+        {{ range .Shifts }}
         <tr>
-            <td align="center">
-                <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff; border-radius:8px; overflow:hidden; max-width:600px; width:100%;">
-                    <tr>
-                        <td align="center" style="padding:24px;">
-                            <img src="{{.BrandLogoURL}}" alt="{{.BrandName}}" width="120" style="display:block; border:0;">
-                        </td>
-                    </tr>
-                    <tr>
-                        <td style="padding:0 32px 24px 32px; color:#18181b;">
-                            <h1 style="font-size:20px; margin:0 0 16px 0;">Votre planning a été publié</h1>
-                            <p style="font-size:15px; line-height:1.5; margin:0 0 12px 0;">Bonjour {{.EmployeeName}},</p>
-                            <p style="font-size:15px; line-height:1.5; margin:0 0 12px 0;">
-                                {{.MerchantName}} a publié votre planning pour <strong>{{.WeekLabel}}</strong>.
-                            </p>
-                            {{if .Shifts}}
-                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; margin:16px 0;">
-                                {{range .Shifts}}
-                                <tr>
-                                    <td style="padding:8px 0; border-bottom:1px solid #e4e4e7; font-size:14px; color:#18181b;">
-                                        <strong>{{.DayLabel}}</strong><br>
-                                        {{.StartTime}} - {{.EndTime}}{{if .PositionLabel}} · {{.PositionLabel}}{{end}}{{if .Title}} · {{.Title}}{{end}}
-                                    </td>
-                                </tr>
-                                {{end}}
-                            </table>
-                            {{else}}
-                            <p style="font-size:15px; line-height:1.5; margin:0 0 12px 0;">Aucun shift n'est actuellement planifié pour cette semaine.</p>
-                            {{end}}
-                            {{if .PlanningURL}}
-                            <p style="margin:24px 0;">
-                                <a href="{{.PlanningURL}}" style="display:inline-block; background-color:#18181b; color:#ffffff; text-decoration:none; padding:12px 20px; border-radius:6px; font-size:14px;">
-                                    Ouvrir le planning
-                                </a>
-                            </p>
-                            {{end}}
-                        </td>
-                    </tr>
-                    <tr>
-                        <td style="padding:16px 32px; background-color:#fafafa; color:#71717a; font-size:12px;">
-                            Besoin d'aide ? Contactez-nous à
-                            <a href="mailto:{{.SupportEmail}}" style="color:#4f46e5; text-decoration:none;">{{.SupportEmail}}</a>
-                            <br>© {{.Year}} {{.BrandName}}
-                        </td>
-                    </tr>
-                </table>
-            </td>
+            <td valign="top" style="padding:10px 12px 10px 0; border-bottom:1px solid #ededf1; font-family:Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; font-weight:bold; color:#121521;">{{ .DayLabel }}</td>
+            <td valign="top" align="right" style="padding:10px 0; border-bottom:1px solid #ededf1; font-family:Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; color:#2e2e33; text-align:right;">{{ .StartTime }} – {{ .EndTime }}{{ if .PositionLabel }}<br><span style="font-size:12px; color:#8a8a92;">{{ .PositionLabel }}</span>{{ end }}</td>
         </tr>
+        {{ end }}
     </table>
-</body>
-</html>
+    {{ else }}
+    <p style="margin:0 0 20px; font-size:15px; line-height:23px; color:#5a5f6b;">Aucun créneau n'est prévu pour vous cette semaine.</p>
+    {{ end }}
+    {{ if .PlanningURL }}
+    {{ template "s_button" (dict "URL" .PlanningURL "Label" "Ouvrir le planning" "Color" .Brand.Color "TextColor" .Brand.TextColor) }}
+    {{ end }}
+{{ template "s_card_end" }}
+{{ template "s_foot" (printf "%s · envoyé avec Wello Resto" .MerchantName) }}
+{{ template "doc_end" }}

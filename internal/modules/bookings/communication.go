@@ -36,18 +36,29 @@ func (s *BookingsService) buildBookingMessage(booking *Booking, settings *Bookin
 		smsEnabled = settings.SMSEnabled
 	}
 
+	// Fin du créneau pour le fichier d'agenda : durée par défaut de
+	// l'établissement si la réservation n'a pas de fin exploitable.
+	end := time.Unix(booking.BookingDateTo, 0).In(loc)
+	if !end.After(start) && booking.Merchant.DefaultBookingDuration > 0 {
+		end = start.Add(time.Duration(booking.Merchant.DefaultBookingDuration) * time.Minute)
+	}
+
 	return bookingcomm.BookingMessage{
-		BookingID:     booking.BookingID,
-		MerchantSlug:  slug,
-		MerchantName:  booking.Merchant.BusinessName,
-		CustomerName:  name,
-		CustomerEmail: email,
-		CustomerPhone: phone,
-		BookingNumber: booking.BookingNumber,
-		DateLabel:     bookingcore.FormatDateLabelFR(start),
-		TimeLabel:     start.Format("15:04"),
-		PartySize:     booking.PartySize,
-		SMSEnabled:    smsEnabled,
+		BookingID:       booking.BookingID,
+		MerchantSlug:    slug,
+		MerchantName:    booking.Merchant.BusinessName,
+		CustomerName:    name,
+		CustomerEmail:   email,
+		CustomerPhone:   phone,
+		BookingNumber:   booking.BookingNumber,
+		DateLabel:       bookingcore.FormatDateLabelFR(start),
+		TimeLabel:       start.Format("15:04"),
+		PartySize:       booking.PartySize,
+		SMSEnabled:      smsEnabled,
+		StartAt:         start,
+		EndAt:           end,
+		MerchantAddress: booking.Merchant.Address.Address,
+		Confirmed:       bookingcore.NormalizeLegacyStatus(booking.Status) == bookingcore.StatusConfirmed,
 	}
 }
 

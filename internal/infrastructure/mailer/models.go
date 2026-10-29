@@ -1,6 +1,11 @@
 package mailer
 
-import "strings"
+import (
+	"math"
+	"regexp"
+	"strconv"
+	"strings"
+)
 
 const (
 	BrandLogoURL  = "https://scannorder.welloresto.fr/src/tracking-preview.png"
@@ -9,8 +14,77 @@ const (
 	SecurityEmail = "security@welloresto.fr"
 )
 
+// Couleurs par défaut d'un établissement : celles de merchant_parameters
+// (primary_color, text_color_on_primary_color).
+const (
+	DefaultBrandColor     = "#212529"
+	DefaultBrandTextColor = "#ffffff"
+)
+
+// MerchantBrand est l'identité d'un établissement dans les mails envoyés en
+// son nom (cadre « Maison » des templates partial_client.html, cf.
+// docs/emails-styles.md) : nom, logo, couleur du bandeau et du bouton, couleur
+// du texte posé dessus. Construit par NewMerchantBrand.
+type MerchantBrand struct {
+	Name      string
+	LogoURL   string
+	Color     string
+	TextColor string
+}
+
+var hexColorPattern = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
+
+// NewMerchantBrand normalise l'identité d'un établissement : une couleur absente
+// ou invalide prend la valeur par défaut ; une couleur de texte absente ou
+// invalide est choisie (blanc ou foncé) selon la clarté du fond ; un logo qui
+// n'est pas une URL http(s) est ignoré.
+func NewMerchantBrand(name, logoURL, color, textColor string) MerchantBrand {
+	color = strings.TrimSpace(color)
+	if !hexColorPattern.MatchString(color) {
+		color = DefaultBrandColor
+	}
+	textColor = strings.TrimSpace(textColor)
+	if !hexColorPattern.MatchString(textColor) {
+		textColor = readableTextOn(color)
+	}
+	logoURL = strings.TrimSpace(logoURL)
+	if !strings.HasPrefix(logoURL, "https://") && !strings.HasPrefix(logoURL, "http://") {
+		logoURL = ""
+	}
+	return MerchantBrand{Name: strings.TrimSpace(name), LogoURL: logoURL, Color: color, TextColor: textColor}
+}
+
+// readableTextOn renvoie le blanc ou un gris très foncé, celui qui se lit le
+// mieux sur la couleur hex donnée (luminance relative WCAG).
+func readableTextOn(color string) string {
+	hex := strings.TrimPrefix(color, "#")
+	if len(hex) == 3 {
+		hex = string([]byte{hex[0], hex[0], hex[1], hex[1], hex[2], hex[2]})
+	}
+	var lum float64
+	for i, weight := range []float64{0.2126, 0.7152, 0.0722} {
+		v, err := strconv.ParseUint(hex[i*2:i*2+2], 16, 8)
+		if err != nil {
+			return DefaultBrandTextColor
+		}
+		c := float64(v) / 255
+		if c <= 0.03928 {
+			c /= 12.92
+		} else {
+			c = math.Pow((c+0.055)/1.055, 2.4)
+		}
+		lum += weight * c
+	}
+	// Contraste avec le blanc contre contraste avec #1a1a1a (luminance ≈ 0.0103).
+	if 1.05/(lum+0.05) >= (lum+0.05)/0.0603 {
+		return DefaultBrandTextColor
+	}
+	return "#1a1a1a"
+}
+
 // RefundData pour charge.refunded
 type RefundData struct {
+	Brand         MerchantBrand
 	MerchantName  string // ex: "Burger King"
 	MerchantLogo  string // URL du logo
 	MerchantColor string // ex: "#E2F2F9" (Optionnel, pour le header)
@@ -63,6 +137,7 @@ type PayoutData struct {
 
 // Used when sending an order confirmation
 type ScanNOrderConfirmationData struct {
+	Brand            MerchantBrand
 	MerchantName     string // $merchant->business_name
 	MerchantLogo     string // $merchant->logo_url
 	MerchantCurrency string // $merchant->currency
@@ -171,9 +246,11 @@ type SubscriptionInvoiceData struct {
 
 // InvoiceEmailData pour l'envoi de facture PDF en pièce jointe
 type InvoiceEmailData struct {
+	Brand         MerchantBrand
 	MerchantName  string
 	CustomerName  string
 	ReceiptNumber string
+	OrderNumber   string // numéro de commande affiché au client ; vide pour l'envoi depuis la caisse
 	SupportEmail  string
 }
 
@@ -181,6 +258,7 @@ type InvoiceEmailData struct {
 // envoyée au premier de la liste d'attente lors d'un no-show / expiration.
 type WaitlistAvailableData struct {
 	EmailBaseData
+	Brand         MerchantBrand
 	MerchantName  string
 	CustomerName  string
 	PartySize     int
@@ -193,6 +271,7 @@ type WaitlistAvailableData struct {
 // message (ex: annulation) ou si aucune base URL publique n'est configurée.
 type BookingMessageData struct {
 	EmailBaseData
+	Brand          MerchantBrand
 	MerchantName   string
 	CustomerName   string
 	BookingNumber  string
@@ -200,12 +279,16 @@ type BookingMessageData struct {
 	TimeLabel      string // heure formatée locale, ex "20:00"
 	PartySize      int
 	ManagementLink string
+	// CalendarLink : lien « ajouter à Google Agenda », renseigné quand un
+	// fichier .ics accompagne le mail (confirmation, modification).
+	CalendarLink string
 }
 
 // BookingPostVisitData pour le message post-visite (remerciement + demande
 // d'avis — Should du cadrage §6.4, préparé mais non branché dans le cron).
 type BookingPostVisitData struct {
 	EmailBaseData
+	Brand        MerchantBrand
 	MerchantName string
 	CustomerName string
 }

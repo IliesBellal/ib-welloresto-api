@@ -9,6 +9,17 @@ import (
 	"welloresto-api/internal/permission"
 )
 
+// failedLoginDelay : attente avant la réponse d'une connexion par mot de passe
+// échouée, voir waitAfterFailedLogin. Variable pour que les tests la réduisent.
+var failedLoginDelay = 2 * time.Second
+
+// Seuil d'échecs de connexion par mot de passe par adresse IP, voir
+// failedLoginGuard. Large : une équipe derrière la même box n'y arrive pas.
+const (
+	failedLoginsPerIP = 30
+	failedLoginWindow = 15 * time.Minute
+)
+
 const (
 	OTPResendCooldown = 60 * time.Second
 	MFAExpiration     = 30 * 24 * time.Hour // For testing purposes, we will use 24 hours  //30 * 24 * time.Hour

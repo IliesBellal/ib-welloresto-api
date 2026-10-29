@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/ics"
 	"welloresto-api/internal/infrastructure/mailer"
 	"welloresto-api/internal/infrastructure/sms"
 	"welloresto-api/internal/modules/outbound"
@@ -30,9 +31,16 @@ type Service struct {
 	mailer      mailer.Service
 	sms         sms.Service
 	merchantSMS merchantSMSSender
+	brands      brandResolver
 	baseURL     string
 	outbound    outboundRecorder
 	log         *zap.Logger
+}
+
+// brandResolver lit l'identité (logo, couleur) de l'établissement qui habille
+// ses mails clients (merchantbrand.Repository).
+type brandResolver interface {
+	Resolve(ctx context.Context, merchantID, name string) mailer.MerchantBrand
 }
 
 // merchantSMSSender envoie un SMS pour le compte d'un établissement et le
@@ -47,6 +55,10 @@ type outboundRecorder interface {
 
 type asyncMailerWithMessageID interface {
 	SendAsyncWithMessageID(fromName, fromEmail, to, subject, templateName string, data interface{}, onSent func(messageID string))
+}
+
+type asyncMailerWithAttachmentsAndMessageID interface {
+	SendAsyncWithAttachmentsAndMessageID(fromName, fromEmail, to, subject, templateName string, data interface{}, attachments []mailer.Attachment, onSent func(messageID string))
 }
 
 type asyncSMSWithMessageID interface {
@@ -65,6 +77,19 @@ func New(mail mailer.Service, smsSvc sms.Service, baseURL string, outboundSvc ou
 // directement et rien n'est comptabilisé.
 func (s *Service) SetMerchantSMS(merchantSMS merchantSMSSender) {
 	s.merchantSMS = merchantSMS
+}
+
+// SetBrandResolver habille les mails aux couleurs et au logo de
+// l'établissement. Sans lui (tests), le cadre par défaut porte seulement son nom.
+func (s *Service) SetBrandResolver(brands brandResolver) {
+	s.brands = brands
+}
+
+func (s *Service) brand(ctx context.Context, merchantID, merchantName string) mailer.MerchantBrand {
+	if s.brands == nil {
+		return mailer.NewMerchantBrand(merchantName, "", "", "")
+	}
+	return s.brands.Resolve(ctx, merchantID, merchantName)
 }
 
 // sendSMSText envoie le SMS — compté pour merchantID quand c'est possible —
@@ -97,6 +122,67 @@ type BookingMessage struct {
 	TimeLabel     string // heure formatée locale, ex "20:00"
 	PartySize     int
 	SMSEnabled    bool
+
+	// Fichier d'agenda (.ics) joint à la confirmation, à la modification et à
+	// l'annulation. StartAt/EndAt vides : pas de fichier. Confirmed : la
+	// réservation est confirmée (modification) ou l'était (annulation) — une
+	// demande encore en attente n'a jamais été ajoutée à l'agenda du client.
+	StartAt         time.Time
+	EndAt           time.Time
+	MerchantAddress string
+	Confirmed       bool
+}
+
+// calendarAction dit quel fichier d'agenda accompagne un mail de réservation.
+type calendarAction int
+
+const (
+	noCalendar calendarAction = iota
+	calendarPublish
+	calendarCancel
+)
+
+// calendarEvent décrit la réservation pour son fichier .ics. L'UID est stable
+// (identifiant de la réservation) et SEQUENCE croît avec le temps : la
+// modification ou l'annulation met à jour l'événement déjà ajouté au lieu d'en
+// créer un second.
+func (s *Service) calendarEvent(m BookingMessage, action calendarAction) ics.Event {
+	desc := fmt.Sprintf("Réservation pour %d personne(s), référence %s.", m.PartySize, m.BookingNumber)
+	if link := m.managementLink(s.baseURL); link != "" {
+		desc += "\nGérer la réservation : " + link
+	}
+	return ics.Event{
+		UID:         m.BookingID + "@reservation.welloresto.fr",
+		Sequence:    int(time.Now().Unix() / 60),
+		Start:       m.StartAt,
+		End:         m.EndAt,
+		Summary:     "Réservation chez " + m.MerchantName,
+		Description: desc,
+		Location:    m.MerchantAddress,
+		Cancelled:   action == calendarCancel,
+	}
+}
+
+// calendarModify : une modification met à jour l'événement de l'agenda, sauf
+// si la réservation est repassée en attente (rien à ajouter tant que
+// l'établissement ne l'a pas acceptée).
+func calendarModify(m BookingMessage) calendarAction {
+	if !m.Confirmed {
+		return noCalendar
+	}
+	return calendarPublish
+}
+
+// calendarFor renvoie l'action d'agenda effective : aucune sans horaires, sans
+// identifiant stable, ou pour une réservation qui n'a jamais été confirmée.
+func calendarFor(m BookingMessage, action calendarAction) calendarAction {
+	if m.StartAt.IsZero() || !m.EndAt.After(m.StartAt) || strings.TrimSpace(m.BookingID) == "" {
+		return noCalendar
+	}
+	if action != calendarPublish && !m.Confirmed {
+		return noCalendar
+	}
+	return action
 }
 
 func (m BookingMessage) managementLink(baseURL string) string {
@@ -118,9 +204,10 @@ func (s *Service) smsWithManagementLink(m BookingMessage, text string) string {
 	return text + " " + link
 }
 
-func (s *Service) emailData(m BookingMessage) mailer.BookingMessageData {
+func (s *Service) emailData(ctx context.Context, m BookingMessage) mailer.BookingMessageData {
 	return mailer.BookingMessageData{
 		EmailBaseData:  s.emailBase(),
+		Brand:          s.brand(ctx, m.MerchantID, m.MerchantName),
 		MerchantName:   m.MerchantName,
 		CustomerName:   m.CustomerName,
 		BookingNumber:  m.BookingNumber,
@@ -140,17 +227,33 @@ func (s *Service) emailBase() mailer.EmailBaseData {
 	}
 }
 
-func (s *Service) sendEmail(ctx context.Context, m BookingMessage, subject, template string) {
+func (s *Service) sendEmail(ctx context.Context, m BookingMessage, subject, template string, calendar calendarAction) {
 	if s.mailer == nil || strings.TrimSpace(m.CustomerEmail) == "" {
 		return
 	}
+	data := s.emailData(ctx, m)
+	if calendar = calendarFor(m, calendar); calendar != noCalendar {
+		event := s.calendarEvent(m, calendar)
+		if calendar == calendarPublish {
+			data.CalendarLink = ics.GoogleCalendarLink(event)
+		}
+		attachment := mailer.Attachment{Name: "reservation.ics", Content: ics.Build(event, "-//WelloResto//Reservation//FR")}
+		if trackedMailer, ok := s.mailer.(asyncMailerWithAttachmentsAndMessageID); ok {
+			trackedMailer.SendAsyncWithAttachmentsAndMessageID(m.MerchantName, mailer.InvoiceEmail, m.CustomerEmail, subject, template, data, []mailer.Attachment{attachment}, func(messageID string) {
+				s.recordOutbound(ctx, outbound.ChannelEmail, messageID, m.BookingID, m.CustomerEmail)
+			})
+			return
+		}
+		s.mailer.SendAsyncWithAttachment(m.MerchantName, mailer.InvoiceEmail, m.CustomerEmail, subject, template, data, attachment.Content, attachment.Name)
+		return
+	}
 	if trackedMailer, ok := s.mailer.(asyncMailerWithMessageID); ok {
-		trackedMailer.SendAsyncWithMessageID(m.MerchantName, mailer.InvoiceEmail, m.CustomerEmail, subject, template, s.emailData(m), func(messageID string) {
+		trackedMailer.SendAsyncWithMessageID(m.MerchantName, mailer.InvoiceEmail, m.CustomerEmail, subject, template, data, func(messageID string) {
 			s.recordOutbound(ctx, outbound.ChannelEmail, messageID, m.BookingID, m.CustomerEmail)
 		})
 		return
 	}
-	s.mailer.SendAsync(m.MerchantName, mailer.InvoiceEmail, m.CustomerEmail, subject, template, s.emailData(m))
+	s.mailer.SendAsync(m.MerchantName, mailer.InvoiceEmail, m.CustomerEmail, subject, template, data)
 }
 
 func (s *Service) sendSMS(ctx context.Context, m BookingMessage, text string) {
@@ -175,7 +278,7 @@ func (s *Service) recordOutbound(ctx context.Context, channel, providerMessageID
 // SendConfirmation envoie la confirmation immédiate à la création d'une
 // réservation confirmed.
 func (s *Service) SendConfirmation(ctx context.Context, m BookingMessage) {
-	s.sendEmail(ctx, m, "Votre réservation est confirmée", "booking_confirmation.html")
+	s.sendEmail(ctx, m, "Votre réservation est confirmée", "booking_confirmation.html", calendarPublish)
 	s.sendSMS(ctx, m, s.smsWithManagementLink(m, fmt.Sprintf(
 		"Votre reservation chez %s le %s a %s (%d pers.) est confirmee. Ref: %s",
 		m.MerchantName, m.DateLabel, m.TimeLabel, m.PartySize, m.BookingNumber,
@@ -184,7 +287,7 @@ func (s *Service) SendConfirmation(ctx context.Context, m BookingMessage) {
 
 // SendReminder envoie le rappel avant service (J-1 par défaut, cf. cron).
 func (s *Service) SendReminder(ctx context.Context, m BookingMessage) {
-	s.sendEmail(ctx, m, "Rappel de votre réservation", "booking_reminder.html")
+	s.sendEmail(ctx, m, "Rappel de votre réservation", "booking_reminder.html", noCalendar)
 	s.sendSMS(ctx, m, s.smsWithManagementLink(m, fmt.Sprintf(
 		"Rappel : reservation chez %s le %s a %s (%d pers.). Ref: %s",
 		m.MerchantName, m.DateLabel, m.TimeLabel, m.PartySize, m.BookingNumber,
@@ -193,7 +296,7 @@ func (s *Service) SendReminder(ctx context.Context, m BookingMessage) {
 
 // SendModification notifie une modification de réservation (client ou staff).
 func (s *Service) SendModification(ctx context.Context, m BookingMessage) {
-	s.sendEmail(ctx, m, "Votre réservation a été modifiée", "booking_modification.html")
+	s.sendEmail(ctx, m, "Votre réservation a été modifiée", "booking_modification.html", calendarModify(m))
 	s.sendSMS(ctx, m, s.smsWithManagementLink(m, fmt.Sprintf(
 		"Votre reservation chez %s a ete modifiee : %s a %s (%d pers.). Ref: %s",
 		m.MerchantName, m.DateLabel, m.TimeLabel, m.PartySize, m.BookingNumber,
@@ -202,7 +305,7 @@ func (s *Service) SendModification(ctx context.Context, m BookingMessage) {
 
 // SendCancellation notifie une annulation (client, staff ou système).
 func (s *Service) SendCancellation(ctx context.Context, m BookingMessage) {
-	s.sendEmail(ctx, m, "Votre réservation a été annulée", "booking_cancellation.html")
+	s.sendEmail(ctx, m, "Votre réservation a été annulée", "booking_cancellation.html", calendarCancel)
 	s.sendSMS(ctx, m, fmt.Sprintf(
 		"Votre reservation chez %s le %s a %s a ete annulee. Ref: %s",
 		m.MerchantName, m.DateLabel, m.TimeLabel, m.BookingNumber,
@@ -212,7 +315,7 @@ func (s *Service) SendCancellation(ctx context.Context, m BookingMessage) {
 // SendReconfirmation demande au client de confirmer sa venue (réponse SMS
 // OUI/NON traitée par le webhook internal/webhook/brevo_sms_reply).
 func (s *Service) SendReconfirmation(ctx context.Context, m BookingMessage) {
-	s.sendEmail(ctx, m, "Merci de confirmer votre réservation", "booking_reconfirmation.html")
+	s.sendEmail(ctx, m, "Merci de confirmer votre réservation", "booking_reconfirmation.html", noCalendar)
 	s.sendSMS(ctx, m, s.smsWithManagementLink(m, fmt.Sprintf(
 		"Confirmez-vous votre reservation chez %s le %s a %s (%d pers.) ? Repondez OUI ou NON. Ref: %s",
 		m.MerchantName, m.DateLabel, m.TimeLabel, m.PartySize, m.BookingNumber,
@@ -228,6 +331,7 @@ func (s *Service) SendPostVisit(ctx context.Context, m BookingMessage) {
 	}
 	data := mailer.BookingPostVisitData{
 		EmailBaseData: s.emailBase(),
+		Brand:         s.brand(ctx, m.MerchantID, m.MerchantName),
 		MerchantName:  m.MerchantName,
 		CustomerName:  m.CustomerName,
 	}
@@ -254,6 +358,7 @@ func (s *Service) SendWaitlistAvailable(ctx context.Context, m WaitlistMessage) 
 	if s.mailer != nil && strings.TrimSpace(m.CustomerEmail) != "" {
 		data := mailer.WaitlistAvailableData{
 			EmailBaseData: s.emailBase(),
+			Brand:         s.brand(ctx, m.MerchantID, m.MerchantName),
 			MerchantName:  m.MerchantName,
 			CustomerName:  m.CustomerName,
 			PartySize:     m.PartySize,

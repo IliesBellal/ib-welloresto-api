@@ -1,0 +1,15 @@
+{{/* Dernier rappel, 48 h avant la suspension (dunning.sendFinalNotice).
+Données : MerchantName, Establishment, SuspensionDeadline (jj/mm/aaaa). */}}
+{{ template "doc_start" (dict "Title" "Dernier rappel avant suspension" "Pre" (printf "Votre compte sera suspendu le %s sans régularisation" .SuspensionDeadline) "Bg" "#f3f5fa") }}
+{{ template "p_band_start" "#a32121" }}
+    {{ template "p_title" (dict "Title" "Dernier rappel avant suspension" "Sub" .MerchantName) }}
+    {{ template "p_figure" (dict "Label" "Suspension le" "Value" .SuspensionDeadline "Sub" "Sans régularisation d'ici là") }}
+{{ template "p_band_end" }}
+{{ template "p_body_start" }}
+    {{ template "establishment" .Establishment }}
+    {{ template "p_alert" (dict "Strong" (printf "Votre compte sera suspendu le %s" .SuspensionDeadline) "Text" "si le paiement de votre abonnement n'est pas régularisé.") }}
+    <p style="margin:0 0 14px; padding:0 4px; font-size:14px; line-height:22px; color:#3c4150;">Mettez à jour votre moyen de paiement dans votre back-office, rubrique « Abonnement &amp; facturation », ou contactez votre banque si le prélèvement est bloqué de son côté.</p>
+    <p style="margin:0 0 14px; padding:0 4px; font-size:14px; line-height:22px; color:#3c4150;">Besoin d'un coup de main ? Écrivez-nous, nous vous répondons rapidement.</p>
+{{ template "p_body_end" }}
+{{ template "p_foot" "" }}
+{{ template "doc_end" }}

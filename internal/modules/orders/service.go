@@ -368,20 +368,6 @@ func (s *OrdersService) GetPayments(ctx context.Context, orderID string) ([]mode
 
 		return map[string]interface{}{"status": "1"}, nil
 	}
-
-	func (s *OrdersService) UpdateOrderOld(ctx context.Context, req *models.RequestObject) error {
-		log := logger.FromContext(ctx)
-
-		err := s.ordersRepo.UpdateOrder(ctx, req)
-
-		if err != nil {
-			log.Error(err.Error())
-		} else {
-			s.notificationsService.SendNotificationAsync(req.MerchantID, *req.Order.OrderID, notification.NotificationTypeOrderUpdate)
-		}
-
-		return nil
-	}
 */
 func (s *OrdersService) ComputePricing(ctx context.Context, req *models.PricingRequest) (*models.PricingResponse, error) {
 	// --- Step 0: Init totals ---

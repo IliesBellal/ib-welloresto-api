@@ -188,9 +188,9 @@ func (s *Service) evaluateTrial(ctx context.Context, o Override, now time.Time) 
 	return nil
 }
 
-// sendTrialReminder — template name is new, must be created in Brevo before
-// it produces real content (same caveat as dunning's templates, see
-// docs/decisions.md). mailer is nil-safe: a Service built without
+// sendTrialReminder — trial_expiry_reminder.html lives in
+// internal/infrastructure/mailer/templates (missing until 2026-10-26, see
+// docs/emails-styles.md). mailer is nil-safe: a Service built without
 // SetMailer (most tests) simply skips sending rather than panicking.
 func (s *Service) sendTrialReminder(ctx context.Context, o Override, deadline time.Time, daysRemaining int) error {
 	if s.mailer == nil {

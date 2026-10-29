@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 	"welloresto-api/internal/infrastructure/mailer"
 	"welloresto-api/internal/infrastructure/sms"
 	"welloresto-api/internal/modules/outbound"
@@ -14,10 +15,21 @@ import (
 
 // mockMailer capture les appels SendAsync sans effectuer d'envoi réel.
 type mockMailer struct {
-	sendAsyncCalls int
-	lastTemplate   string
-	lastTo         string
-	nextMessageID  string
+	sendAsyncCalls  int
+	lastTemplate    string
+	lastTo          string
+	nextMessageID   string
+	lastAttachments []mailer.Attachment
+	lastData        interface{}
+}
+
+func (m *mockMailer) SendAsyncWithAttachmentsAndMessageID(fromName, fromEmail, to, subject, templateName string, data interface{}, attachments []mailer.Attachment, onSent func(messageID string)) {
+	m.SendAsync(fromName, fromEmail, to, subject, templateName, data)
+	m.lastAttachments = attachments
+	m.lastData = data
+	if onSent != nil {
+		onSent(m.nextMessageID)
+	}
 }
 
 func (m *mockMailer) SendAsync(fromName, fromEmail, to, subject, templateName string, data interface{}) {
@@ -216,7 +228,7 @@ func TestManagementLink_BuiltFromBaseURL(t *testing.T) {
 	svc := New(mail, nil, "https://rsv.welloresto.fr/", nil, nil)
 
 	msg := baseMessage(false)
-	data := svc.emailData(msg)
+	data := svc.emailData(context.Background(), msg)
 	want := "https://rsv.welloresto.fr/restaurant/le-bistrot/booking/AB12CD"
 	if data.ManagementLink != want {
 		t.Fatalf("ManagementLink = %q, want %q", data.ManagementLink, want)
@@ -227,7 +239,7 @@ func TestManagementLink_EmptyWithoutBaseURL(t *testing.T) {
 	mail := &mockMailer{}
 	svc := New(mail, nil, "", nil, nil)
 
-	data := svc.emailData(baseMessage(false))
+	data := svc.emailData(context.Background(), baseMessage(false))
 	if data.ManagementLink != "" {
 		t.Fatalf("expected empty ManagementLink without a configured base URL, got %q", data.ManagementLink)
 	}
@@ -438,3 +450,61 @@ func (m *mockMailer) SendSubscriptionInvoice(to string, data mailer.Subscription
 func (m *mockMailer) SendCommissionInvoice(to string, data mailer.CommissionInvoiceData, attachments []mailer.Attachment) error {
 	return nil
 }
+
+// Fichier d'agenda : joint à la confirmation, à la modification d'une
+// réservation confirmée et à l'annulation d'une réservation qui l'était ;
+// jamais au rappel ni pour une demande encore en attente.
+func TestCalendarAttachment(t *testing.T) {
+	start := time.Date(2026, 7, 12, 20, 0, 0, 0, time.UTC)
+	withTimes := func(confirmed bool) BookingMessage {
+		m := baseMessage(false)
+		m.StartAt, m.EndAt, m.MerchantAddress, m.Confirmed = start, start.Add(90*time.Minute), "1 rue X, 57000 Metz", confirmed
+		return m
+	}
+	cases := []struct {
+		name     string
+		send     func(*Service, BookingMessage)
+		msg      BookingMessage
+		wantICS  string // "" : pas de pièce jointe
+		wantLink bool
+	}{
+		{"confirmation", (*Service).sendConfirmationForTest, withTimes(true), "METHOD:PUBLISH", true},
+		{"modification confirmée", (*Service).sendModificationForTest, withTimes(true), "METHOD:PUBLISH", true},
+		{"modification en attente", (*Service).sendModificationForTest, withTimes(false), "", false},
+		{"annulation d'une confirmée", (*Service).sendCancellationForTest, withTimes(true), "METHOD:CANCEL", false},
+		{"annulation d'une demande", (*Service).sendCancellationForTest, withTimes(false), "", false},
+		{"rappel", (*Service).sendReminderForTest, withTimes(true), "", false},
+		{"sans horaires", (*Service).sendConfirmationForTest, baseMessage(false), "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			mail := &mockMailer{}
+			svc := New(mail, nil, "https://rsv.welloresto.fr", nil, nil)
+			c.send(svc, c.msg)
+			if mail.sendAsyncCalls != 1 {
+				t.Fatalf("sendAsyncCalls = %d, want 1", mail.sendAsyncCalls)
+			}
+			if c.wantICS == "" {
+				if len(mail.lastAttachments) != 0 {
+					t.Fatalf("pièce jointe inattendue : %v", mail.lastAttachments[0].Name)
+				}
+				return
+			}
+			if len(mail.lastAttachments) != 1 || !strings.Contains(string(mail.lastAttachments[0].Content), c.wantICS) {
+				t.Fatalf("fichier .ics sans %q : %v", c.wantICS, mail.lastAttachments)
+			}
+			if !strings.Contains(string(mail.lastAttachments[0].Content), "UID:book-123@reservation.welloresto.fr") {
+				t.Error("UID instable : la modification créerait un second événement")
+			}
+			data, _ := mail.lastData.(mailer.BookingMessageData)
+			if (data.CalendarLink != "") != c.wantLink {
+				t.Errorf("CalendarLink = %q, attendu présent : %v", data.CalendarLink, c.wantLink)
+			}
+		})
+	}
+}
+
+func (s *Service) sendConfirmationForTest(m BookingMessage) { s.SendConfirmation(context.Background(), m) }
+func (s *Service) sendModificationForTest(m BookingMessage) { s.SendModification(context.Background(), m) }
+func (s *Service) sendCancellationForTest(m BookingMessage) { s.SendCancellation(context.Background(), m) }
+func (s *Service) sendReminderForTest(m BookingMessage)     { s.SendReminder(context.Background(), m) }

@@ -292,7 +292,13 @@ func (s *BookingsService) CancelBooking(ctx context.Context, token, bookingID st
 	// Annulation notifiée uniquement sur une vraie transition, pas sur le
 	// no-op déjà-cancelled.
 	if previousStatus != bookingcore.StatusCancelled {
-		s.notifyBookingMessage(ctx, user.MerchantID, booking, s.comm.SendCancellation)
+		// La réservation est désormais cancelled : le statut d'avant dit si
+		// elle était dans l'agenda du client (fichier .ics d'annulation).
+		wasConfirmed := previousStatus == bookingcore.StatusConfirmed || previousStatus == bookingcore.StatusSeated
+		s.notifyBookingMessage(ctx, user.MerchantID, booking, func(ctx context.Context, m bookingcomm.BookingMessage) {
+			m.Confirmed = wasConfirmed
+			s.comm.SendCancellation(ctx, m)
+		})
 	}
 
 	return map[string]interface{}{

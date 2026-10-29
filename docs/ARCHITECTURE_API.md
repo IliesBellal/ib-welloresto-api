@@ -799,7 +799,6 @@ r.Route("/scannorder", func(r chi.Router) {
 	r.Post("/{merchant_slug}/pricing", scannHandler.GetPricingSNO)
 	r.Post("/{merchant_slug}/delivery/check", scannHandler.CheckDeliveryZone)
 	r.Post("/{merchant_slug}/orders", scannHandler.CreateOrderSNO)
-	r.Post("/{merchant_slug}/create", scannHandler.CreateOrderSNO) // TO BE DELETED (legacy)
 	r.Get("/{merchant_slug}/orders/{order_id}", scannHandler.GetOrderSNO)
 	r.Get("/{merchant_slug}/products/{product_id}", scannHandler.GetProduct)
 	r.Delete("/{merchant_slug}/orders/{order_id}", scannHandler.CancelOrderSNO)

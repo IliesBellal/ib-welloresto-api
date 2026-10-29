@@ -67,6 +67,7 @@ import (
 	menuModule "welloresto-api/internal/modules/menu"
 	importerModule "welloresto-api/internal/modules/menu/importer"
 	merchantsmsModule "welloresto-api/internal/modules/merchantsms"
+	merchantbrandModule "welloresto-api/internal/modules/merchantbrand"
 	notificationModule "welloresto-api/internal/modules/notification"
 	onboardingModule "welloresto-api/internal/modules/onboarding"
 	ordersLCModule "welloresto-api/internal/modules/order_life_cycle"
@@ -121,6 +122,8 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	//  GLOBAL MIDDLEWARES
 	// =============================
 	r.Use(middleware.CORSMiddleware().Handler)
+	// Avant les deux journaux, qui lisent tout le corps : voir MaxBodyForPrefix.
+	r.Use(middleware.MaxBodyForPrefix("/scannorder/", scannorder.ScanNOrderMaxBodyBytes))
 	r.Use(middleware.LoggingMiddleware(log, selectedDB))
 	// Réactivé : les timeouts d'origine venaient du pool MySQL à 1 connexion partagée
 	// (voir internal/database/mysql.go) saturé par les flush périodiques de ce logger ;
@@ -368,8 +371,12 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	}
 	merchantSMSService := merchantsmsModule.NewService(merchantsmsModule.NewMarketingRepository(selectedDB), merchantSMSSender, log)
 	merchantSMSService.SetScanNOrderBaseURL(cfg.ScanNOrder.SNORedirectBaseURL)
+	// Identité (nom, logo, couleur) des établissements pour leurs mails clients
+	// et d'équipe (docs/emails-styles.md).
+	merchantBrands := merchantbrandModule.NewRepository(selectedDB)
 	bookingCommService := bookingcommModule.New(mailService, smsService, cfg.Reservation.PublicBaseURL, outboundService, log)
 	bookingCommService.SetMerchantSMS(merchantSMSService)
+	bookingCommService.SetBrandResolver(merchantBrands)
 	bookingsRepo := bookingsModule.NewBookingsRepository(selectedDB, log)
 	bookingsService := bookingsModule.NewBookingsService(bookingsRepo, selectedDB, mailService, smsService, bookingEventsRepo, notificationService, bookingCommService, log)
 
@@ -395,6 +402,9 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		mailService,
 		bookingsService,
 	)
+	// Facture automatique des commandes en ligne (tâche RunOnlineOrderInvoices) :
+	// journal des envois (anti-doublon) + identité de l'établissement.
+	ordersLifeCycleService.SetOnlineInvoices(outboundService, merchantBrands)
 	// Ventes Uber Eats clôturées par réconciliation : ticket fiscal émis par
 	// le cycle de vie des commandes (lot A conformité caisse, C10). Injecté
 	// ici, uberService étant construit avant ordersLifeCycleService.
@@ -479,17 +489,21 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		terminalService,
 	)
 	stripeWebhookService.SetMerchantSMS(merchantSMSService)
+	stripeWebhookService.SetBrandResolver(merchantBrands)
 	stripeWebhookService.SetScanNOrderBaseURL(cfg.ScanNOrder.SNORedirectBaseURL)
+	// Signature vérifiée en mode observation, voir StripeWebhookService.VerifySignature.
+	stripeWebhookService.SetSignatureSecrets(cfg.Stripe.WebhookSecret, cfg.Stripe.ConnectWebhookSecret)
 	stripeWebhookHandler := webhookstripe.NewHandler(stripeWebhookService)
 
 	// WH
 	deliverooWebhookRepo := deliveroo_orders.NewRepository(selectedDB)
 	deliverooWebhookService := deliveroo_orders.NewDeliverooService(deliverooWebhookRepo, ordersService, ordersLifeCycleService, deliverooService, redisClient)
-	deliverooWebhookHandler := deliveroo_orders.NewDeliverooHandler(deliverooWebhookService)
+	// Signature des webhooks Deliveroo vérifiée en mode observation, voir deliveroosig.Observe.
+	deliverooWebhookHandler := deliveroo_orders.NewDeliverooHandler(deliverooWebhookService, cfg.Deliveroo.WebhookSecret)
 
 	deliverooMenuWebhookRepo := deliveroo_menu.NewRepository(selectedDB)
 	deliverooMenuWebhookService := deliveroo_menu.NewMenuWebhookService(deliverooMenuWebhookRepo, deliverooService)
-	deliverooMenuWebhookHandler := deliveroo_menu.NewMenuWebhookHandler(deliverooMenuWebhookService)
+	deliverooMenuWebhookHandler := deliveroo_menu.NewMenuWebhookHandler(deliverooMenuWebhookService, cfg.Deliveroo.WebhookSecret)
 
 	uberWebhookService := webhookuberservice.NewService(
 		selectedDB,
@@ -629,6 +643,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	planningRepo := planningModule.NewRepository(selectedDB)
 	planningCommService := planningcommModule.New(mailService, smsService, cfg.Planning.PublicBaseURL, outboundService, log)
 	planningCommService.SetMerchantSMS(merchantSMSService)
+	planningCommService.SetBrandResolver(merchantBrands)
 	planningService := planningModule.NewService(planningRepo, r2PrivateClient, auditService, planningCommService)
 
 	// ---- Kiosk ----
@@ -1146,27 +1161,39 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// --- SCANNORDER ---
 	r.Route("/scannorder", func(r chi.Router) {
 		r.Get("/franchises/{franchise_slug}", scannHandler.GetFranchise)
-		// Mesure d'audience anonyme (hub et pages restaurant), par lots, bornée par IP.
-		r.With(httprate.LimitByIP(120, 1*time.Minute)).Post("/events", scannHandler.RecordEvents)
+		// Mesure d'audience anonyme (hub et pages restaurant), par lots. Deux
+		// seuils : un filet global sur l'adresse de connexion (celle du proxy de
+		// l'hébergeur) et un seuil par visiteur ; voir scannorder.AudienceClientKey.
+		r.With(
+			httprate.LimitByIP(scannorder.AudienceGlobalPerMinute, 1*time.Minute),
+			httprate.LimitBy(scannorder.AudienceClientPerMinute, 1*time.Minute, scannorder.AudienceClientKey),
+		).Post("/events", scannHandler.RecordEvents)
 		r.Get("/sitemap", scannHandler.GetSitemap)
-		r.Get("/{merchant_slug}", scannHandler.GetMerchant)
-		r.Get("/{merchant_slug}/slots", scannHandler.GetSlots)
 
-		r.Get("/{merchant_slug}/menu", scannHandler.GetMenu)
-		r.Get("/{merchant_slug}/loyalty_programs", scannHandler.GetLoyaltyPrograms)
-		r.Get("/{merchant_slug}/discounts", scannHandler.GetDiscounts)
+		// Seuils par visiteur et par établissement, larges (voir
+		// scannorder.MerchantClientKey et les constantes ScanNOrder*PerMinute).
+		// Un compteur par groupe : lectures, calculs, écritures.
+		reads := httprate.LimitBy(scannorder.ScanNOrderReadsPerMinute, 1*time.Minute, scannorder.MerchantClientKey)
+		compute := httprate.LimitBy(scannorder.ScanNOrderComputePerMinute, 1*time.Minute, scannorder.MerchantClientKey)
+		writes := httprate.LimitBy(scannorder.ScanNOrderWritesPerMinute, 1*time.Minute, scannorder.MerchantClientKey)
 
-		r.Get("/{merchant_slug}/upsell", scannHandler.GetUpsell) // deprecated, see handler comment
-		r.Post("/{merchant_slug}/upsell", scannHandler.PostUpsellSNO)
-		r.Post("/{merchant_slug}/pricing", scannHandler.GetPricingSNO)
-		r.Post("/{merchant_slug}/delivery/check", scannHandler.CheckDeliveryZone)
+		r.With(reads).Get("/{merchant_slug}", scannHandler.GetMerchant)
+		r.With(reads).Get("/{merchant_slug}/slots", scannHandler.GetSlots)
 
-		r.Post("/{merchant_slug}/orders", scannHandler.CreateOrderSNO)
-		r.Post("/{merchant_slug}/create", scannHandler.CreateOrderSNO) // TO BE DELETED
-		r.Get("/{merchant_slug}/orders/{order_id}", scannHandler.GetOrderSNO)
-		r.Get("/{merchant_slug}/products/{product_id}", scannHandler.GetProduct)
+		r.With(reads).Get("/{merchant_slug}/menu", scannHandler.GetMenu)
+		r.With(reads).Get("/{merchant_slug}/loyalty_programs", scannHandler.GetLoyaltyPrograms)
+		r.With(reads).Get("/{merchant_slug}/discounts", scannHandler.GetDiscounts)
 
-		r.Delete("/{merchant_slug}/orders/{order_id}", scannHandler.CancelOrderSNO)
+		r.With(reads).Get("/{merchant_slug}/upsell", scannHandler.GetUpsell) // deprecated, see handler comment
+		r.With(compute).Post("/{merchant_slug}/upsell", scannHandler.PostUpsellSNO)
+		r.With(compute).Post("/{merchant_slug}/pricing", scannHandler.GetPricingSNO)
+		r.With(compute).Post("/{merchant_slug}/delivery/check", scannHandler.CheckDeliveryZone)
+
+		r.With(writes).Post("/{merchant_slug}/orders", scannHandler.CreateOrderSNO)
+		r.With(reads).Get("/{merchant_slug}/orders/{order_id}", scannHandler.GetOrderSNO)
+		r.With(reads).Get("/{merchant_slug}/products/{product_id}", scannHandler.GetProduct)
+
+		r.With(writes).Delete("/{merchant_slug}/orders/{order_id}", scannHandler.CancelOrderSNO)
 	})
 
 	// --- ACCOUNTING ---

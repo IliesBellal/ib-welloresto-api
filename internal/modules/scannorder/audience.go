@@ -82,6 +82,12 @@ type snoEventRow struct {
 // formée. Les événements visant un établissement ou une franchise inconnus
 // sont ignorés sans erreur : l'envoi part du navigateur en tâche de fond.
 func (h *Handler) RecordEvents(w http.ResponseWriter, r *http.Request) {
+	// Robots d'indexation et clients HTTP : jamais des clients. Même réponse
+	// qu'un envoi accepté, sans lire le corps ni toucher à la base.
+	if isAutomatedUserAgent(r.UserAgent()) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	var req SNOEventsRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -168,6 +174,18 @@ func (s *Service) RecordEvents(ctx context.Context, req SNOEventsRequest) error 
 		if len(row.ProductID) > 64 {
 			row.ProductID = row.ProductID[:64]
 		}
+		// Un produit qui n'est pas à cet établissement fausserait « produits
+		// consultés » : ignoré, avant de compter dans le plafond.
+		if row.ProductID != "" && !s.audience.productKnown(ctx, row.MerchantID, row.ProductID, s.repo.ProductIDsByMerchant) {
+			continue
+		}
+		budgetKey := "m:" + row.MerchantID
+		if row.MerchantID == "" {
+			budgetKey = "f:" + row.FranchiseID
+		}
+		if !s.audience.allow(budgetKey) {
+			continue // plafond par minute atteint pour cet établissement
+		}
 		rows = append(rows, row)
 	}
 	if len(rows) == 0 {
@@ -246,6 +264,27 @@ func (r *Repository) ExistingMerchantFranchises(ctx context.Context, ids []strin
 			return nil, err
 		}
 		out[id] = franchiseID
+	}
+	return out, rows.Err()
+}
+
+// ProductIDsByMerchant : identifiants (products.product_id) de tous les
+// produits de l'établissement, quel que soit leur statut — un produit masqué
+// peut encore être consulté dans une page déjà ouverte.
+func (r *Repository) ProductIDsByMerchant(ctx context.Context, merchantID string) (map[string]struct{}, error) {
+	db := dbx.GetDB(ctx, r.database)
+	rows, err := db.QueryContext(ctx, `SELECT product_id FROM products WHERE merchant_id = ?`, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]struct{}{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = struct{}{}
 	}
 	return out, rows.Err()
 }

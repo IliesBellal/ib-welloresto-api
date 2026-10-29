@@ -5,52 +5,16 @@ import (
 	"io"
 	"net/http"
 	"welloresto-api/internal/logger"
+	"welloresto-api/internal/webhook/deliveroosig"
 )
 
 type DeliverooHandler struct {
-	service *DeliverooService
+	service       *DeliverooService
+	webhookSecret string
 }
 
-func NewDeliverooHandler(service *DeliverooService) *DeliverooHandler {
-	return &DeliverooHandler{service: service}
-}
-
-func (h *DeliverooHandler) HandleOrdersWebhookOld(w http.ResponseWriter, r *http.Request) {
-	log := logger.FromContext(r.Context())
-
-	// Lecture du body une seule fois
-	bodyBytes, _ := io.ReadAll(r.Body)
-	// On restaure le body pour le décodeur si besoin, ou on décode direct les bytes
-	var payload DeliverooWebhookPayload
-	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
-
-	var err error
-	switch payload.Event {
-	case "order.new", "order.new_order":
-		err = h.service.ProcessNewOrder(r.Context(), payload)
-	case "order.status_update":
-		err = h.service.ProcessStatusUpdate(r.Context(), payload)
-	default:
-		// Fallback robuste
-		if payload.Event == "" && payload.Body.Order.Status != "" {
-			err = h.service.ProcessStatusUpdate(r.Context(), payload)
-		}
-		// Note : Si c'est un event "cancel_order" (legacy), on peut l'ignorer et renvoyer 200
-	}
-
-	if err != nil {
-		log.Error("WEBHOOK DELIVEROO - " + err.Error())
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// REPONSE STRICTE : 200 OK avec JSON vide
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("{}"))
+func NewDeliverooHandler(service *DeliverooService, webhookSecret string) *DeliverooHandler {
+	return &DeliverooHandler{service: service, webhookSecret: webhookSecret}
 }
 
 func (h *DeliverooHandler) HandleOrdersWebhook(w http.ResponseWriter, r *http.Request) {
@@ -64,7 +28,7 @@ func (h *DeliverooHandler) HandleOrdersWebhook(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// TODO (Optionnel) : Vérification de la signature Deliveroo ici avec bodyBytes
+	deliveroosig.Observe(ctx, "orders", r.Header, bodyBytes, h.webhookSecret)
 
 	// 2. Décodage du JSON
 	var payload DeliverooWebhookPayload

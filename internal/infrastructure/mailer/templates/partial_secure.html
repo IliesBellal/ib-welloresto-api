@@ -1,0 +1,91 @@
+{{/* Cadre « Coffre » des mails de sécurité et d'équipe (style S1 ; choix du
+2026-10-26, docs/emails-styles.md) : carte blanche centrée, sans décor, une
+seule chose à faire. Forme fixe et reconnaissable, rien de commercial. Fond de
+page : #f5f5f7.
+
+  {{ template "s_card_start" }}                    (en-tête Wello Resto)
+  {{ template "s_card_start_merchant" .Brand }}    (en-tête de l'établissement, ex. planning)
+    {{ template "s_icon" (dict "Glyph" "lock" "Color" "#121521") }}   (Glyph : "lock" ou "calendar")
+    {{ template "s_title" "…" }}
+    {{ template "s_code" .MFACode }}
+    {{ template "s_button" (dict "URL" .Link "Label" "…") }}
+    {{ template "s_note" "…" }}
+  {{ template "s_card_end" }}
+  {{ template "s_foot" "…" }}
+
+Paragraphes : <p style="margin:0 0 20px; font-size:15px; line-height:23px; color:#5a5f6b;">. */}}
+
+{{ define "s_card_open" }}
+<tr>
+    <td bgcolor="#ffffff" style="background-color:#ffffff; border:1px solid #e6e6eb; border-radius:12px; padding:30px 28px 28px; font-family:Helvetica, Arial, sans-serif; font-size:15px; line-height:23px; color:#2e2e33; text-align:center;">
+{{ end }}
+
+{{ define "s_card_start" }}{{ template "s_card_open" }}
+        <table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto 26px;">
+            <tr>
+                <td width="22" height="22" align="center" valign="middle" bgcolor="#0036d9" style="width:22px; height:22px; background-color:#0036d9; border-radius:6px; font-family:Helvetica, Arial, sans-serif; font-size:12px; line-height:22px; font-weight:bold; color:#ffffff;">W</td>
+                <td style="padding-left:8px; font-family:Helvetica, Arial, sans-serif; font-size:14px; line-height:22px; font-weight:bold; color:#121521;">Wello Resto</td>
+            </tr>
+        </table>
+{{ end }}
+
+{{ define "s_card_start_merchant" }}{{ template "s_card_open" }}
+        {{ if .LogoURL }}<img src="{{ .LogoURL }}" alt="" width="40" style="display:block; width:40px; max-width:40px; height:auto; border:0; border-radius:8px; margin:0 auto 8px;">{{ end }}
+        <p style="margin:0 0 26px; font-family:Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; font-weight:bold; color:#121521;">{{ .Name }}</p>
+{{ end }}
+
+{{/* s_icon : pastille ronde de 48 px portant un pictogramme choisi par nom
+("lock" par défaut, "calendar") : une entité HTML passée en argument serait
+échappée. */}}
+{{ define "s_icon" }}{{ $bg := or .Color "#121521" }}{{ $fg := or .TextColor "#ffffff" }}
+        <table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto 16px;">
+            <tr>
+                <td width="48" height="48" align="center" valign="middle" bgcolor="{{ $bg }}" style="width:48px; height:48px; background-color:{{ $bg }}; border-radius:24px; font-size:20px; line-height:48px; color:{{ $fg }};">{{ if eq .Glyph "calendar" }}&#128197;{{ else }}&#128274;{{ end }}</td>
+            </tr>
+        </table>
+{{ end }}
+
+{{ define "s_title" }}<h1 style="margin:0 0 8px; font-family:Helvetica, Arial, sans-serif; font-size:22px; line-height:28px; font-weight:bold; color:#121521;">{{ . }}</h1>{{ end }}
+
+{{/* Code groupé par 3 (482 913) dans deux <span> séparés par un retrait, pas
+par une espace : un copier-coller donne « 482913 ». user-select:all : un appui
+sélectionne tout le code dans les messageries qui le gèrent (Apple Mail). Un
+vrai bouton « Copier » est impossible, les messageries n'exécutent pas de
+JavaScript ; le code est aussi dans l'objet (SendOTP) pour la détection
+automatique d'iOS et de Gmail. */}}
+{{ define "s_code" }}
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 8px;">
+            <tr>
+                <td align="center" style="-webkit-user-select:all; user-select:all; border:1px solid #d9d9e0; border-radius:12px; padding:20px 10px; font-family:Menlo, Consolas, 'Courier New', monospace; font-size:36px; line-height:42px; font-weight:bold; letter-spacing:6px; color:#121521;">{{ if eq (len .) 6 }}<span>{{ slice . 0 3 }}</span><span style="padding-left:16px;">{{ slice . 3 }}</span>{{ else }}{{ . }}{{ end }}</td>
+            </tr>
+        </table>
+{{ end }}
+
+{{ define "s_button" }}{{ $bg := or .Color "#121521" }}{{ $fg := or .TextColor "#ffffff" }}
+        <table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:8px auto 22px;">
+            <tr>
+                <td align="center" bgcolor="{{ $bg }}" style="background-color:{{ $bg }}; border-radius:8px;">
+                    <a href="{{ .URL }}" target="_blank" style="display:inline-block; padding:14px 26px; font-family:Helvetica, Arial, sans-serif; font-size:15px; line-height:20px; font-weight:bold; color:{{ $fg }}; text-decoration:none; border-radius:8px;">{{ .Label }}</a>
+                </td>
+            </tr>
+        </table>
+{{ end }}
+
+{{ define "s_note" }}
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f4f5f8" style="background-color:#f4f5f8; border-radius:10px; margin:12px 0 0;">
+            <tr>
+                <td style="padding:14px 16px; font-family:Helvetica, Arial, sans-serif; font-size:13px; line-height:20px; color:#4a4f5c; text-align:left;">{{ . }}</td>
+            </tr>
+        </table>
+{{ end }}
+
+{{ define "s_card_end" }}
+    </td>
+</tr>
+{{ end }}
+
+{{ define "s_foot" }}
+<tr>
+    <td align="center" style="padding:18px 10px 0; font-family:Helvetica, Arial, sans-serif; font-size:12px; line-height:18px; color:#8a8a92;">{{ . }}</td>
+</tr>
+{{ end }}

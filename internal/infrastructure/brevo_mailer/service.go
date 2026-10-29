@@ -117,7 +117,9 @@ func (b *BrevoMailer) SendOTP(data mailer.MfaOTPData) {
 		MFACode:   data.OTP,
 		ExpiresIn: int(models.OTPCacheTTL.Minutes()),
 	}
-	b.SendAsync("Wello Resto - Security", mailer.SecurityEmail, data.UserEmail, "Votre code de vérification MFA", "otp.html", email_data)
+	// Code dans l'objet : iOS (remplissage automatique) et Gmail (« Copier le
+	// code ») le détectent et proposent de le copier sans ouvrir le mail.
+	b.SendAsync("Wello Resto - Security", mailer.SecurityEmail, data.UserEmail, data.OTP+" est votre code de vérification Wello Resto", "otp.html", email_data)
 }
 
 // SendPasswordReset sends the "mot de passe oublié" link.
@@ -151,7 +153,7 @@ func (b *BrevoMailer) SendPayoutPaidNotification(email string, name string, payo
 			return
 		}
 
-		_, err := b.sendEmailViaBrevo("Wello Resto", mailer.InvoiceEmail, email, "WR ScanNOrder - Virement en cours"+payout.Establishment.SubjectSuffix(), html)
+		_, err := b.sendEmailViaBrevo("Wello Resto", mailer.InvoiceEmail, email, "Votre virement est en route"+payout.Establishment.SubjectSuffix(), html)
 		if err != nil {
 			log.Printf("ERROR sending payout email via Brevo to %s: %v", email, err)
 		} else {
@@ -168,6 +170,9 @@ func (b *BrevoMailer) SendInvoiceEmailToCustomer(to, customerName, merchantName,
 	}
 
 	data := mailer.InvoiceEmailData{
+		// Couleur et logo non transmis par l'appelant : cadre par défaut au nom
+		// de l'établissement (docs/emails-styles.md, « Reste à faire »).
+		Brand:         mailer.NewMerchantBrand(merchantName, "", "", ""),
 		MerchantName:  merchantName,
 		CustomerName:  strings.TrimSpace(customerName),
 		SupportEmail:  mailer.SupportEmail,
@@ -365,6 +370,13 @@ func (b *BrevoMailer) sendEmailViaBrevoWithAttachment(from_name, from_email, to,
 
 // sendEmailViaBrevoWithAttachments sends an email with several attachments via the Brevo API
 func (b *BrevoMailer) sendEmailViaBrevoWithAttachments(from_name, from_email, to, subject, htmlContent string, attachments []mailer.Attachment) error {
+	_, err := b.sendEmailViaBrevoWithAttachmentsID(from_name, from_email, to, subject, htmlContent, attachments)
+	return err
+}
+
+// sendEmailViaBrevoWithAttachmentsID est sendEmailViaBrevoWithAttachments qui
+// renvoie aussi le messageId Brevo (suivi outbound_messages).
+func (b *BrevoMailer) sendEmailViaBrevoWithAttachmentsID(from_name, from_email, to, subject, htmlContent string, attachments []mailer.Attachment) (string, error) {
 	files := make([]map[string]string, 0, len(attachments))
 	for _, a := range attachments {
 		files = append(files, map[string]string{
@@ -386,27 +398,69 @@ func (b *BrevoMailer) sendEmailViaBrevoWithAttachments(from_name, from_email, to
 
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal payload: %w", err)
+		return "", fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
 	req, err := http.NewRequest("POST", "https://api.brevo.com/v3/smtp/email", bytes.NewBuffer(bodyBytes))
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("api-key", b.apiKey)
 
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return "", fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("brevo API error (status %d): %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("brevo API error (status %d): %s", resp.StatusCode, string(respBody))
 	}
-	return nil
+	var parsed sendEmailResponse
+	if err := json.Unmarshal(respBody, &parsed); err == nil {
+		return strings.TrimSpace(parsed.MessageID), nil
+	}
+	return "", nil
+}
+
+// SendAsyncWithAttachmentsAndMessageID est SendAsyncWithMessageID avec des
+// pièces jointes (ex. le .ics d'une réservation) : onSent reçoit le messageId
+// Brevo après un envoi réussi.
+func (b *BrevoMailer) SendAsyncWithAttachmentsAndMessageID(fromName, fromEmail, to, subject, templateName string, data interface{}, attachments []mailer.Attachment, onSent func(messageID string)) {
+	go func() {
+		html, err := b.renderTemplate(templateName, data)
+		if err != nil {
+			log.Printf("ERROR rendering template %s: %v", templateName, err)
+			return
+		}
+		messageID, err := b.sendEmailViaBrevoWithAttachmentsID(fromName, fromEmail, to, subject, html, attachments)
+		if err != nil {
+			log.Printf("ERROR sending email via Brevo to %s: %v", to, err)
+			return
+		}
+		if onSent != nil {
+			onSent(messageID)
+		}
+		log.Printf("Email sent successfully via Brevo to %s", to)
+	}()
+}
+
+// SendOrderInvoice envoie au client la facture PDF d'une commande en ligne
+// (orderinvoices, envoi automatique), de façon synchrone, et renvoie le
+// messageId Brevo : la tâche ne marque la commande facturée qu'une fois le
+// mail parti.
+func (b *BrevoMailer) SendOrderInvoice(to string, data mailer.InvoiceEmailData, attachment mailer.Attachment) (string, error) {
+	html, err := b.renderTemplate("invoice_email.html", data)
+	if err != nil {
+		return "", fmt.Errorf("failed to render invoice email template: %w", err)
+	}
+	subject := "Votre facture " + data.MerchantName
+	if data.OrderNumber != "" {
+		subject += " — commande n° " + data.OrderNumber
+	}
+	return b.sendEmailViaBrevoWithAttachmentsID(data.MerchantName, mailer.InvoiceEmail, to, subject, html, []mailer.Attachment{attachment})
 }
 
 // renderTemplate parses and executes a template using the mailer package's embedded templates

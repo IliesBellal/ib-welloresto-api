@@ -382,37 +382,3 @@ func (s *NotificationService) getFCMToken(ctx context.Context) (string, error) {
 
 	return res.(string), nil
 }
-
-func (s *NotificationService) getFCMTokenOld(ctx context.Context) (string, error) {
-	log := logger.FromContext(ctx)
-
-	// TODO Sauvegarder le token en local afin de pouvoir le réutiliser sans avoir à Query la base de données ??
-
-	// 👉 ON VERROUILLE. Si une autre goroutine arrive, elle mettra l'exécution en pause ici
-	// jusqu'à ce que la première ait fini (Unlock).
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// 1. On vérifie en base (la goroutine en attente verra le token fraîchement créé par la 1ère)
-	token, err := s.repo.GetValidFCMTokenOld(ctx)
-	if err != nil {
-		log.Error("Error in getFCMToken : " + err.Error())
-		return "", err
-	}
-
-	if token != "" {
-		return token, nil
-	}
-
-	// 2. Si vraiment aucun token, on en génère un
-	token, err = s.tokenm.GenerateToken(ctx)
-	if err != nil {
-		log.Error("Error in getFCMToken after generation : " + err.Error())
-		return "", err
-	}
-	log.Info("New BasicAuth generated")
-
-	_ = s.repo.StoreFCMToken(ctx, token)
-
-	return token, nil
-}

@@ -37,6 +37,7 @@ type Service struct {
 	redis                  *redis.Client
 	upsellService          *upsell.Service
 	availabilities         ScheduleAvailability
+	audience               *audienceGuard
 }
 
 // ScheduleAvailability expose les produits masqués par une disponibilité
@@ -47,7 +48,7 @@ type ScheduleAvailability interface {
 }
 
 func NewService(config config.ScanNOrderConfig, r *Repository, m *menu.MenuService, o *orders.OrdersService, manager *stripeclient.StripeManager, redis *redis.Client, orderLifeCycleSvc *order_life_cycle.OrdersLifeCycleService, upsellService *upsell.Service, deliverySessionService *delivery_sessions.DeliverySessionsService, availabilitiesSvc ScheduleAvailability) *Service {
-	return &Service{cfg: config, repo: r, menu: m, orderingService: o, StripeManager: manager, redis: redis, orderLifeCycleSvc: orderLifeCycleSvc, upsellService: upsellService, deliverySessionService: deliverySessionService, availabilities: availabilitiesSvc}
+	return &Service{cfg: config, repo: r, menu: m, orderingService: o, StripeManager: manager, redis: redis, orderLifeCycleSvc: orderLifeCycleSvc, upsellService: upsellService, deliverySessionService: deliverySessionService, availabilities: availabilitiesSvc, audience: newAudienceGuard()}
 }
 
 // unavailableProductsNow retourne les produits du merchant hors créneau
@@ -792,14 +793,14 @@ func (s *Service) validateAndCleanPricingPayload(ctx context.Context, req *model
 }
 
 // resolveOrderRef convertit l'id reçu sur une route publique ScanNOrder en
-// order_id interne. Phase 1 (docs/SCANNORDER_PUBLIC_ORDER_ID.md, D1) : l'id
-// public est la forme normale, l'id interne reste accepté tel quel le temps
-// de la bascule. Un id public inconnu, ou appartenant à un autre marchand que
-// celui du QR code, renvoie models.ErrNotFound.
+// order_id interne. Phase 2 (docs/SCANNORDER_PUBLIC_ORDER_ID.md, D1) : seul
+// l'id public est accepté — l'id interne, séquentiel, permettait de lire ou
+// d'annuler la commande d'un autre client en parcourant les numéros. Un id
+// interne, un id public inconnu, ou appartenant à un autre marchand que celui
+// du QR code, renvoie models.ErrNotFound, sans requête pour l'id interne.
 func (s *Service) resolveOrderRef(ctx context.Context, qr, orderRef string) (string, error) {
 	if !helpers.IsOrderPublicID(orderRef) {
-		// TODO phase 2 : refuser l'id interne (models.ErrNotFound).
-		return orderRef, nil
+		return "", models.ErrNotFound
 	}
 	orderID, err := s.repo.GetOrderIDByPublicID(ctx, qr, orderRef)
 	if err != nil {

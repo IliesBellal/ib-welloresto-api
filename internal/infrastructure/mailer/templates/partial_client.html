@@ -1,0 +1,73 @@
+{{/* Cadre « Maison » des mails envoyés au nom d'un établissement à ses
+clients (style C2, bouton pleine largeur du style C3 ; choix du 2026-10-26,
+docs/emails-styles.md). Le client connaît le restaurant, pas Wello Resto : la
+marque de l'établissement (mailer.MerchantBrand) habille le bandeau et le
+bouton, Wello Resto n'apparaît qu'en pied de page. Fond de page : #f4f4f2.
+
+  {{ template "c_band" .Brand }}
+  {{ template "c_body_start" }}
+    {{ template "c_title" (dict "Title" "…" "Sub" "…") }}
+    {{ template "c_facts_start" }}{{ template "c_fact" (dict "K" "Date" "V" .DateLabel) }}…{{ template "c_facts_end" }}
+    {{ template "c_button" (dict "URL" .Link "Label" "…" "Brand" .Brand) }}
+    {{ template "c_sign" (dict "Hello" "À très bientôt," "Name" .Brand.Name) }}
+  {{ template "c_body_end" }}
+  {{ template "c_foot" .Brand }}
+
+Paragraphes : <p style="margin:0 0 16px; font-size:15px; line-height:24px; color:#2e2e2e;">. */}}
+
+{{ define "c_band" }}{{ $bg := or .Color "#212529" }}{{ $fg := or .TextColor "#ffffff" }}
+<tr>
+    <td align="center" bgcolor="{{ $bg }}" style="background-color:{{ $bg }}; padding:{{ if or .Name .LogoURL }}30px 24px 26px{{ else }}6px 24px{{ end }}; border-radius:12px 12px 0 0;">
+        {{ if .LogoURL }}<img src="{{ .LogoURL }}" alt="{{ if not .Name }}Logo{{ end }}" width="64" style="display:block; width:64px; max-width:64px; height:auto; border:0; border-radius:10px; margin:0 auto{{ if .Name }} 14px{{ end }};">{{ end }}
+        {{ if .Name }}<div style="font-family:Georgia, 'Times New Roman', serif; font-size:24px; line-height:30px; color:{{ $fg }};">{{ .Name }}</div>{{ end }}
+    </td>
+</tr>
+{{ end }}
+
+{{ define "c_body_start" }}
+<tr>
+    <td bgcolor="#ffffff" style="background-color:#ffffff; padding:32px 28px 28px; font-family:Helvetica, Arial, sans-serif; font-size:15px; line-height:24px; color:#2e2e2e;">
+{{ end }}
+
+{{ define "c_body_end" }}
+    </td>
+</tr>
+{{ end }}
+
+{{ define "c_title" }}<h1 style="margin:0 0 {{ if .Sub }}6px{{ else }}20px{{ end }}; font-family:Georgia, 'Times New Roman', serif; font-size:26px; line-height:32px; font-weight:normal; color:#1a1a1a;">{{ .Title }}</h1>
+{{ if .Sub }}<p style="margin:0 0 24px; font-family:Georgia, 'Times New Roman', serif; font-style:italic; font-size:16px; line-height:24px; color:#6d6a66;">{{ .Sub }}</p>{{ end }}{{ end }}
+
+{{ define "c_facts_start" }}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0 24px; border-top:1px solid #e6e3df;">{{ end }}
+
+{{ define "c_fact" }}
+    <tr>
+        <td valign="top" style="padding:11px 12px 11px 0; border-bottom:1px solid #e6e3df; font-family:Georgia, 'Times New Roman', serif; font-style:italic; font-size:15px; line-height:22px; color:#6d6a66;">{{ .K }}</td>
+        <td valign="top" align="right" style="padding:11px 0; border-bottom:1px solid #e6e3df; font-family:Helvetica, Arial, sans-serif; font-size:15px; line-height:22px; font-weight:bold; color:#1a1a1a; text-align:right;">{{ .V }}</td>
+    </tr>
+{{ end }}
+
+{{ define "c_facts_end" }}</table>{{ end }}
+
+{{ define "c_button" }}{{ $bg := or .Brand.Color "#212529" }}{{ $fg := or .Brand.TextColor "#ffffff" }}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 16px;">
+    <tr>
+        <td align="center" bgcolor="{{ $bg }}" style="background-color:{{ $bg }}; border-radius:12px;">
+            <a href="{{ .URL }}" target="_blank" style="display:block; padding:15px 20px; font-family:Helvetica, Arial, sans-serif; font-size:15px; line-height:20px; font-weight:bold; color:{{ $fg }}; text-decoration:none; border-radius:12px;">{{ .Label }}</a>
+        </td>
+    </tr>
+</table>
+{{ end }}
+
+{{/* c_calendar : lien Google Agenda sous le bouton, quand un .ics est joint. */}}
+{{ define "c_calendar" }}{{ if . }}<p style="margin:0 0 16px; text-align:center; font-family:Helvetica, Arial, sans-serif; font-size:14px; line-height:21px; color:#6d6a66;"><a href="{{ . }}" target="_blank" style="color:#1a1a1a; text-decoration:underline;">Ajouter à Google Agenda</a><br><span style="font-size:12px;">Pour un autre agenda, ouvrez le fichier joint.</span></p>{{ end }}{{ end }}
+
+{{ define "c_sign" }}<p style="margin:24px 0 0; font-family:Georgia, 'Times New Roman', serif; font-style:italic; font-size:16px; line-height:25px; color:#2e2e2e;">{{ .Hello }}{{ if .Name }}<br>{{ .Name }}{{ end }}</p>{{ end }}
+
+{{ define "c_foot" }}
+<tr>
+    <td align="center" bgcolor="#ebe9e5" style="background-color:#ebe9e5; padding:18px 28px 20px; border-radius:0 0 12px 12px; font-family:Helvetica, Arial, sans-serif; font-size:12px; line-height:18px; color:#7d7a75;">
+        {{ if .Name }}{{ .Name }}<br>{{ end }}
+        <span style="color:#9a968f;">Envoyé avec Wello Resto</span>
+    </td>
+</tr>
+{{ end }}

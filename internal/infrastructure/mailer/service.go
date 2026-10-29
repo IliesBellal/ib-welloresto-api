@@ -165,12 +165,40 @@ func (m *mailer) send(from, to, subject string, templateName string, data interf
 }
 */
 
+// templateFuncs sont les fonctions disponibles dans les templates, utilisées
+// par les blocs partagés (partial_*.html, cf. docs/emails-styles.md).
+var templateFuncs = template.FuncMap{
+	// dict construit l'argument d'un bloc partagé : dict "Label" "Voir" "URL" .Link.
+	"dict": func(kv ...interface{}) (map[string]interface{}, error) {
+		if len(kv)%2 != 0 {
+			return nil, fmt.Errorf("dict: nombre d'arguments impair (%d)", len(kv))
+		}
+		m := make(map[string]interface{}, len(kv)/2)
+		for i := 0; i < len(kv); i += 2 {
+			key, ok := kv[i].(string)
+			if !ok {
+				return nil, fmt.Errorf("dict: clé %v non textuelle", kv[i])
+			}
+			m[key] = kv[i+1]
+		}
+		return m, nil
+	},
+	// plural : plural 4 "personne" "personnes" -> "4 personnes".
+	"plural": func(n int, one, many string) string {
+		if n > 1 {
+			return fmt.Sprintf("%d %s", n, many)
+		}
+		return fmt.Sprintf("%d %s", n, one)
+	},
+	"supportEmail": func() string { return SupportEmail },
+}
+
 // RenderTemplate is a public helper function to render templates from the embedded FS
 // This allows other services (like BrevoMailer) to reuse the same templates
 func RenderTemplate(templateName string, data interface{}) (string, error) {
 	// Le template demandé en premier (c'est lui qui est exécuté), puis les blocs
 	// partagés (partial_*.html, ex. "establishment").
-	tmpl, err := template.ParseFS(templateFS, "templates/"+templateName, "templates/partial_*.html")
+	tmpl, err := template.New(templateName).Funcs(templateFuncs).ParseFS(templateFS, "templates/"+templateName, "templates/partial_*.html")
 	if err != nil {
 		return "", fmt.Errorf("failed to parse template %s: %w", templateName, err)
 	}

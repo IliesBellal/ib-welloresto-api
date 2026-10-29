@@ -11,10 +11,6 @@ import (
 const (
 	// PasswordBcryptCost is the bcrypt cost for every user-facing password hash
 	// (creation, self-service change, admin force-reset, forgot-password reset).
-	//
-	// Note: HashPassword in services_helpers.go uses bcrypt.DefaultCost (10) and
-	// is kept as-is because it sits on the login legacy-upgrade path. New code
-	// should use HashUserPassword so that all four password entry points agree.
 	PasswordBcryptCost = 12
 
 	// PasswordMinLength is the shared minimum length policy.

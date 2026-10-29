@@ -66,9 +66,9 @@ func TestNotificationRepository_Postgres(t *testing.T) {
 	}
 
 	// No valid FCM token yet.
-	tok, err := repo.GetValidFCMTokenOld(ctx)
+	tok, _, err := repo.GetValidFCMToken(ctx)
 	if err != nil {
-		t.Fatalf("GetValidFCMTokenOld (empty) failed against postgres: %v", err)
+		t.Fatalf("GetValidFCMToken (empty) failed against postgres: %v", err)
 	}
 	if tok != "" {
 		t.Fatalf("expected no valid token yet, got %q", tok)
@@ -77,14 +77,6 @@ func TestNotificationRepository_Postgres(t *testing.T) {
 	// StoreFCMToken: now() + interval '50 minutes' expiry.
 	if err := repo.StoreFCMToken(ctx, accessToken); err != nil {
 		t.Fatalf("StoreFCMToken failed against postgres: %v", err)
-	}
-
-	tok, err = repo.GetValidFCMTokenOld(ctx)
-	if err != nil {
-		t.Fatalf("GetValidFCMTokenOld failed against postgres: %v", err)
-	}
-	if tok != accessToken {
-		t.Fatalf("expected %q, got %q", accessToken, tok)
 	}
 
 	tok, expiry, err := repo.GetValidFCMToken(ctx)
@@ -101,9 +93,9 @@ func TestNotificationRepository_Postgres(t *testing.T) {
 	if err := repo.DeleteAccessToken(ctx, accessToken); err != nil {
 		t.Fatalf("DeleteAccessToken failed against postgres: %v", err)
 	}
-	tok, err = repo.GetValidFCMTokenOld(ctx)
+	tok, _, err = repo.GetValidFCMToken(ctx)
 	if err != nil {
-		t.Fatalf("GetValidFCMTokenOld (after delete) failed: %v", err)
+		t.Fatalf("GetValidFCMToken (after delete) failed: %v", err)
 	}
 	if tok != "" {
 		t.Fatalf("expected no valid token after delete, got %q", tok)

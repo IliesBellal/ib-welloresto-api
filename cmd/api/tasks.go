@@ -46,6 +46,10 @@ func SetupTasks(
 	add("@hourly", taskManager.SendLoyaltyProgrammReminder) // stub non implémenté (no-op)
 	add("@hourly", taskManager.CapturePayments)
 	add("@hourly", taskManager.CancelPayments)
+	// Facture PDF des commandes en ligne closes, payées par Stripe, dès 25 € TTC
+	// (docs/emails-styles.md). Fenêtre de 2 h : 5 minutes laissent le temps
+	// de retenter un envoi en échec.
+	add("@every 5m", taskManager.RunOnlineOrderInvoices)
 
 	// ── Temps de préparation moyen (simulation capacité parallèle) ──────────
 	add("@every 15m", taskManager.UpdateAverageDistributionTime)

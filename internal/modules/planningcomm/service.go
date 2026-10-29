@@ -31,9 +31,16 @@ type Service struct {
 	mailer      mailer.Service
 	sms         sms.Service
 	merchantSMS merchantSMSSender
+	brands      brandResolver
 	baseURL     string
 	outbound    outboundRecorder
 	log         *zap.Logger
+}
+
+// brandResolver lit l'identité (logo, couleur) de l'établissement qui habille
+// le mail de planning (merchantbrand.Repository).
+type brandResolver interface {
+	Resolve(ctx context.Context, merchantID, name string) mailer.MerchantBrand
 }
 
 // merchantSMSSender envoie un SMS pour le compte d'un établissement et le
@@ -75,6 +82,19 @@ func (s *Service) SetMerchantSMS(merchantSMS merchantSMSSender) {
 	s.merchantSMS = merchantSMS
 }
 
+// SetBrandResolver habille le mail aux couleurs et au logo de l'établissement.
+// Sans lui (tests), le cadre par défaut porte seulement son nom.
+func (s *Service) SetBrandResolver(brands brandResolver) {
+	s.brands = brands
+}
+
+func (s *Service) brand(ctx context.Context, msg PublishedWeekMessage) mailer.MerchantBrand {
+	if s.brands == nil {
+		return mailer.NewMerchantBrand(msg.MerchantName, "", "", "")
+	}
+	return s.brands.Resolve(ctx, msg.MerchantID, msg.MerchantName)
+}
+
 func (s *Service) SendPublishedWeek(ctx context.Context, msg PublishedWeekMessage) {
 	s.sendEmail(ctx, msg)
 	// Paid option gate: when disabled, planning publication stays email-only.
@@ -94,6 +114,7 @@ func (s *Service) sendEmail(ctx context.Context, msg PublishedWeekMessage) {
 		"BrandLogoURL": mailer.BrandLogoURL,
 		"SupportEmail": mailer.SupportEmail,
 		"Year":         time.Now().Year(),
+		"Brand":        s.brand(ctx, msg),
 		"MerchantName": msg.MerchantName,
 		"EmployeeName": msg.EmployeeName,
 		"WeekLabel":    msg.WeekLabel,

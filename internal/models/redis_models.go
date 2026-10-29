@@ -89,6 +89,16 @@ const (
 	PasswordResetIPThrottleTTL    = 1 * time.Hour
 	PasswordResetIPThrottleMax    = 20
 
+	// OTPAttemptsPrefix keys the wrong-code counter of an OTP (MFA or contact
+	// verification), suffixed by the OTP's own cache key. At OTPMaxAttempts
+	// wrong codes the OTP is discarded and a new one must be requested.
+	OTPAttemptsPrefix = "otp:attempts:"
+	OTPMaxAttempts    = 5
+
+	// VerificationSentPrefix keys the resend cooldown of contact verification
+	// codes (POST /auth/send-verification, modes EMAIL/SMS), like the MFA one.
+	VerificationSentPrefix = "verify:sent:"
+
 	// Préfixes des clés Redis pour la confirmation de création d'un nom en
 	// doublon (produit/ingrédient/attribut) : le 1er appel avec un nom déjà
 	// utilisé pose la clé et bloque (erreur "_with_retry"), un 2e appel
