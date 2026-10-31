@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/diagnostics"
 	"welloresto-api/internal/fiscal"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
@@ -1350,7 +1351,33 @@ func (r *OrdersLifeCycleRepository) computeOrderTotals(ctx context.Context, merc
 	return ttcCents, htCents, tvaCents, nil
 }
 
+// CreateOrder crée la commande. Une commande Uber Eats ou Deliveroo l'est dans une
+// transaction : tout ou rien. Sans elle, une panne après l'en-tête laissait une
+// commande sans lignes ou sans paiement, que le contrôle de doublon empêchait
+// ensuite de recréer. Les autres canaux (caisse, borne, Scan&Order) gardent leur
+// comportement : leurs appelants ouvrent ou non leur propre transaction.
+//
+// Les étapes tolérantes (commentaires, coûts de revient, attribution de remise…)
+// sont isolées par des points de sauvegarde (dbutils.WithSavepoints) pour que leur
+// échec, jusqu'ici sans conséquence, n'invalide pas la transaction.
 func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models.RequestObject) (*models.CreateOrderResult, error) {
+	if !models.IsMarketplaceBrand(req.Order.Brand) {
+		return r.createOrder(ctx, req)
+	}
+
+	var result *models.CreateOrderResult
+	err := dbutils.RunInTx(ctx, r.database, func(txCtx context.Context) error {
+		var err error
+		result, err = r.createOrder(dbutils.WithSavepoints(txCtx), req)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (r *OrdersLifeCycleRepository) createOrder(ctx context.Context, req *models.RequestObject) (*models.CreateOrderResult, error) {
 	log := logger.FromContext(ctx)
 
 	unavailable, err := r.validateProductAvailability(ctx, req)
@@ -1360,18 +1387,51 @@ func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models
 		log.Error("Error validating products availability - " + err.Error())
 		return nil, err
 	}
+	var outOfStock []string
 	if len(unavailable) > 0 {
-		//tx.Rollback()
-		return &models.CreateOrderResult{Status: "unavailable_products"}, nil
+		if !models.IsMarketplaceBrand(req.Order.Brand) {
+			//tx.Rollback()
+			return &models.CreateOrderResult{Status: "unavailable_products"}, nil
+		}
+		// Commande Uber Eats / Deliveroo : le client l'a déjà payée, la refuser en
+		// silence la ferait disparaître (la plateforme croit l'avoir transmise).
+		// On la crée, on signale la rupture en tête du commentaire, et c'est le
+		// personnel qui décide (les webhooks ne l'acceptent pas automatiquement).
+		outOfStock = unavailable
+		req.Order.Comment = stockWarningComment(req.Order.Comment, req.Order.Products, unavailable)
+		log.Warn("marketplace order contains out-of-stock products, created anyway",
+			zap.String("brand", req.Order.Brand), zap.Strings("product_ids", unavailable))
 	}
 
 	if req.Order.Customer != nil {
-		customerID, err := r.upsertCustomer(ctx, req)
-		if err != nil {
+		var customerID *string
+		err := dbutils.Isolated(ctx, func() error {
+			var upsertErr error
+			customerID, upsertErr = r.upsertCustomer(ctx, req)
+			return upsertErr
+		})
+		switch {
+		case err == nil:
+			req.Order.Customer.CustomerID = customerID
+		case models.IsMarketplaceBrand(req.Order.Brand):
+			// Le client d'une commande de plateforme n'est qu'un libellé (la plateforme
+			// masque son identité) : son enregistrement ne doit pas faire perdre une
+			// commande déjà payée. Elle est créée sans client, et son nom passe dans le
+			// commentaire pour que le personnel reconnaisse la commande.
+			log.Error("marketplace customer not saved, order created without customer", zap.String("brand", req.Order.Brand), zap.Error(err))
+			diagnostics.Record(ctx, diagnostics.Event{
+				Kind:        "marketplace_import_degraded",
+				MerchantID:  req.MerchantID,
+				SubjectType: strings.ToLower(req.Order.Brand) + "_customer",
+				SubjectID:   helpers.SafeString(req.Order.BrandOrderID),
+				Data:        map[string]any{"brand": req.Order.Brand, "what": "customer", "error": err.Error()},
+			})
+			req.Order.Comment = customerNoteComment(req.Order.Comment, req.Order.Customer)
+			req.Order.Customer = nil
+		default:
 			//tx.Rollback()
 			return nil, err
 		}
-		req.Order.Customer.CustomerID = customerID
 	}
 
 	// compute estimated ready if not provided
@@ -1394,7 +1454,12 @@ func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models
 	req.Order.EstimatedReady = estimatedReady
 
 	// get next order number
-	orderNum, err := r.GetNextOrderNum(ctx, req.MerchantID)
+	var orderNum string
+	err = dbutils.Isolated(ctx, func() error {
+		var numErr error
+		orderNum, numErr = r.GetNextOrderNum(ctx, req.MerchantID)
+		return numErr
+	})
 	if err != nil {
 		log.Error("Cannot retrieve last order num: " + err.Error())
 		orderNum = "0"
@@ -1495,11 +1560,12 @@ func (r *OrdersLifeCycleRepository) CreateOrder(ctx context.Context, req *models
 	}
 
 	return &models.CreateOrderResult{
-		Status:   "success",
-		OrderID:  orderID,
-		PublicID: helpers.SafeString(req.Order.PublicID),
-		OrderNum: &orderNum,
-		Action:   action,
+		Status:              "success",
+		OrderID:             orderID,
+		PublicID:            helpers.SafeString(req.Order.PublicID),
+		OrderNum:            &orderNum,
+		Action:              action,
+		UnavailableProducts: outOfStock,
 	}, nil
 }
 
@@ -1600,6 +1666,14 @@ func (r *OrdersLifeCycleRepository) upsertCustomer(ctx context.Context, req *mod
 	}
 	if req.Order.Customer.Address != nil {
 		cust.CustomerAddress = req.Order.Customer.Address
+	}
+	// Numéro temporaire et code pour l'appeler : seules les plateformes (Uber Eats,
+	// Deliveroo) les envoient, l'application de caisse n'en envoie jamais.
+	if req.Order.Customer.TemporaryPhone != nil {
+		cust.CustomerTemporaryPhone = req.Order.Customer.TemporaryPhone
+	}
+	if req.Order.Customer.TemporaryPhoneCode != nil {
+		cust.CustomerTemporaryPhoneCode = req.Order.Customer.TemporaryPhoneCode
 	}
 	if req.Order.Customer.Lat != nil {
 		cust.CustomerLat = req.Order.Customer.Lat
@@ -2167,10 +2241,12 @@ func (r *OrdersLifeCycleRepository) insertOrderBase(ctx context.Context, req *mo
 	req.Order.OrderID = helpers.Int64ToStringPtr(lastID)
 	req.Order.PublicID = &PublicID
 
-	err = r.insertOrderComment(ctx, req)
+	if resolveOrderComment(&req.Order) != nil {
+		err = dbutils.Isolated(ctx, func() error { return r.insertOrderComment(ctx, req) })
 
-	if err != nil {
-		logger.FromContext(ctx).Error(err.Error())
+		if err != nil {
+			logger.FromContext(ctx).Error(err.Error())
+		}
 	}
 
 	return strconv.FormatInt(lastID, 10), nil
@@ -2545,7 +2621,11 @@ func (r *OrdersLifeCycleRepository) insertOrderItems(ctx context.Context, req *m
 	// Coûts résolus pour toutes les lignes en un seul aller-retour batché
 	// plutôt qu'un par ligne (~2 requêtes par ligne sinon) : voir
 	// docs/decisions.md, impact mesuré sur staging.
-	costResults, optionCosts := r.resolveOrderItemCostsForOrder(ctx, req.MerchantID, req.Order.Products)
+	var costResults []lineCostResult
+	var optionCosts map[string]optionCostEntry
+	dbutils.Shield(ctx, func() {
+		costResults, optionCosts = r.resolveOrderItemCostsForOrder(ctx, req.MerchantID, req.Order.Products)
+	})
 
 	used := make([]models.UsedItem, 0, len(req.Order.Products))
 	for i, p := range req.Order.Products {
@@ -2604,13 +2684,19 @@ func (r *OrdersLifeCycleRepository) InsertOrderItem(ctx context.Context, item *m
 	}
 	item.OrderItemID = helpers.Int64ToStringPtr(lastID)
 
-	if err := r.insertOrderItemComment(ctx, item); err != nil {
-		// Non bloquant : on logue mais on ne fait pas échouer la création de commande.
-		log := logger.FromContext(ctx)
-		log.Warn("insertOrderItemComment failed", zap.String("order_item_id", *item.OrderItemID), zap.Error(err))
-	}
+	// Étapes tolérantes de la ligne (commentaire, attribution de remise) : leur
+	// échec est journalisé sans faire échouer la commande. Un seul point de
+	// sauvegarde pour les deux (actif seulement à la création d'une commande de
+	// plateforme, voir CreateOrder) : l'échec de l'un n'invalide pas la transaction.
+	dbutils.Shield(ctx, func() {
+		if err := r.insertOrderItemComment(ctx, item); err != nil {
+			// Non bloquant : on logue mais on ne fait pas échouer la création de commande.
+			log := logger.FromContext(ctx)
+			log.Warn("insertOrderItemComment failed", zap.String("order_item_id", *item.OrderItemID), zap.Error(err))
+		}
 
-	r.upsertOrderItemDiscountRedemption(ctx, item.OrderID, *item.OrderItemID, item.MerchantID, item.DiscountID, item.BasePrice, item.Price)
+		r.upsertOrderItemDiscountRedemption(ctx, item.OrderID, *item.OrderItemID, item.MerchantID, item.DiscountID, item.BasePrice, item.Price)
+	})
 
 	return lastID, nil
 }
@@ -2915,7 +3001,10 @@ func (r *OrdersLifeCycleRepository) insertExtrasWithoutsConfigs(ctx context.Cont
 			allExtraComponentIDs = append(allExtraComponentIDs, e.ComponentID)
 		}
 	}
-	extraCosts := r.resolveExtraCostsBatch(ctx, req.MerchantID, allExtraComponentIDs)
+	var extraCosts map[string]extraCostEntry
+	dbutils.Shield(ctx, func() {
+		extraCosts = r.resolveExtraCostsBatch(ctx, req.MerchantID, allExtraComponentIDs)
+	})
 
 	itemIdx := 0
 	for _, p := range req.Order.Products {

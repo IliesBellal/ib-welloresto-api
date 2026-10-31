@@ -10,6 +10,8 @@ import (
 	"welloresto-api/internal/infrastructure/redis"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/modules/deliveroo"
+	"welloresto-api/internal/webhook/idempotency"
+	"welloresto-api/internal/webhook/marketplacefallback"
 
 	"welloresto-api/internal/models"                   // Assurez-vous que le chemin est correct
 	"welloresto-api/internal/modules/order_life_cycle" // Chemin vers OrderLifeCycle
@@ -24,6 +26,17 @@ type DeliverooService struct {
 	lifecycleService *order_life_cycle.OrdersLifeCycleService
 	httpClient       *deliveroo.DeliverooService
 	redis            *redis.Client // Optionnel, pour le caching global d'idempotence
+
+	// sync rattache les articles et options d'une commande au catalogue (le dépôt) ;
+	// fallbackProduct renvoie l'article de repli de l'établissement. Remplaçables en test.
+	sync            productSyncer
+	fallbackProduct func(ctx context.Context, merchantID string) (string, error)
+}
+
+// productSyncer rattache un article et ses options au catalogue, en les créant si besoin.
+type productSyncer interface {
+	SyncProduct(ctx context.Context, merchantID string, item DeliverooItem) (string, error)
+	SyncOption(ctx context.Context, merchantID string, productID string, mod DeliverooModifier) (string, string, error)
 }
 
 func NewDeliverooService(repo *Repository, ordSvc *orders.OrdersService, lcSvc *order_life_cycle.OrdersLifeCycleService, deliverooInternalService *deliveroo.DeliverooService, redisClient *redis.Client) *DeliverooService {
@@ -33,6 +46,10 @@ func NewDeliverooService(repo *Repository, ordSvc *orders.OrdersService, lcSvc *
 		lifecycleService: lcSvc,
 		httpClient:       deliverooInternalService,
 		redis:            redisClient,
+		sync:             repo,
+		fallbackProduct: func(ctx context.Context, merchantID string) (string, error) {
+			return marketplacefallback.Product(ctx, repo.database, merchantID, models.MarketplaceCategoryDeliveroo, marketplacefallback.DeliverooName)
+		},
 	}
 }
 
@@ -88,6 +105,7 @@ func (s *DeliverooService) ProcessNewOrder(ctx context.Context, payload Delivero
 	if err != nil {
 		return err
 	}
+	productsPayload = applyDiscounts(log, ord, productsPayload)
 
 	// 5. Mapping Client & Adressage
 	customerReq, err := s.buildCustomerRequest(merchantData.MerchantID, ord)
@@ -123,8 +141,22 @@ func (s *DeliverooService) ProcessNewOrder(ctx context.Context, payload Delivero
 		return fmt.Errorf("failed to create order from deliveroo webhook: %w", err)
 	}
 
-	// 8. Auto-acceptation
-	if merchantData.AutoAcceptOrders {
+	// Une création qui ne renvoie pas d'erreur mais pas non plus « success » n'a
+	// rien écrit : sans ce contrôle, la commande disparaissait.
+	if result == nil || result.Status != "success" {
+		status := ""
+		if result != nil {
+			status = result.Status
+		}
+		return fmt.Errorf("deliveroo order %s not created (status %q)", ord.ID, status)
+	}
+
+	// 8. Auto-acceptation. Une commande avec produits en rupture est créée (le
+	// client a payé) mais n'est pas acceptée automatiquement : le personnel
+	// décide (rupture signalée en tête du commentaire, commande notifiée).
+	if len(result.UnavailableProducts) > 0 {
+		log.Warn("[DELIVEROO] Order imported with out-of-stock products, not auto-accepted: " + ord.ID)
+	} else if merchantData.AutoAcceptOrders {
 		if err := s.lifecycleService.AutoAcceptOrder(context.Background(), models.DeliverooWebhookUserID, merchantData.MerchantID, result.OrderID); err != nil {
 			log.Error("Error auto-accepting order " + result.OrderID + ": " + err.Error())
 		}
@@ -138,8 +170,8 @@ func (s *DeliverooService) buildProductsPayload(ctx context.Context, merchantID 
 	var payload []models.OrderProductPayload
 
 	for _, item := range items {
-		// A. Sync Product (DB check/insert)
-		internalProdID, err := s.repo.SyncProduct(ctx, merchantID, item)
+		// A. Sync Product (DB check/insert) ; article de repli si la création échoue
+		internalProdID, fallback, err := s.resolveProduct(ctx, merchantID, item)
 		if err != nil {
 			return nil, fmt.Errorf("sync product error (%s): %w", item.Name, err)
 		}
@@ -163,15 +195,30 @@ func (s *DeliverooService) buildProductsPayload(ctx context.Context, merchantID 
 			Config:      &models.ProductConfiguration{Attributes: []models.ConfigurationAttribute{}},
 		}
 
+		// Commentaire de l'article : le vrai titre si l'article de repli le remplace,
+		// puis les options qui n'ont pas pu être rattachées (la cuisine doit les voir).
+		var notes []string
+		if fallback {
+			notes = append(notes, "Article Deliveroo : "+item.Name)
+		}
+
 		// B. Sync Modifiers
-		if len(item.Modifiers) > 0 {
+		if len(item.Modifiers) > 0 && fallback {
+			// Pas d'options structurées sur l'article de repli : elles passent en texte.
+			notes = append(notes, modifiersLine(item.Modifiers))
+		} else if len(item.Modifiers) > 0 {
 			// Regrouper par attribut pour le modèle ConfigAttribute
 			attrMap := make(map[string]*models.ConfigurationAttribute)
+			var lost []DeliverooModifier
 
 			for _, mod := range item.Modifiers {
-				attrID, optID, err := s.repo.SyncOption(ctx, merchantID, internalProdID, mod)
+				attrID, optID, err := s.sync.SyncOption(ctx, merchantID, internalProdID, mod)
 				if err != nil {
-					return nil, fmt.Errorf("sync option error (%s): %w", mod.Name, err)
+					// Une option qui ne peut pas être créée ne fait pas perdre la commande :
+					// elle passe en texte dans le commentaire de la ligne.
+					recordDegraded(ctx, merchantID, "option", mod.PosItemID, mod.Name, err)
+					lost = append(lost, mod)
+					continue
 				}
 
 				if _, exists := attrMap[attrID]; !exists {
@@ -192,6 +239,16 @@ func (s *DeliverooService) buildProductsPayload(ctx context.Context, merchantID 
 			for _, attr := range attrMap {
 				prodPayload.Config.Attributes = append(prodPayload.Config.Attributes, *attr)
 			}
+			if len(lost) > 0 {
+				notes = append(notes, modifiersLine(lost))
+			}
+		}
+
+		if len(notes) > 0 {
+			prodPayload.Comment = &models.OrderItemCommentPayload{
+				Content: strings.Join(notes, " | "),
+				UserID:  models.DeliverooWebhookUserID,
+			}
 		}
 
 		payload = append(payload, prodPayload)
@@ -200,34 +257,7 @@ func (s *DeliverooService) buildProductsPayload(ctx context.Context, merchantID 
 }
 
 func (s *DeliverooService) buildCustomerRequest(merchantID string, ord DeliverooOrder) (*models.CustomerRequest, error) {
-	var name, phone, address string
-	var lat, lng float64
-
-	isRestaurantFulfillment := ord.FulfillmentType == models.FulfillmentTypeRestaurant
-
-	if isRestaurantFulfillment && ord.Delivery != nil {
-		name = ord.Delivery.CustomerName
-		phone = ord.Delivery.ContactNumber
-		address = fmt.Sprintf("%s, %s, %s", ord.Delivery.Line1, ord.Delivery.Postcode, ord.Delivery.City)
-		lat = ord.Delivery.Location.Latitude
-		lng = ord.Delivery.Location.Longitude
-	} else if ord.Customer != nil {
-		// Takeaway ou Delivery by Deliveroo
-		name = ord.Customer.FirstName
-		phone = ord.Customer.ContactNumber
-		// Pas d'adresse précise pour le client dans ce cas (géré par Deliveroo)
-	}
-
-	return &models.CustomerRequest{
-		MerchantID:    &merchantID,
-		Name:          &name,
-		Tel:           &phone,
-		Address:       &address,
-		Lat:           &lat,
-		Lng:           &lng,
-		CustomerBrand: models.BrandDeliveroo,
-		// Les champs supplémentaires peuvent être mappés si disponibles
-	}, nil
+	return deliverooCustomer(merchantID, ord), nil
 }
 
 func (s *DeliverooService) buildOrderRequestObject(merchantID, orderNum string, ord DeliverooOrder, products []models.OrderProductPayload, customer *models.CustomerRequest) *models.RequestObject {
@@ -262,10 +292,7 @@ func (s *DeliverooService) buildOrderRequestObject(merchantID, orderNum string, 
 	// Si le struct RequestObject OrderRequest a été mis à jour pour inclure cela, l'ajouter ici.
 
 	// Commentaires
-	comment := ord.OrderNotes
-	if ord.CutleryNotes != "" && ord.CutleryNotes != "PAS DE COUVERTS" {
-		comment += " [Couverts demandés]"
-	}
+	comment := orderComment(ord)
 
 	// Helpers pour les pointeurs
 	cashRegisterID := models.BrandDeliveroo
@@ -488,34 +515,41 @@ func (s *DeliverooService) ValidateOrderItems(ctx context.Context, merchantID st
 func (s *DeliverooService) ProcessEvent(ctx context.Context, payload DeliverooWebhookPayload) error {
 	log := logger.FromContext(ctx)
 
-	// ==========================================
-	// 1. IDEMPOTENCE REDIS GLOBALE (1 Heure)
-	// Protège contre les doublons instantanés
-	// ==========================================
+	// Idempotence Redis : l'événement est réservé le temps du traitement et marqué
+	// « traité » seulement en cas de succès. Un échec lève la réservation, pour que
+	// la nouvelle tentative de Deliveroo soit réellement traitée — marquer
+	// l'événement avant le traitement faisait perdre la commande.
+	var store idempotency.Store
 	if s.redis != nil {
-		// On crée une clé unique pour cet événement précis
-		eventKey := helpers.GetWebhookDeliverooEventKey(
-			payload.Event,
-			payload.Body.Order.ID,
-			payload.Body.Order.Status,
-		)
-
-		_, found := s.redis.Get(ctx, eventKey)
-		if found {
-			log.Warn(fmt.Sprintf("[DELIVEROO] Event already processed (Redis cache), skipping: %s", eventKey))
-			return nil // Déjà traité, on valide en renvoyant nil
-		}
-
-		// On le marque comme traité immédiatement
-		_ = s.redis.Set(ctx, eventKey, "processed", time.Hour)
+		store = s.redis
 	}
+	eventKey := helpers.GetWebhookDeliverooEventKey(
+		payload.Event,
+		payload.Body.Order.ID,
+		payload.Body.Order.Status,
+	)
+	skipped, err := idempotency.Run(ctx, store, log, eventKey, time.Hour, func() error {
+		return s.dispatchEvent(ctx, payload)
+	})
+	if skipped {
+		log.Warn(fmt.Sprintf("[DELIVEROO] Event already processed or in progress (Redis), skipping: %s", eventKey))
+	}
+	return err
+}
 
-	// ==========================================
-	// 2. ROUTAGE DE L'ÉVÉNEMENT
-	// ==========================================
+func (s *DeliverooService) dispatchEvent(ctx context.Context, payload DeliverooWebhookPayload) error {
+	log := logger.FromContext(ctx)
+
 	switch payload.Event {
 	case "order.new", "order.new_order":
-		return s.ProcessNewOrder(ctx, payload)
+		err := s.ProcessNewOrder(ctx, payload)
+		if err != nil {
+			// webhook_failed n'est pas un statut final : Deliveroo prévient aussitôt
+			// l'équipe sur sa tablette de vérifier le système en caisse, et la
+			// nouvelle tentative du webhook pourra encore réussir.
+			go s.setSyncStatus(context.Background(), payload.Body.Order.ID, "failed", "webhook_failed")
+		}
+		return err
 
 	case "order.status_update":
 		// Assure-toi d'avoir cette fonction (s.ProcessStatusUpdate)

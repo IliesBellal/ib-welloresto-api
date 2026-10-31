@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"welloresto-api/internal/logger"
@@ -41,7 +42,7 @@ func (s *Service) handleOrderNotification(ctx context.Context, event ueModels.Ub
 	}
 
 	req := MapUberOrderToRequest(ctx, order, store.MerchantID)
-	req.Order.Products = products
+	req.Order.Products = applyPromotions(log, order, products)
 	req.MerchantID = store.MerchantID
 	req.Order.BrandStoreID = &store.StoreID
 	createdBy := models.UberEatsWebhookUserID
@@ -62,8 +63,21 @@ func (s *Service) handleOrderNotification(ctx context.Context, event ueModels.Ub
 		}
 		return err
 	}
+	// Une création qui ne renvoie pas d'erreur mais pas non plus « success » n'a
+	// rien écrit : sans ce contrôle, la commande disparaissait avec un « importée ».
+	if result == nil || result.Status != "success" {
+		status := ""
+		if result != nil {
+			status = result.Status
+		}
+		return fmt.Errorf("[UBER EATS] order %s not created (status %q)", order.ID, status)
+	}
 
-	if store.AutoAcceptOrders {
+	if len(result.UnavailableProducts) > 0 {
+		// Le client a payé : la commande est créée, mais le personnel doit décider
+		// (la rupture est signalée en tête du commentaire et la commande notifiée).
+		log.Warn("[UBER EATS] Order imported with out-of-stock products, not auto-accepted: " + order.ID)
+	} else if store.AutoAcceptOrders {
 		if err := s.orderLifeCycleSvc.AutoAcceptOrder(ctx, models.UberEatsWebhookUserID, store.MerchantID, result.OrderID); err != nil {
 			log.Error("Error auto-accepting order " + result.OrderID + ": " + err.Error())
 		}

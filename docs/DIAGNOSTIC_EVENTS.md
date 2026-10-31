@@ -141,3 +141,27 @@ la cause, toujours inconnue : le diagnostic serveur dira à quelle étape l'éca
   pas couvert par un test automatique ; à essayer sur une tablette : commande simple,
   commande avec option payante, commande en livraison, offre « 2 pizzas pour 12 € ».
 - Les 12 € de la commande 38912 restent à régulariser par avoir (registre validé).
+
+## Import des commandes Uber Eats / Deliveroo : `marketplace_import_degraded`
+
+Écrit quand une commande de plateforme a dû remplacer un article, une option ou son
+client par du texte au lieu d'échouer (docs/marketplace-fiabilite-import.md, lots 3 et 5).
+La commande est créée ; l'événement dit ce qui a été remplacé.
+
+- `subject_type` : `uber_eats_product`, `uber_eats_modifier_group`, `uber_eats_modifier_option`,
+  `deliveroo_product`, `deliveroo_option`, `uber_eats_customer` ou `deliveroo_customer`.
+- `subject_id` : identifiant de l'article ou de l'option chez la plateforme (de la commande
+  pour un client).
+- `data` : `brand`, `what` (`product`, `modifier_group`, `modifier_option`, `option`,
+  `customer`), `title` (sauf client) et `error` (cause SQL).
+
+```sql
+-- Dégradations des dernières 24 h, par cause
+SELECT subject_type, data->>'what' AS quoi, left(data->>'error', 90) AS cause, count(*)
+FROM diagnostic_events
+WHERE kind = 'marketplace_import_degraded' AND created_at > now() - interval '1 day'
+GROUP BY 1, 2, 3 ORDER BY 4 DESC;
+```
+
+Une cause fréquente avant la migration 197 : `invalid input syntax for type integer`
+(mapping d'un groupe d'options Uber Eats avec identifiant texte).

@@ -861,10 +861,18 @@ func TestMenuRepository_Postgres(t *testing.T) {
 	}
 
 	// --- produit externe (Uber Eats temp) ---
-	extID, err := repo.CreateExternalProductTx(ctx, merchantID, "itest-menu-ext", "desc", 500)
+	extID, err := repo.CreateExternalProductTx(ctx, merchantID, "itest-menu-ext", "desc", 500, false)
 	if err != nil || extID == 0 {
 		t.Fatalf("CreateExternalProductTx = (%d, %v)", extID, err)
 	}
+	assertMarketplaceTVA(t, db, extID, models.MarketplaceTVAStandard)
+
+	// boisson alcoolisée : catégories « 20 % » de chaque mode de consommation
+	extAlcoholID, err := repo.CreateExternalProductTx(ctx, merchantID, "itest-menu-ext-alcool", "desc", 450, true)
+	if err != nil || extAlcoholID == 0 {
+		t.Fatalf("CreateExternalProductTx(alcool) = (%d, %v)", extAlcoholID, err)
+	}
+	assertMarketplaceTVA(t, db, extAlcoholID, models.MarketplaceTVAAlcohol)
 
 	// --- soft deletes ---
 	if err := repo.DeleteProduct(ctx, merchantID, prodB); err != nil {
@@ -899,5 +907,19 @@ func TestMenuRepository_Postgres(t *testing.T) {
 	}
 	if _, err := repo.GetAttribute(ctx, merchantID, attrID); err == nil {
 		t.Fatalf("GetAttribute après delete devrait échouer (enabled = FALSE)")
+	}
+}
+
+// assertMarketplaceTVA vérifie les catégories de TVA d'un produit créé depuis
+// une plateforme (models.MarketplaceTVAFor).
+func assertMarketplaceTVA(t *testing.T, db *sql.DB, productID int64, want models.MarketplaceTVA) {
+	t.Helper()
+	var got models.MarketplaceTVA
+	if err := db.QueryRow(`SELECT tva_in_id, tva_take_away_id, tva_delivery_id FROM products WHERE product_id = $1`, productID).
+		Scan(&got.In, &got.TakeAway, &got.Delivery); err != nil {
+		t.Fatalf("lecture TVA du produit %d: %v", productID, err)
+	}
+	if got != want {
+		t.Fatalf("TVA du produit %d = %+v, want %+v", productID, got, want)
 	}
 }

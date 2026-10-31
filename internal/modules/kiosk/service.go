@@ -599,7 +599,7 @@ func (s *Service) RegenerateAdminPin(ctx context.Context, merchantID, kioskID st
 // RevokeKiosk révoque immédiatement une borne : tous ses refresh tokens
 // sont invalidés et son statut passe à "revoked". L'access token déjà
 // émis (non révocable, auto-porteur) reste valide au maximum
-// AccessTokenTTLMinutes — voir docs/KIOSK_DECISIONS.md section G.1.
+// AccessTokenTTL — voir docs/KIOSK_DECISIONS.md section G.1.
 func (s *Service) RevokeKiosk(ctx context.Context, merchantID, kioskID string) error {
 	kiosk, err := s.repo.GetKioskByIDForMerchant(ctx, merchantID, kioskID)
 	if err != nil {
@@ -2578,7 +2578,7 @@ func (s *Service) getKioskOrder(ctx context.Context, merchantID, orderID string)
 // ---- Access token : signé HMAC-SHA256, non persisté ----
 
 func (s *Service) generateAccessToken(kioskID, merchantID string) (string, time.Time, error) {
-	expiresAt := time.Now().UTC().Add(time.Duration(s.cfg.AccessTokenTTLMinutes) * time.Minute)
+	expiresAt := time.Now().UTC().Add(AccessTokenTTL)
 	payload := fmt.Sprintf("%s|%s|%d", kioskID, merchantID, expiresAt.Unix())
 	encodedPayload := base64.RawURLEncoding.EncodeToString([]byte(payload))
 	signature := s.signPayload(encodedPayload)

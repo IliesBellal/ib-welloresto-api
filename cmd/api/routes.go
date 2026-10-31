@@ -651,7 +651,6 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	kioskCfg := kioskModule.Config{
 		EnrollmentCodeTTLMinutes:  cfg.Kiosk.EnrollmentCodeTTLMinutes,
 		DeviceRefreshTokenTTLDays: cfg.Kiosk.DeviceRefreshTokenTTLDays,
-		AccessTokenTTLMinutes:     cfg.Kiosk.AccessTokenTTLMinutes,
 		Pepper:                    cfg.Kiosk.Pepper,
 		// Gate de l'endpoint dev POST /kiosk/terminal/test/present-payment-method
 		// (docs/TERMINAL_SERVER_DRIVEN_CONTRACT.md) — jamais actif avec une
@@ -2001,6 +2000,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			Patch("/{customer_id}/unblock", customersH.UnblockCustomer) // used by: back-office
 
 		r.Get("/search", customersH.SearchCustomers)                                             // used by: back-office | mobile-app
+		r.Get("/frequent", customersH.GetFrequentCustomers)                                      // used by: mobile-app (chargé au démarrage du POS)
 		r.Get("/list", customersH.ListCustomers)                                                 // used by: back-office | mobile-app
 		r.Get("/loyalty-programs", customersH.GetLoyaltyPrograms)                                // used by: back-office
 		r.Get("/loyalty-programs/{loyalty_program_id}", customersH.GetLoyaltyProgram)            // used by: back-office

@@ -15,6 +15,9 @@ import (
 	"welloresto-api/internal/modules/order_life_cycle"
 	"welloresto-api/internal/modules/orders"
 	"welloresto-api/internal/modules/ubereats"
+	"welloresto-api/internal/utils/dbutils"
+	"welloresto-api/internal/webhook/idempotency"
+	"welloresto-api/internal/webhook/marketplacefallback"
 	ueClient "welloresto-api/internal/webhook/ubereats/client"
 
 	"go.uber.org/zap"
@@ -31,12 +34,25 @@ type Service struct {
 	googleClient         *googlemaps.GoogleMapsClient
 	uberClient           *ubereats.UberEatsService
 	ordersService        *orders.OrdersService
-	menuService          *menu.MenuService
+	menuService          productCreator
 	ordersRepo           *repository.OrdersRepository
 	orderLifeCycleSvc    *order_life_cycle.OrdersLifeCycleService
 	notificationsService *notification.NotificationService
 	db                   *sql.DB
 	redis                *redis.Client // Optionnel, pour le caching
+
+	// inLockedTx exécute fn dans une transaction qui tient le verrou nommé key :
+	// les « trouver ou créer » de mapping (produit, groupe, option) ne se font
+	// qu'un à la fois, voir dbutils.RunInTxLocked. Remplaçable en test.
+	inLockedTx func(ctx context.Context, key string, fn func(txCtx context.Context) error) error
+	// fallbackProduct renvoie l'article de repli de l'établissement, voir
+	// marketplacefallback. Remplaçable en test.
+	fallbackProduct func(ctx context.Context, merchantID string) (string, error)
+}
+
+// productCreator crée le produit d'un article Uber Eats inconnu (menu.MenuService).
+type productCreator interface {
+	CreateProductFromExternal(ctx context.Context, merchantID, title, description string, amount int, alcohol bool) (*string, error)
 }
 
 type ProductMappingRepository interface {
@@ -82,26 +98,38 @@ func NewService(
 		orderLifeCycleSvc:    orderLifeCycleSvc,
 		notificationsService: notificationService,
 		redis:                redis,
+		inLockedTx: func(ctx context.Context, key string, fn func(txCtx context.Context) error) error {
+			return dbutils.RunInTxLocked(ctx, db, key, fn)
+		},
+		fallbackProduct: func(ctx context.Context, merchantID string) (string, error) {
+			return marketplacefallback.Product(ctx, db, merchantID, models.MarketplaceCategoryUberEats, marketplacefallback.UberEatsName)
+		},
 	}
 }
 
 func (s *Service) ProcessEvent(ctx context.Context, event modelsUber.UberWebhookEvent) error {
 	log := logger.FromContext(ctx)
 
-	// ==========================================
-	// 1. IDEMPOTENCE REDIS (1 Heure)
-	// On crée une clé unique basée sur l'event, la ressource et le statut
-	// ==========================================
+	// Idempotence Redis : l'événement est réservé le temps du traitement et marqué
+	// « traité » seulement en cas de succès. Un échec lève la réservation, pour que
+	// la nouvelle tentative d'Uber (même event_id) soit réellement traitée — marquer
+	// l'événement avant le traitement faisait perdre la commande.
+	var store idempotency.Store
 	if s.redis != nil {
-		eventKey := helpers.GetWebhookUberEventKey(event.EventID)
-		_, found := s.redis.Get(ctx, eventKey)
-		if found {
-			log.Warn("[UBER EATS] Event already processed (Redis cache), skipping:" + eventKey)
-			return nil // On renvoie nil pour valider la réception auprès d'Uber
-		}
-		// On marque l'event comme traité immédiatement
-		_ = s.redis.Set(ctx, eventKey, "processed", models.WebhookUberEatsEventTTL)
+		store = s.redis
 	}
+	eventKey := helpers.GetWebhookUberEventKey(event.EventID)
+	skipped, err := idempotency.Run(ctx, store, log, eventKey, models.WebhookUberEatsEventTTL, func() error {
+		return s.dispatchEvent(ctx, event)
+	})
+	if skipped {
+		log.Warn("[UBER EATS] Event already processed or in progress (Redis), skipping:" + eventKey)
+	}
+	return err
+}
+
+func (s *Service) dispatchEvent(ctx context.Context, event modelsUber.UberWebhookEvent) error {
+	log := logger.FromContext(ctx)
 
 	switch event.EventType {
 	case "orders.notification":

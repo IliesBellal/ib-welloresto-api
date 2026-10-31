@@ -40,7 +40,6 @@ func newReclaimTestService(t *testing.T) (*Service, sqlmock.Sqlmock) {
 		Config{
 			EnrollmentCodeTTLMinutes:  15,
 			DeviceRefreshTokenTTLDays: 30,
-			AccessTokenTTLMinutes:     15,
 			Pepper:                    "test-pepper",
 		},
 		repo, db, nil, nil, nil, nil, nil, nil, nil, nil,

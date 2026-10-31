@@ -2,7 +2,9 @@ package scannorder
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -49,6 +51,31 @@ type ScheduleAvailability interface {
 
 func NewService(config config.ScanNOrderConfig, r *Repository, m *menu.MenuService, o *orders.OrdersService, manager *stripeclient.StripeManager, redis *redis.Client, orderLifeCycleSvc *order_life_cycle.OrdersLifeCycleService, upsellService *upsell.Service, deliverySessionService *delivery_sessions.DeliverySessionsService, availabilitiesSvc ScheduleAvailability) *Service {
 	return &Service{cfg: config, repo: r, menu: m, orderingService: o, StripeManager: manager, redis: redis, orderLifeCycleSvc: orderLifeCycleSvc, upsellService: upsellService, deliverySessionService: deliverySessionService, availabilities: availabilitiesSvc, audience: newAudienceGuard()}
+}
+
+// ErrMerchantUnavailable : le QR ne correspond à aucun établissement servable
+// (inconnu ou expiré). Le handler la traduit en 404.
+var ErrMerchantUnavailable = errors.New("merchant_unavailable")
+
+// isClientGone : la requête a été abandonnée par le client (onglet fermé,
+// rechargement, fetch annulé). L'erreur remontée par la base n'a alors rien
+// d'un incident serveur (« context canceled » pendant le dial/TLS).
+func isClientGone(ctx context.Context, err error) bool {
+	return err != nil && (ctx.Err() != nil || errors.Is(err, context.Canceled))
+}
+
+// logMerchantLookupFailure journalise l'échec de la résolution QR → merchant
+// au bon niveau : annulation client = debug, QR inconnu = warn, tout le reste
+// (base injoignable, timeout…) = error.
+func logMerchantLookupFailure(ctx context.Context, log *zap.Logger, msg, qr string, err error) {
+	switch {
+	case isClientGone(ctx, err):
+		log.Debug(msg+": request canceled by client", zap.String("qr_code", qr))
+	case err == nil || errors.Is(err, sql.ErrNoRows):
+		log.Warn(msg+": merchant not found for QR code", zap.String("qr_code", qr))
+	default:
+		log.Error(msg+": merchant lookup failed", zap.String("qr_code", qr), zap.Error(err))
+	}
 }
 
 // unavailableProductsNow retourne les produits du merchant hors créneau
@@ -114,6 +141,12 @@ func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse
 		return nil, nil
 	}
 
+	// Seule une réponse « success » est mise en cache : un statut d'échec
+	// (QR inconnu/expiré) ne doit pas masquer l'établissement pendant le TTL.
+	if merchant.Status != "success" {
+		return merchant, nil
+	}
+
 	// --- ÉTAPE 3 : Stocker dans Redis pour la prochaine fois ---
 	serialized, err := json.Marshal(merchant)
 	if err == nil {
@@ -133,8 +166,13 @@ func (s *Service) GetMerchant(ctx context.Context, qr string) (*MerchantResponse
 func (s *Service) computeGetMerchant(ctx context.Context, qr string) (*MerchantResponse, error) {
 	row, err := s.repo.GetMerchantByQR(ctx, qr)
 	if err != nil {
-		logger.FromContext(ctx).Error(err.Error())
-		return &MerchantResponse{Status: "no_merchant_found"}, nil
+		// Seul « aucune ligne » veut dire QR inconnu. Toute autre erreur
+		// (annulation client, base injoignable…) est remontée : la déguiser en
+		// no_merchant_found la ferait mettre en cache par GetMerchant.
+		if errors.Is(err, sql.ErrNoRows) {
+			return &MerchantResponse{Status: "no_merchant_found"}, nil
+		}
+		return nil, err
 	}
 
 	// Expiration QR (2h)
@@ -325,6 +363,10 @@ func (s *Service) GetMenu(ctx context.Context, qr string, deliveryType string) (
 	if err != nil {
 		return nil, err
 	}
+	// QR inconnu ou expiré : GetMerchant répond sans Merchant.
+	if merchant == nil || merchant.Merchant == nil {
+		return nil, ErrMerchantUnavailable
+	}
 
 	// Type absent/inconnu → TAKE_AWAY, normalisé avant la clé de cache
 	// (docs/ORDER_TYPE_AVAILABILITY.md).
@@ -371,6 +413,11 @@ func (s *Service) GetMenu(ctx context.Context, qr string, deliveryType string) (
 		return nil, nil
 	}
 
+	// Un menu sans contenu (marchand introuvable) n'est jamais mis en cache.
+	if menu.Menu == nil {
+		return menu, nil
+	}
+
 	// --- ÉTAPE 3 : Stocker dans Redis ---
 	serialized, err := json.Marshal(menu)
 	if err == nil {
@@ -395,6 +442,9 @@ func (s *Service) GetMenu(ctx context.Context, qr string, deliveryType string) (
 func (s *Service) ComputeGetMenu(ctx context.Context, qr string, deliveryType string, unavailable map[string]string) (*MenuResponse, error) {
 
 	merchantID, tz, err := s.repo.GetMerchantIDAndTZFromQR(ctx, qr)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
 	if err != nil || merchantID == "" {
 		return &MenuResponse{Status: "-1", Error: "Merchant not found"}, nil
 	}
@@ -1384,7 +1434,7 @@ func (s *Service) GetLoyaltyPrograms(ctx context.Context, qrCode string, deliver
 	// 1️⃣ Get merchant ID from QR code
 	merchantID, _, err := s.repo.GetMerchantIDAndTZFromQR(ctx, qrCode)
 	if err != nil || merchantID == "" {
-		log.Warn("Merchant not found for QR code", zap.String("qr_code", qrCode), zap.Error(err))
+		logMerchantLookupFailure(ctx, log, "GetLoyaltyPrograms", qrCode, err)
 		return &LoyaltyProgramsResponse{
 			LoyaltyPrograms: []LoyaltyProgram{},
 		}, nil
@@ -1425,7 +1475,7 @@ func (s *Service) GetDiscounts(ctx context.Context, qrCode string, deliveryType 
 	// 1️⃣ Get merchant ID and timezone from QR code
 	merchantID, tz, err := s.repo.GetMerchantIDAndTZFromQR(ctx, qrCode)
 	if err != nil || merchantID == "" {
-		log.Warn("Merchant not found for QR code", zap.String("qr_code", qrCode), zap.Error(err))
+		logMerchantLookupFailure(ctx, log, "GetDiscounts", qrCode, err)
 		return &DiscountsResponse{
 			Discounts: []Discount{},
 		}, nil
@@ -1474,7 +1524,7 @@ func (s *Service) GetUpsell(ctx context.Context, qr, orderType string) (*UpsellR
 	// ce qui la rend invalidable via InvalidateMerchantMenuCaches.
 	merchantID, _, err := s.repo.GetMerchantIDAndTZFromQR(ctx, qr)
 	if err != nil || merchantID == "" {
-		log.Warn("GetUpsell: merchant not found for QR code", zap.String("qr_code", qr), zap.Error(err))
+		logMerchantLookupFailure(ctx, log, "GetUpsell", qr, err)
 		return &UpsellResponse{Products: []models.ProductEntry{}}, nil
 	}
 
@@ -1596,7 +1646,7 @@ func (s *Service) PostUpsell(ctx context.Context, req *models.PricingRequest) (*
 
 	merchantID, _, err := s.repo.GetMerchantIDAndTZFromQR(ctx, req.QRCode)
 	if err != nil || merchantID == "" {
-		log.Warn("PostUpsell: merchant not found for QR code", zap.String("qr_code", req.QRCode), zap.Error(err))
+		logMerchantLookupFailure(ctx, log, "PostUpsell", req.QRCode, err)
 		return &UpsellResponse{Products: []models.ProductEntry{}}, nil
 	}
 

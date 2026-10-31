@@ -57,7 +57,6 @@ func MapUberOrderToRequest(
 		})
 	}
 
-	customerName := order.Eater.FirstName + " " + order.Eater.LastName
 	cashRegisterID := models.BrandUberEats
 
 	return &ordersModels.RequestObject{
@@ -72,20 +71,8 @@ func MapUberOrderToRequest(
 			BrandStatus:     order.CurrentState,
 			FulfillmentType: &fulfillmentType,
 			CashRegisterId:  &cashRegisterID,
-			Customer: &ordersModels.CustomerRequest{
-				BrandCustomerID:    &order.Eaters[0].ID,
-				CustomerBrand:      models.BrandUberEats,
-				FirstName:          &order.Eater.FirstName,
-				LastName:           &order.Eater.LastName,
-				Name:               &customerName,
-				TemporaryPhone:     &order.Eater.Phone,
-				TemporaryPhoneCode: &order.Eater.PhoneCode,
-				Lat:                order.Eater.Delivery.Location.Lat,
-				Lng:                order.Eater.Delivery.Location.Lng,
-				GooglePlaceID:      order.Eater.Delivery.Location.GooglePlaceID,
-				MerchantID:         &merchantID,
-			},
-			Comment:          order.StoreInstructions,
+			Customer:         uberCustomer(order, merchantID),
+			Comment:          orderComment(order),
 			MerchantApproval: models.MerchantApprovalPendingApproval,
 			Payments: []ordersModels.PaymentPayload{
 				{Amount: total, MOP: models.BrandUberEats},

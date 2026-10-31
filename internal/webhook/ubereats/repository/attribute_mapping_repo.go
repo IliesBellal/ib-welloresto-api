@@ -28,7 +28,11 @@ func (r *AttributeMappingRepository) CreateAttributeFromUberGroup(ctx context.Co
 	cleanTitle := reg.ReplaceAllString(title, "_")
 
 	// Équivalent PHP: 'ue_' . strtolower(...)
-	attrName := "ue_" + strings.ToLower(cleanTitle)
+	// configurable_attributes.name est limité à 50 caractères et title à 80 : un
+	// titre de groupe plus long (Uber n'en limite pas la taille) faisait échouer
+	// l'insertion, donc la commande entière.
+	attrName := helpers.TruncateRunes("ue_"+strings.ToLower(cleanTitle), 50)
+	title = helpers.TruncateRunes(title, 80)
 
 	// configurable_attributes.id is a varchar PK with no default (same
 	// convention as menu.CreateAttribute) — must be generated client-side,
@@ -59,6 +63,9 @@ func (r *AttributeMappingRepository) CreateAttributeFromUberGroup(ctx context.Co
 func (r *AttributeMappingRepository) CreateOptionFromUber(ctx context.Context, attributeID, title string, price int) (string, error) {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
+
+	// configurable_attribute_options.title est limité à 80 caractères.
+	title = helpers.TruncateRunes(title, 80)
 
 	id, err := db.InsertReturningID(ctx, `
 		INSERT INTO configurable_attribute_options (configurable_attribute_id, title, extra_price, display_order)

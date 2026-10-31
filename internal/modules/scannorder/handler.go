@@ -11,6 +11,11 @@ import (
 	"go.uber.org/zap"
 )
 
+// statusClientClosedRequest : convention nginx (499) pour une requête dont le
+// client est parti avant la réponse. Personne ne lit la réponse ; le code ne
+// sert qu'au journal d'accès.
+const statusClientClosedRequest = 499
+
 type Handler struct {
 	service *Service
 }
@@ -27,6 +32,11 @@ func (h *Handler) GetMerchant(w http.ResponseWriter, r *http.Request) {
 
 	merchantData, err := h.service.GetMerchant(ctx, qr)
 	if err != nil {
+		if isClientGone(ctx, err) {
+			log.Debug("GetMerchant: request canceled by client", zap.String("qr_code", qr))
+			w.WriteHeader(statusClientClosedRequest)
+			return
+		}
 		log.Error("service error" + err.Error())
 		models.SendJSON(w, http.StatusInternalServerError, "scannorder", "get_merchant", map[string]string{"error": err.Error()})
 		return
@@ -61,6 +71,16 @@ func (h *Handler) GetMenu(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.service.GetMenu(ctx, qr, orderType)
 	if err != nil {
+		if isClientGone(ctx, err) {
+			log.Debug("GetMenu: request canceled by client", zap.String("qr_code", qr))
+			w.WriteHeader(statusClientClosedRequest)
+			return
+		}
+		if errors.Is(err, ErrMerchantUnavailable) {
+			log.Warn("GetMenu: merchant unavailable", zap.String("qr_code", qr))
+			models.SendJSON(w, http.StatusNotFound, "scannorder", "get_menu", map[string]string{"error": err.Error()})
+			return
+		}
 		log.Error("GetMenu error " + err.Error())
 		models.SendJSON(w, http.StatusInternalServerError, "scannorder", "get_menu", map[string]string{"error": err.Error()})
 		return

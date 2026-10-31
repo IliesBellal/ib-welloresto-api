@@ -59,6 +59,8 @@ func (r *CustomersRepository) UpdateOrCreateCustomer(ctx context.Context, c *mod
 		"customer_temporary_door_number":        true,
 		"customer_temporary_floor_number":       true,
 		"customer_temporary_additional_address": true,
+		"customer_temporary_phone":              true,
+		"customer_temporary_phone_code":         true,
 		"advertising_consent":                   true,
 		"acquisition_source":                    true,
 	}
@@ -246,6 +248,10 @@ func getStringField(c *models.Customer, name string) *string {
 		return c.CustomerTemporaryFloorNumber
 	case "customer_temporary_additional_address":
 		return c.CustomerTemporaryAdditionalAddress
+	case "customer_temporary_phone":
+		return c.CustomerTemporaryPhone
+	case "customer_temporary_phone_code":
+		return c.CustomerTemporaryPhoneCode
 	}
 
 	return nil
@@ -1005,9 +1011,47 @@ func (r *CustomersRepository) UpdateLoyaltyReward(ctx context.Context, req *Loya
 	return err
 }
 
+// customerSearchColumns : colonnes communes à la recherche et aux clients
+// fréquents (même forme de réponse, voir scanCustomerSearchRows).
+const customerSearchColumns = `
+        c.customer_id,
+        c.customer_name,
+        c.customer_last_name,
+        c.customer_first_name,
+        c.customer_tel,
+        c.customer_address,
+        c.customer_email,
+        c.customer_nb_orders,
+        c.customer_total_spent,
+        c.creation_date,
+        c.last_order_date,
+        c.customer_code,
+        c.advertising_consent,
+        c.customer_brand,
+        c.blocked_at,
+        c.blocked_reason_id,
+        c.blocked_comment`
+
+// customerVisibleFilter : clients visibles dans les listes. Ce prédicat est
+// repris À L'IDENTIQUE par les index partiels de la migration 198 : le modifier
+// ici sans y toucher désactive silencieusement ces index.
+const customerVisibleFilter = `
+    FROM customer c
+    WHERE c.merchant_id = ?
+      AND (c.enabled = true OR c.blocked_at IS NOT NULL)
+      AND c.customer_brand NOT IN ('UBER_EATS', 'DELIVEROO')
+`
+
+// SearchCustomers cherche parmi les clients du marchand (voir search.go).
+//
+// Sans sortField, la recherche est triée par pertinence puis par fidélité
+// (nombre de commandes, dernière commande) : c'est le cas du POS, qui ne
+// demande aucun tri et n'affiche que la première page. Avec sortField, le tri
+// demandé est respecté (back-office). Le total vient de la même requête
+// (COUNT(*) OVER ()) ; il ne coûte donc pas de second parcours.
 func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, term, sortField, sortDir string, page, pageSize int) ([]CustomerSearchResult, int, error) {
 	db := dbx.GetDB(ctx, r.database)
-	var results []CustomerSearchResult
+	results := []CustomerSearchResult{}
 
 	if page <= 0 {
 		page = 1
@@ -1017,73 +1061,70 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 	}
 	offset := (page - 1) * pageSize
 
-	fromClause := `
-    FROM customer c
-    WHERE c.merchant_id = ?
-      AND (c.enabled = true OR c.blocked_at IS NOT NULL)
-      AND c.customer_brand NOT IN ('UBER_EATS', 'DELIVEROO')
-`
-	args := []interface{}{merchantID}
-
-	trimmedTerm := strings.TrimSpace(term)
-	if trimmedTerm != "" {
-		phoneSearchTerm := normalizePhoneSearchTerm(trimmedTerm)
-		phoneLikeTerm := "%" + phoneSearchTerm + "%"
-		nameLikeTerm := "%" + trimmedTerm + "%"
-		fromClause += `
-      AND (
-            c.customer_code = ?
-         OR UPPER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.customer_tel, ''), ' ', ''), '-', ''), '.', ''), '(', ''), ')', '')) LIKE UPPER(?)
-         OR UPPER(COALESCE(c.customer_name, '')) LIKE UPPER(?)
-		 OR UPPER(COALESCE(c.customer_first_name, '')) LIKE UPPER(?)
-		 OR UPPER(COALESCE(c.customer_last_name, '')) LIKE UPPER(?)
-      )
-`
-		args = append(args, trimmedTerm, phoneLikeTerm, nameLikeTerm, nameLikeTerm, nameLikeTerm)
-	}
-
-	countQuery := `SELECT COUNT(*) ` + fromClause
-	var totalItems int
-	if err := db.QueryRowContext(ctx, countQuery, args...).Scan(&totalItems); err != nil {
-		return results, 0, err
+	score := "0"
+	where := ""
+	var scoreArgs, whereArgs []interface{}
+	hasTerm := strings.TrimSpace(term) != ""
+	if hasTerm {
+		tokens := parseSearchTerm(term)
+		if len(tokens) == 0 {
+			// Saisie trop courte pour être discriminante (« a », « 06 ») : on
+			// n'interroge pas la base.
+			return results, 0, nil
+		}
+		built := buildSearchSQL(tokens)
+		score, where, scoreArgs, whereArgs = built.score, built.where, built.scoreArgs, built.whereArgs
 	}
 
 	orderBy := buildCustomerOrderByClause(sortField, sortDir)
-	query := `
-    SELECT
-        c.customer_id,
-        c.customer_name,
-		c.customer_last_name,
-		c.customer_first_name,
-        c.customer_tel,
-        c.customer_address,
-        c.customer_email,
-        c.customer_nb_orders,
-        c.customer_total_spent,
-        c.creation_date,
-        c.last_order_date,
-        c.customer_code,
-		c.advertising_consent,
-		c.customer_brand,
-		c.blocked_at,
-		c.blocked_reason_id,
-		c.blocked_comment
-` + fromClause + orderBy + `
-	LIMIT ? OFFSET ?
-`
+	if hasTerm && strings.TrimSpace(sortField) == "" {
+		orderBy = ` ORDER BY match_score DESC, c.customer_nb_orders DESC, c.last_order_date DESC NULLS LAST, c.customer_id ASC `
+	}
 
-	queryArgs := append(args, pageSize, offset)
-	rows, err := db.QueryContext(ctx, query, queryArgs...)
+	query := `SELECT` + customerSearchColumns + `,
+        ` + score + ` AS match_score,
+        COUNT(*) OVER () AS total_count` + customerVisibleFilter + where + orderBy + `
+    LIMIT ? OFFSET ?`
+
+	args := make([]interface{}, 0, len(scoreArgs)+len(whereArgs)+3)
+	args = append(args, scoreArgs...)
+	args = append(args, merchantID)
+	args = append(args, whereArgs...)
+	args = append(args, pageSize, offset)
+
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return results, 0, err
 	}
 	defer rows.Close()
 
+	results, totalItems, err := scanCustomerSearchRows(ctx, rows)
+	if err != nil {
+		return results, 0, err
+	}
+
+	// Page au-delà de la fin : aucune ligne, donc pas de total_count. On ne
+	// refait le comptage que dans ce cas (navigation hors bornes du back-office).
+	if len(results) == 0 && page > 1 {
+		countArgs := append([]interface{}{merchantID}, whereArgs...)
+		if err := db.QueryRowContext(ctx, `SELECT COUNT(*)`+customerVisibleFilter+where, countArgs...).Scan(&totalItems); err != nil {
+			return results, 0, err
+		}
+	}
+
+	return results, totalItems, nil
+}
+
+// scanCustomerSearchRows lit les lignes de customerSearchColumns + match_score
+// + total_count. Une ligne illisible est journalisée et sautée, comme avant.
+func scanCustomerSearchRows(ctx context.Context, rows *sql.Rows) ([]CustomerSearchResult, int, error) {
+	results := []CustomerSearchResult{}
+	totalItems := 0
+
 	for rows.Next() {
 		var c CustomerSearchResult
-		var creationDate sql.NullTime
-		var lastOrderDate sql.NullTime
-		var blockedAt sql.NullTime
+		var creationDate, lastOrderDate, blockedAt sql.NullTime
+		var rowTotal int
 		err := rows.Scan(
 			&c.CustomerID,
 			&c.CustomerName,
@@ -1102,22 +1143,56 @@ func (r *CustomersRepository) SearchCustomers(ctx context.Context, merchantID, t
 			&blockedAt,
 			&c.BlockedReasonID,
 			&c.BlockedComment,
+			&c.MatchScore,
+			&rowTotal,
 		)
-
-		c.CreationDate = nullTimeToUTCISOZ(creationDate)
-		c.LastOrderDate = nullTimeToUTCISOZ(lastOrderDate)
-		c.BlockedAt = nullTimeToUTCISOZ(blockedAt)
-		c.Blocked = blockedAt.Valid
 		if err != nil {
 			logger.FromContext(ctx).Info("Error while scanning customers " + err.Error())
 			continue
 		}
 
-		c.MatchScore = computeScore(trimmedTerm, &c)
+		c.CreationDate = nullTimeToUTCISOZ(creationDate)
+		c.LastOrderDate = nullTimeToUTCISOZ(lastOrderDate)
+		c.BlockedAt = nullTimeToUTCISOZ(blockedAt)
+		c.Blocked = blockedAt.Valid
+		totalItems = rowTotal
 		results = append(results, c)
 	}
 
-	return results, totalItems, nil
+	return results, totalItems, rows.Err()
+}
+
+// GetFrequentCustomers renvoie les clients les plus fidèles du marchand, pour
+// le POS (chargés une fois au démarrage). Classement : nombre de commandes
+// décroissant, puis dernière commande la plus récente, puis dépense totale.
+// Sont écartés : les clients sans commande, ceux dont la dernière commande
+// date de plus de FrequentCustomersRecencyMonths mois (un habitué parti depuis
+// deux ans n'est plus « fréquent »), les clients bloqués et les clients des
+// places de marché. Un client importé sans date de dernière commande reste
+// éligible, classé après les autres à égalité de commandes.
+func (r *CustomersRepository) GetFrequentCustomers(ctx context.Context, merchantID string, limit int) ([]CustomerSearchResult, int, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	query := `SELECT` + customerSearchColumns + `,
+        0 AS match_score,
+        COUNT(*) OVER () AS total_count
+    FROM customer c
+    WHERE c.merchant_id = ?
+      AND c.enabled = true
+      AND c.blocked_at IS NULL
+      AND c.customer_brand NOT IN ('UBER_EATS', 'DELIVEROO')
+      AND c.customer_nb_orders > 0
+      AND (c.last_order_date IS NULL OR c.last_order_date >= now() - (? * interval '1 month'))
+    ORDER BY c.customer_nb_orders DESC, c.last_order_date DESC NULLS LAST, c.customer_total_spent DESC, c.customer_id ASC
+    LIMIT ?`
+
+	rows, err := db.QueryContext(ctx, query, merchantID, FrequentCustomersRecencyMonths, limit)
+	if err != nil {
+		return []CustomerSearchResult{}, 0, err
+	}
+	defer rows.Close()
+
+	return scanCustomerSearchRows(ctx, rows)
 }
 
 func buildCustomerOrderByClause(sortField, sortDir string) string {
@@ -1156,61 +1231,6 @@ func buildCustomerOrderByClause(sortField, sortDir string) string {
 	}
 
 	return fmt.Sprintf(" ORDER BY CASE WHEN %s IS NULL THEN 1 ELSE 0 END ASC, %s %s, c.customer_id ASC ", fieldExpr, fieldExpr, dir)
-}
-
-func computeScore(term string, c *CustomerSearchResult) int {
-	score := 0
-	term = normalizeStr(&term)
-	phoneTerm := normalizePhoneSearchTerm(term)
-
-	code := normalizeStr(c.CustomerCode)
-	tel := normalizePhoneField(c.CustomerTel)
-	lastName := normalizeStr(c.CustomerLastName)
-	firstName := normalizeStr(c.CustomerFirstName)
-
-	// Correspondances exactes
-	if code == term {
-		score += 500
-	}
-	if tel == phoneTerm {
-		score += 300
-	}
-	if lastName == term {
-		score += 200
-	}
-	if firstName == term {
-		score += 200
-	}
-
-	// Correspondances partielles
-	if strings.Contains(lastName, term) {
-		score += 80
-	}
-	if strings.Contains(firstName, term) {
-		score += 80
-	}
-
-	if strings.Contains(tel, phoneTerm) {
-		score += 120
-	}
-
-	// Bonus complétude profil
-	if c.CustomerEmail != nil && *c.CustomerEmail != "" {
-		score += 40
-	}
-	if c.CustomerTel != nil && *c.CustomerTel != "" {
-		score += 40
-	}
-	if c.CustomerName != "" {
-		score += 40
-	}
-	if c.CustomerAddress != nil && *c.CustomerAddress != "" {
-		score += 40
-	}
-
-	score += c.CustomerNbOrders
-
-	return score
 }
 
 func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID, sortField, sortDir string, page, pageSize int) ([]CustomerSearchResult, int, error) {
@@ -1314,61 +1334,6 @@ func nullTimeToUTCISOZ(nt sql.NullTime) *string {
 	}
 	formatted := nt.Time.UTC().Format(time.RFC3339)
 	return &formatted
-}
-
-func normalizeStr(s *string) string {
-	if s == nil {
-		return ""
-	}
-	val := strings.TrimSpace(strings.ToUpper(*s))
-	val = strings.ReplaceAll(val, " ", "")
-	return val
-}
-
-func normalizePhoneSearchTerm(term string) string {
-	trimmed := strings.TrimSpace(term)
-	if trimmed == "" {
-		return ""
-	}
-
-	if !looksLikePhoneSearch(trimmed) {
-		return normalizePhoneComparable(trimmed)
-	}
-
-	return normalizePhoneComparable(helpers.NormalizePhoneNumber(trimmed, "FR"))
-}
-
-func normalizePhoneField(phone *string) string {
-	if phone == nil {
-		return ""
-	}
-	return normalizePhoneComparable(*phone)
-}
-
-func normalizePhoneComparable(v string) string {
-	if v == "" {
-		return ""
-	}
-
-	upper := strings.ToUpper(strings.TrimSpace(v))
-	replacer := strings.NewReplacer(" ", "", "-", "", ".", "", "(", "", ")", "")
-	return replacer.Replace(upper)
-}
-
-func looksLikePhoneSearch(term string) bool {
-	hasDigit := false
-	for _, r := range term {
-		switch {
-		case r >= '0' && r <= '9':
-			hasDigit = true
-		case r == '+' || r == ' ' || r == '-' || r == '.' || r == '(' || r == ')':
-			continue
-		default:
-			return false
-		}
-	}
-
-	return hasDigit
 }
 
 func (r *CustomersRepository) ReactivateRewards(ctx context.Context, orderID string) error {

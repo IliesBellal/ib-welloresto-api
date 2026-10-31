@@ -2763,8 +2763,12 @@ func (r *MenuRepository) insertProductTx(ctx context.Context, p *CreateProductPa
 	return productID, nil
 }
 
-func (r *MenuRepository) CreateExternalProductTx(ctx context.Context, merchantID, name, description string, price int) (int64, error) {
+// CreateExternalProductTx crée le produit d'un article Uber Eats inconnu. Les
+// catégories de TVA viennent de models.MarketplaceTVAFor (10 %, ou 20 % pour une
+// boisson alcoolisée).
+func (r *MenuRepository) CreateExternalProductTx(ctx context.Context, merchantID, name, description string, price int, alcohol bool) (int64, error) {
 	db := dbx.GetDB(ctx, r.database)
+	tva := models.MarketplaceTVAFor(alcohol)
 
 	query := `
 		INSERT INTO products (
@@ -2778,7 +2782,7 @@ func (r *MenuRepository) CreateExternalProductTx(ctx context.Context, merchantID
 			tva_delivery_id,
 			tva_take_away_id
 		)
-		VALUES (?, ?, ?, ?, ?, FALSE, 5, 9, 3)
+		VALUES (?, ?, ?, ?, ?, FALSE, ?, ?, ?)
 	`
 
 	newID, err := db.InsertReturningID(ctx, query, "product_id",
@@ -2787,6 +2791,9 @@ func (r *MenuRepository) CreateExternalProductTx(ctx context.Context, merchantID
 		description,
 		models.MarketplaceCategoryUberEats,
 		price,
+		tva.In,
+		tva.Delivery,
+		tva.TakeAway,
 	)
 	if err != nil {
 		return 0, err

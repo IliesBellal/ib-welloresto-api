@@ -272,6 +272,21 @@ func (h *CustomersHandler) SearchCustomers(w http.ResponseWriter, r *http.Reques
 	models.SendJSON(w, http.StatusOK, "customers", "search", customerData)
 }
 
+// GetFrequentCustomers gère GET /customers/frequent?limit=N : les clients les
+// plus fidèles du marchand, chargés une fois au démarrage du POS pour être
+// proposés avant toute saisie (docs/recherche-clients.md).
+func (h *CustomersHandler) GetFrequentCustomers(w http.ResponseWriter, r *http.Request) {
+	limit := helpers.StringToInt(r.URL.Query().Get("limit"))
+
+	data, err := h.svc.GetFrequentCustomers(r.Context(), limit)
+	if err != nil {
+		models.SendErrorJSON(w, "customers", "frequent", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "customers", "frequent", data)
+}
+
 // CreateCustomer gère POST /customers : création d'un client unique, ou mise
 // à jour d'un client existant si l'email/téléphone fourni collisionne (voir
 // CustomersService.CreateCustomer).

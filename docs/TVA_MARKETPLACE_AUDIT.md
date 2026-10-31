@@ -1,5 +1,10 @@
 # Audit TVA marketplace (B1) — PROMPT 07 lot 1
 
+> **Suite (2026-10-29)** : l'auto-création des produits Uber Eats (5/9/3) et Deliveroo
+> (aucune catégorie) a été corrigée, et les promotions sont désormais posées sur les
+> lignes — voir `marketplace-promotions-tva.md`. Le constat ci-dessous (aucun taux dans
+> les payloads) reste exact.
+
 > Périmètre : audit seul, aucun correctif. Répond à la question posée par le
 > lot 1 de `ROADMAP-analytics.md` : Uber Eats et Deliveroo transmettent-ils
 > une ventilation HT/TVA exploitable ?

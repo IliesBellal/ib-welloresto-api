@@ -349,9 +349,9 @@ admin_handler), `internal/middleware/kiosk_auth.go`, branchement dans
   (pas de librairie JWT, pas de format de claims standard), mais le
   principe est similaire : ça évite un lookup SQL sur la table à 1 connexion
   partagée à chaque heartbeat. Conséquence : une borne révoquée reste
-  utilisable jusqu'à l'expiration de son access token déjà émis (15 min par
-  défaut, `KIOSK_ACCESS_TOKEN_TTL_MINUTES`) — le refresh, lui, est bloqué
-  immédiatement.
+  utilisable jusqu'à l'expiration de son access token déjà émis (180 min,
+  constante `kiosk.AccessTokenTTL` — plus de variable d'environnement
+  depuis le 2026-10-29) — le refresh, lui, est bloqué immédiatement.
 - **G.2 (backfill disponibilité)** : tranché en faveur du backfill —
   `is_available_on_kiosk BOOLEAN NOT NULL DEFAULT TRUE`, donc tous les
   produits existants restent visibles sur Kiosk sans action du
@@ -383,7 +383,9 @@ le type `AuthenticatedKiosk`). Cela interdit au module `kiosk` d'importer
 - `KIOSK_TOKEN_PEPPER` (optionnel, retombe sur `PIN_PEPPER`)
 - `KIOSK_ENROLLMENT_CODE_TTL_MINUTES` (défaut 15)
 - `KIOSK_DEVICE_TOKEN_TTL_DAYS` (défaut 30)
-- `KIOSK_ACCESS_TOKEN_TTL_MINUTES` (défaut 15)
+- ~~`KIOSK_ACCESS_TOKEN_TTL_MINUTES`~~ supprimée (2026-10-29) : TTL de l'access
+  token figé à 180 min dans `kiosk.AccessTokenTTL` (`internal/modules/kiosk/config.go`).
+  Une valeur restante dans l'environnement est ignorée.
 
 ### Tests manuels incrément 1
 

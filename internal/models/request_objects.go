@@ -956,6 +956,13 @@ const (
 	PaymentStripe    = "STRIPE"
 )
 
+// IsMarketplaceBrand dit si la commande vient d'une plateforme de livraison
+// (Uber Eats, Deliveroo). Le client l'a déjà payée : elle ne peut pas être
+// refusée en silence par la caisse, c'est le personnel qui décide.
+func IsMarketplaceBrand(brand string) bool {
+	return brand == BrandUberEats || brand == BrandDeliveroo
+}
+
 type OrderMeta struct {
 	Brand        string
 	MerchantID   string // kept as string to match your desired future ids

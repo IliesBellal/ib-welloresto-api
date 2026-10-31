@@ -236,15 +236,8 @@ func TestCustomersRepository_Postgres(t *testing.T) {
 		t.Fatal("expected reward reactivated")
 	}
 
-	// --- recherche / listing ---
-	results, total, err := repo.SearchCustomers(ctx, merchantID, "dupont", "customer_first_name", "ASC", 1, 10)
-	if err != nil || total != 1 || len(results) != 1 || results[0].CustomerID != customerID {
-		t.Fatalf("SearchCustomers (nom) = (total=%d, %+v, %v)", total, results, err)
-	}
-	results, total, err = repo.SearchCustomers(ctx, merchantID, "06 12 34 56 78", "", "", 1, 10)
-	if err != nil || total != 1 {
-		t.Fatalf("SearchCustomers (téléphone) = (total=%d, %v)", total, err)
-	}
+	// --- listing (la recherche est couverte par search_postgres_integration_test.go :
+	// elle dépend de la migration 198) ---
 	listed, total, err := repo.ListCustomers(ctx, merchantID, "creation_date", "DESC", 1, 10)
 	if err != nil || total != 1 || len(listed) != 1 {
 		t.Fatalf("ListCustomers = (total=%d, %+v, %v)", total, listed, err)

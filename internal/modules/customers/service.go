@@ -252,6 +252,45 @@ func (s *CustomersService) SearchCustomers(ctx context.Context, token, term, sor
 	}, nil
 }
 
+const (
+	FrequentCustomersDefaultLimit = 50
+	FrequentCustomersMaxLimit     = 200
+	// Un client dont la dernière commande est plus ancienne n'est plus « fréquent ».
+	FrequentCustomersRecencyMonths = 12
+)
+
+// GetFrequentCustomers : les clients les plus fidèles du marchand, pour le POS
+// (voir CustomersRepository.GetFrequentCustomers). La forme de la réponse est
+// celle de la recherche, pour que le POS réutilise le même décodage.
+func (s *CustomersService) GetFrequentCustomers(ctx context.Context, limit int) (*CustomerListData, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if limit <= 0 {
+		limit = FrequentCustomersDefaultLimit
+	}
+	if limit > FrequentCustomersMaxLimit {
+		limit = FrequentCustomersMaxLimit
+	}
+
+	customers, totalItems, err := s.customerRepo.GetFrequentCustomers(ctx, user.MerchantID, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	return &CustomerListData{
+		Metadata: CustomerPaginationMetadata{
+			TotalItems:  totalItems,
+			TotalPages:  1,
+			CurrentPage: 1,
+			Limit:       limit,
+		},
+		Customers: customers,
+	}, nil
+}
+
 func (s *CustomersService) ListCustomers(ctx context.Context, token, sortField, sortDir string, page, pageSize int) (*CustomerListData, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {

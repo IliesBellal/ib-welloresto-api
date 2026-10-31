@@ -11,6 +11,7 @@ import (
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/utils/dbutils"
 )
 
 type Repository struct {
@@ -91,19 +92,15 @@ func (r *Repository) GetNextOrderNum(ctx context.Context, merchantID string) (st
 
 // SyncOption gère la logique complexe des attributs et options (sync ou création)
 // Retourne (ConfigurableAttributeID, ConfigurableAttributeOptionID)
+//
+// Le chemin courant (option déjà mappée) est une simple lecture. Une option inconnue
+// est créée avec son mapping dans une transaction qui tient un verrou propre à
+// l'option : deux commandes simultanées ne la créent pas deux fois (le second mapping
+// échouait sur l'index unique (merchant_id, item_id)) et un échec ne laisse pas
+// d'option sans mapping.
 func (r *Repository) SyncOption(ctx context.Context, merchantID string, productID string, mod DeliverooModifier) (string, string, error) {
-	db := dbx.GetDB(ctx, r.database)
 	// 1. Essayer de trouver le mapping
-	query := `
-		SELECT opt.id AS option_id, opt.configurable_attribute_id AS attribute_id
-		FROM configurable_attribute_options opt
-		JOIN integration_deliveroo_options_mapping map ON opt.id = map.configurable_attribute_option_id
-		WHERE map.item_id = ? AND map.merchant_id = ?`
-
-	var optionID, attributeID string
-	err := db.QueryRowContext(ctx, query, mod.PosItemID, merchantID).Scan(&optionID, &attributeID)
-
-	if err == nil {
+	if attributeID, optionID, found, err := r.findOptionMapping(ctx, merchantID, mod.PosItemID); err == nil && found {
 		// Trouvé, mais il faut s'assurer que le produit est lié à l'attribut (logique du PHP step 2)
 		if errLink := r.ensureProductAttributeLink(ctx, productID, attributeID); errLink != nil {
 			return "", "", errLink
@@ -111,43 +108,69 @@ func (r *Repository) SyncOption(ctx context.Context, merchantID string, productI
 		return attributeID, optionID, nil
 	}
 
-	// a. Get or Create Default Group
-	attributeID, err = r.getOrCreateDefaultGroupTx(ctx, merchantID)
-	if err != nil {
-		return "", "", err
-	}
+	var attributeID, optionID string
+	err := dbutils.RunInTxLocked(ctx, r.database, "deliveroo-option:"+merchantID+":"+mod.PosItemID, func(txCtx context.Context) error {
+		db := dbx.GetDB(txCtx, r.database)
 
-	// b. Create Option
-	optIDInt, err := db.InsertReturningID(ctx, `
-		INSERT INTO configurable_attribute_options (configurable_attribute_id, title, extra_price, display_order)
-		VALUES (?, ?, ?, (SELECT COALESCE(MAX(display_order) + 1, 0) FROM configurable_attribute_options WHERE configurable_attribute_id = ?))`,
-		"id", attributeID, mod.Name, mod.UnitPrice.Fractional, attributeID)
-	if err != nil {
-		return "", "", err
-	}
-	optionID = strconv.FormatInt(optIDInt, 10)
-
-	// c. Create Mapping
-	_, err = db.ExecContext(ctx, `
-		INSERT INTO integration_deliveroo_options_mapping (merchant_id, configurable_attribute_option_id, item_id)
-		VALUES (?, ?, ?)`,
-		merchantID, optionID, mod.PosItemID)
-	if err != nil {
-		return "", "", err
-	}
-
-	// d. Link Product to Attribute (si pas fait)
-	// Note: On le fait dans la transaction ici pour être sûr
-	var count int
-	db.QueryRowContext(ctx, "SELECT COUNT(*) FROM product_configurable_attribute WHERE product_id = ? AND configurable_attribute_id = ?", productID, attributeID).Scan(&count)
-	if count == 0 {
-		_, err = db.ExecContext(ctx, "INSERT INTO product_configurable_attribute (product_id, configurable_attribute_id) VALUES (?, ?)", productID, attributeID)
+		// Relecture sous verrou : une commande simultanée a pu la créer entre-temps.
+		attrID, optID, found, err := r.findOptionMapping(txCtx, merchantID, mod.PosItemID)
 		if err != nil {
-			return "", "", err
+			return err
 		}
-	}
+		if found {
+			attributeID, optionID = attrID, optID
+			return r.ensureProductAttributeLink(txCtx, productID, attributeID)
+		}
 
+		// a. Get or Create Default Group
+		attributeID, err = r.getOrCreateDefaultGroupTx(txCtx, merchantID, productID)
+		if err != nil {
+			return err
+		}
+
+		// b. Create Option (configurable_attribute_options.title : 80 caractères)
+		optIDInt, err := db.InsertReturningID(txCtx, `
+			INSERT INTO configurable_attribute_options (configurable_attribute_id, title, extra_price, display_order)
+			VALUES (?, ?, ?, (SELECT COALESCE(MAX(display_order) + 1, 0) FROM configurable_attribute_options WHERE configurable_attribute_id = ?))`,
+			"id", attributeID, helpers.TruncateRunes(mod.Name, 80), mod.UnitPrice.Fractional, attributeID)
+		if err != nil {
+			return err
+		}
+		optionID = strconv.FormatInt(optIDInt, 10)
+
+		// c. Create Mapping
+		if _, err = db.ExecContext(txCtx, `
+			INSERT INTO integration_deliveroo_options_mapping (merchant_id, configurable_attribute_option_id, item_id)
+			VALUES (?, ?, ?)`,
+			merchantID, optionID, mod.PosItemID); err != nil {
+			return err
+		}
+
+		// d. Link Product to Attribute (si pas fait)
+		return r.ensureProductAttributeLink(txCtx, productID, attributeID)
+	})
+	if err != nil {
+		return "", "", err
+	}
 	return attributeID, optionID, nil
+}
+
+// findOptionMapping lit le mapping d'une option Deliveroo. found vaut false, sans
+// erreur, quand l'option n'est pas encore connue.
+func (r *Repository) findOptionMapping(ctx context.Context, merchantID, itemID string) (attributeID, optionID string, found bool, err error) {
+	db := dbx.GetDB(ctx, r.database)
+	err = db.QueryRowContext(ctx, `
+		SELECT opt.id AS option_id, opt.configurable_attribute_id AS attribute_id
+		FROM configurable_attribute_options opt
+		JOIN integration_deliveroo_options_mapping map ON opt.id = map.configurable_attribute_option_id
+		WHERE map.item_id = ? AND map.merchant_id = ?`, itemID, merchantID).Scan(&optionID, &attributeID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, err
+	}
+	return attributeID, optionID, true, nil
 }
 
 func (r *Repository) ensureProductAttributeLink(ctx context.Context, productID, attributeID string) error {
@@ -165,8 +188,18 @@ func (r *Repository) ensureProductAttributeLink(ctx context.Context, productID, 
 	return nil
 }
 
-func (r *Repository) getOrCreateDefaultGroupTx(ctx context.Context, merchantID string) (string, error) {
+// getOrCreateDefaultGroupTx renvoie le groupe d'options Deliveroo du produit,
+// créé à la première option inconnue. configurable_attributes.product_id est
+// obligatoire : un groupe appartient à un produit (les autres produits qui
+// utilisent la même option s'y rattachent par ensureProductAttributeLink). Sans
+// product_id, l'insertion échouait et la commande Deliveroo n'était pas créée.
+func (r *Repository) getOrCreateDefaultGroupTx(ctx context.Context, merchantID, productID string) (string, error) {
 	db := dbx.GetDB(ctx, r.database)
+
+	productIDInt, err := strconv.Atoi(productID)
+	if err != nil {
+		return "", fmt.Errorf("deliveroo options group: invalid product id %q: %w", productID, err)
+	}
 
 	name := "Deliveroo Options"
 	// configurable_attributes.id is a varchar PK with no default (same as
@@ -174,22 +207,17 @@ func (r *Repository) getOrCreateDefaultGroupTx(ctx context.Context, merchantID s
 	// it is never an auto-increment integer, so the previous SELECT id INTO
 	// int / LastInsertId() pair could never have worked.
 	var id string
-	err := db.QueryRowContext(ctx, "SELECT id FROM configurable_attributes WHERE merchant_id = ? AND name = ?", merchantID, name).Scan(&id)
+	err = db.QueryRowContext(ctx, "SELECT id FROM configurable_attributes WHERE merchant_id = ? AND name = ? AND product_id = ?", merchantID, name, productIDInt).Scan(&id)
 	if err == nil {
 		return id, nil
 	}
 
 	newID := helpers.GeneratePrefixedID(helpers.AttributeIDPrefix)
 
-	// NOTE: configurable_attributes.product_id is also NOT NULL with no
-	// default and is not set here — same pre-existing bug as
-	// webhook/ubereats.CreateAttributeFromUberGroup (confirmed present in the
-	// MySQL source DDL too, so this insert has likely never actually
-	// succeeded in production). Left unfixed, see Tier2 report.
 	_, err = db.ExecContext(ctx, `
-		INSERT INTO configurable_attributes (id, merchant_id, brand, name, title, is_required, min_options, max_options)
-		VALUES (?, ?, 'DELIVEROO', ?, 'Options Deliveroo', false, 0, 99)`,
-		newID, merchantID, name)
+		INSERT INTO configurable_attributes (id, product_id, merchant_id, brand, name, title, is_required, min_options, max_options)
+		VALUES (?, ?, ?, 'DELIVEROO', ?, 'Options Deliveroo', false, 0, 99)`,
+		newID, productIDInt, merchantID, name)
 
 	if err != nil {
 		logger.FromContext(ctx).Error(err.Error())
@@ -200,7 +228,61 @@ func (r *Repository) getOrCreateDefaultGroupTx(ctx context.Context, merchantID s
 }
 
 // SyncProduct : Logique de synchronisation/création de produit
+//
+// Le chemin courant (produit déjà mappé) est une simple lecture. Un article inconnu
+// est créé avec son mapping dans une transaction qui tient un verrou propre à
+// l'article : deux commandes simultanées ne créent pas deux produits (la clé du
+// mapping contient l'identifiant du produit, rien n'empêchait le doublon) et un
+// échec ne laisse pas de produit sans mapping.
 func (r *Repository) SyncProduct(ctx context.Context, merchantID string, item DeliverooItem) (string, error) {
+	// 1. Check Mapping
+	if productID, found, err := r.findProductMapping(ctx, merchantID, item.PosItemID); err == nil && found {
+		return productID, nil
+	}
+
+	var productID string
+	err := dbutils.RunInTxLocked(ctx, r.database, "deliveroo-product:"+merchantID+":"+item.PosItemID, func(txCtx context.Context) error {
+		db := dbx.GetDB(txCtx, r.database)
+
+		// Relecture sous verrou : une commande simultanée a pu le créer entre-temps.
+		existing, found, err := r.findProductMapping(txCtx, merchantID, item.PosItemID)
+		if err != nil {
+			return err
+		}
+		if found {
+			productID = existing
+			return nil
+		}
+
+		// Deliveroo n'envoie aucun taux de TVA : 10 %, ou 20 % pour une boisson
+		// alcoolisée reconnue à son nom. Sans cela les trois colonnes tombaient au
+		// défaut de la table (0 = non défini, 0 %).
+		tva := models.MarketplaceTVAFor(models.LooksAlcoholic(item.Name) || models.LooksAlcoholic(item.OperationalName))
+		newID, err := db.InsertReturningID(txCtx,
+			`INSERT INTO products (merchant_id, name, product_desc, price, category, tva_in_id, tva_take_away_id, tva_delivery_id) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+			"product_id", merchantID, helpers.TruncateRunes(item.Name, 255), item.OperationalName, item.UnitPrice.Fractional, models.MarketplaceCategoryDeliveroo,
+			tva.In, tva.TakeAway, tva.Delivery)
+		if err != nil {
+			logger.FromContext(ctx).Error(err.Error())
+			return err
+		}
+		productID = strconv.FormatInt(newID, 10)
+
+		if _, err = db.ExecContext(txCtx, `INSERT INTO integration_deliveroo_products_mapping(merchant_id, product_id, item_id, item_name) VALUES(?, ?, ?, ?)`, merchantID, productID, item.PosItemID, item.OperationalName); err != nil {
+			logger.FromContext(ctx).Error(err.Error())
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return productID, nil
+}
+
+// findProductMapping lit le produit mappé à un article Deliveroo. found vaut false,
+// sans erreur, quand l'article n'est pas encore connu.
+func (r *Repository) findProductMapping(ctx context.Context, merchantID, itemID string) (productID string, found bool, err error) {
 	db := dbx.GetDB(ctx, r.database)
 
 	// products.product_id is an integer identity while
@@ -211,34 +293,19 @@ func (r *Repository) SyncProduct(ctx context.Context, merchantID string, item De
 		productIDCast = "CAST(p.product_id AS TEXT)"
 	}
 
-	// 1. Check Mapping
-	queryMap := fmt.Sprintf(`
+	err = db.QueryRowContext(ctx, fmt.Sprintf(`
 		SELECT p.product_id
 		FROM products p
 		INNER JOIN integration_deliveroo_products_mapping map on %s = map.product_id
-		WHERE map.item_id = ? AND map.merchant_id = ? AND map.enabled = '1' AND p.enabled = '1'`, productIDCast)
-	var productID string
-	err := db.QueryRowContext(ctx, queryMap, item.PosItemID, merchantID).Scan(&productID)
-	if err == nil {
-		return productID, nil
+		WHERE map.item_id = ? AND map.merchant_id = ? AND map.enabled = '1' AND p.enabled = '1'`, productIDCast),
+		itemID, merchantID).Scan(&productID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
 	}
-
-	newID, err := db.InsertReturningID(ctx,
-		`INSERT INTO products (merchant_id, name, product_desc, price, category) VALUES(?, ?, ?, ?, ?)`,
-		"product_id", merchantID, item.Name, item.OperationalName, item.UnitPrice.Fractional, models.MarketplaceCategoryDeliveroo)
 	if err != nil {
-		logger.FromContext(ctx).Error(err.Error())
-		return "", err
+		return "", false, err
 	}
-	productID = strconv.FormatInt(newID, 10)
-
-	_, err = db.ExecContext(ctx, `INSERT INTO integration_deliveroo_products_mapping(merchant_id, product_id, item_id, item_name) VALUES(?, ?, ?, ?)`, merchantID, productID, item.PosItemID, item.OperationalName)
-	if err != nil {
-		logger.FromContext(ctx).Error(err.Error())
-		return "", err
-	}
-
-	return productID, nil
+	return productID, true, nil
 }
 
 // --- Status Update Logic (Transaction Based) ---

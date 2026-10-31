@@ -179,6 +179,10 @@ type CreateOrderResult struct {
 	OrderNum        *string            `json:"order_num,omitempty"`
 	Action          string             `json:"action,omitempty"`
 	CheckoutSession *WRCheckoutSession `json:"checkout_session,omitempty"`
+	// UnavailableProducts : produits en rupture d'une commande de plateforme
+	// (Uber Eats, Deliveroo). La commande est créée quand même — le client l'a
+	// payée — mais ne doit pas être acceptée automatiquement.
+	UnavailableProducts []string `json:"unavailable_products,omitempty"`
 }
 
 type WRCheckoutSession struct {

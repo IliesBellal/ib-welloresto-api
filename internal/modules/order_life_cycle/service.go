@@ -1185,7 +1185,10 @@ func (s *OrdersLifeCycleService) createOrder(ctx context.Context, req *models.Re
 		log.Error(err.Error())
 	} else {
 		log.Info("🆕 New order created for merchant " + req.MerchantID + " : " + result.OrderID)
-		if notify {
+		// Une commande de plateforme avec produits en rupture n'est pas acceptée
+		// automatiquement : le personnel doit la voir tout de suite, même si l'appelant
+		// avait demandé de ne pas notifier (acceptation automatique).
+		if notify || len(result.UnavailableProducts) > 0 {
 			s.notificationsService.SendNotificationAsync(req.MerchantID, result.OrderID, notification.NotificationTypeOrderUpdate)
 		}
 

@@ -5,7 +5,6 @@ package deliveroo_orders
 import (
 	"context"
 	"strconv"
-	"strings"
 	"testing"
 
 	"welloresto-api/internal/database/dbx/pgtest"
@@ -162,7 +161,10 @@ func TestRepository_ProductAndOptionSync_Postgres(t *testing.T) {
 			_, _ = db.ExecContext(ctx, `DELETE FROM products WHERE product_id = $1`, productIntID)
 		}
 		_, _ = db.ExecContext(ctx, `DELETE FROM integration_deliveroo_options_mapping WHERE merchant_id = $1`, merchantID)
-		_, _ = db.ExecContext(ctx, `DELETE FROM configurable_attribute_options WHERE title = 'ITest Deliveroo Option'`)
+		_, _ = db.ExecContext(ctx, `DELETE FROM configurable_attribute_options WHERE title LIKE 'ITest Deliveroo Option%'`)
+		if productIntID != 0 {
+			_, _ = db.ExecContext(ctx, `DELETE FROM product_configurable_attribute WHERE product_id = $1`, strconv.FormatInt(productIntID, 10))
+		}
 		_, _ = db.ExecContext(ctx, `DELETE FROM product_configurable_attribute WHERE configurable_attribute_id LIKE 'itest-%'`)
 		_, _ = db.ExecContext(ctx, `DELETE FROM configurable_attributes WHERE merchant_id = $1`, merchantID)
 	}
@@ -196,6 +198,14 @@ func TestRepository_ProductAndOptionSync_Postgres(t *testing.T) {
 	if category != models.MarketplaceCategoryDeliveroo {
 		t.Fatalf("created product category = %q, want %q", category, models.MarketplaceCategoryDeliveroo)
 	}
+	var tva models.MarketplaceTVA
+	if err := db.QueryRowContext(ctx, `SELECT tva_in_id, tva_take_away_id, tva_delivery_id FROM products WHERE product_id = $1`, productIntID).
+		Scan(&tva.In, &tva.TakeAway, &tva.Delivery); err != nil {
+		t.Fatalf("read created product TVA: %v", err)
+	}
+	if tva != models.MarketplaceTVAStandard {
+		t.Fatalf("created product TVA = %+v, want %+v (10 %%)", tva, models.MarketplaceTVAStandard)
+	}
 
 	// SyncProduct's "already mapped" read path: exercises the CAST-based
 	// products.product_id (integer) <-> *.product_id (varchar) join.
@@ -215,28 +225,50 @@ func TestRepository_ProductAndOptionSync_Postgres(t *testing.T) {
 		t.Fatalf("unexpected product mapping: %+v", mapping)
 	}
 
-	// getOrCreateDefaultGroupTx has a pre-existing, independent bug: it never
-	// sets configurable_attributes.product_id (NOT NULL, no default — same
-	// class of issue as webhook/ubereats.CreateAttributeFromUberGroup,
-	// confirmed present in the MySQL source DDL too). SyncOption therefore
-	// cannot complete the "create" path against a real schema on either
-	// dialect; documented in the Tier2 report and left unfixed. Confirm the
-	// failure is that specific pre-existing bug, not a regression in the
-	// dbx/cast/InsertReturningID work done in this module.
+	// SyncOption's create path : un modifier inconnu crée le groupe d'options
+	// Deliveroo du produit (configurable_attributes.product_id est NOT NULL — sa
+	// valeur manquante faisait échouer l'import de toute commande contenant une
+	// option jamais vue), l'option, son mapping et le lien produit/groupe.
+	newMod := DeliverooModifier{
+		PosItemID: "itest-do-mod-new",
+		Name:      "ITest Deliveroo Option New",
+		UnitPrice: DeliverooMoney{Fractional: 100, CurrencyCode: "EUR"},
+	}
+	newAttrID, newOptID, err := repo.SyncOption(ctx, merchantID, productID, newMod)
+	if err != nil {
+		t.Fatalf("SyncOption create-path failed against postgres: %v", err)
+	}
+	var groupProductID int64
+	if err := db.QueryRowContext(ctx, `SELECT product_id FROM configurable_attributes WHERE id = $1`, newAttrID).Scan(&groupProductID); err != nil {
+		t.Fatalf("read created group: %v", err)
+	}
+	if groupProductID != productIntID {
+		t.Fatalf("group product_id = %d, want %d", groupProductID, productIntID)
+	}
+	// deuxième lecture : option déjà mappée, mêmes identifiants
+	againAttrID, againOptID, err := repo.SyncOption(ctx, merchantID, productID, newMod)
+	if err != nil || againAttrID != newAttrID || againOptID != newOptID {
+		t.Fatalf("SyncOption (already mapped) = (%q, %q, %v), want (%q, %q, nil)", againAttrID, againOptID, err, newAttrID, newOptID)
+	}
+	// une autre option du même produit réutilise le groupe
+	otherMod := DeliverooModifier{
+		PosItemID: "itest-do-mod-other",
+		Name:      "ITest Deliveroo Option Other",
+		UnitPrice: DeliverooMoney{Fractional: 0, CurrencyCode: "EUR"},
+	}
+	otherAttrID, _, err := repo.SyncOption(ctx, merchantID, productID, otherMod)
+	if err != nil || otherAttrID != newAttrID {
+		t.Fatalf("SyncOption (second option) = (%q, %v), want the same group %q", otherAttrID, err, newAttrID)
+	}
+
 	mod := DeliverooModifier{
 		PosItemID: "itest-do-mod-1",
 		Name:      "ITest Deliveroo Option",
 		UnitPrice: DeliverooMoney{Fractional: 150, CurrencyCode: "EUR"},
 	}
-	if _, _, err := repo.SyncOption(ctx, merchantID, productID, mod); err == nil {
-		t.Fatal("expected SyncOption create-path to fail on the pre-existing product_id NOT NULL bug")
-	} else if !strings.Contains(err.Error(), "product_id") {
-		t.Fatalf("expected a product_id NOT NULL violation, got: %v", err)
-	}
 
-	// Exercise the "already mapped" branch of SyncOption directly, and the
-	// option-creation SQL (dbx.InsertReturningID) independent of the
-	// configurable_attributes bug above — configurable_attribute_options has
+	// Exercise the "already mapped" branch of SyncOption directly with a mapping
+	// seeded by hand — configurable_attribute_options has
 	// no FK enforcing configurable_attribute_id against configurable_attributes.id.
 	const fakeAttrID = "itest-fake-attr-do-1"
 	var optionID int64

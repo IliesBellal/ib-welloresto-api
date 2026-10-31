@@ -1,5 +1,15 @@
 package kiosk
 
+import "time"
+
+// AccessTokenTTL : durée de vie de l'access token d'une borne. Constante, pas
+// de variable d'environnement : 3 h, car chaque refresh fait tourner le
+// refresh token (une ligne en base, une ligne de log) — à 15 min, c'était 96
+// refresh par jour et par borne. Contrepartie : l'access token est auto-porteur
+// (voir ValidateAccessToken), donc une borne révoquée garde ses routes REST
+// jusqu'à son expiration.
+const AccessTokenTTL = 180 * time.Minute
+
 // Config porte la configuration du module Kiosk, chargée depuis les
 // variables d'environnement par internal/config (aliasé en
 // config.KioskConfig, même pattern que config.UberEatsConfig) — ce type vit
@@ -10,7 +20,6 @@ package kiosk
 type Config struct {
 	EnrollmentCodeTTLMinutes  int
 	DeviceRefreshTokenTTLDays int
-	AccessTokenTTLMinutes     int
 	// Pepper sert à hacher les codes d'enrôlement, refresh tokens et à
 	// signer les access tokens (HMAC-SHA256, même mécanisme que
 	// security.HashPIN). Retombe sur PIN_PEPPER si KIOSK_TOKEN_PEPPER n'est
