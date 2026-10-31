@@ -148,11 +148,13 @@ func (r *Repository) UpdateDeviceTokenLastUsed(ctx context.Context, tokenID stri
 }
 
 // UpdateKioskHeartbeat met à jour le dernier heartbeat reçu d'une borne.
-func (r *Repository) UpdateKioskHeartbeat(ctx context.Context, kioskID string, appVersion, ip string) error {
+// Un versionCode nil (appli antérieure à la migration 199) conserve la valeur
+// déjà connue.
+func (r *Repository) UpdateKioskHeartbeat(ctx context.Context, kioskID string, appVersion string, versionCode *int, ip string) error {
 	db := dbx.GetDB(ctx, r.database)
 
-	query := fmt.Sprintf(`UPDATE kiosks SET last_heartbeat_at = %s, app_version = ?, last_ip = ? WHERE id = ?`, dbx.UTCNow())
-	_, err := db.ExecContext(ctx, query, appVersion, ip, kioskID)
+	query := fmt.Sprintf(`UPDATE kiosks SET last_heartbeat_at = %s, app_version = ?, version_code = COALESCE(?, version_code), last_ip = ? WHERE id = ?`, dbx.UTCNow())
+	_, err := db.ExecContext(ctx, query, appVersion, versionCode, ip, kioskID)
 	return err
 }
 

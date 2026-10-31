@@ -1,0 +1,1 @@
+ALTER TABLE kiosks DROP COLUMN IF EXISTS version_code;

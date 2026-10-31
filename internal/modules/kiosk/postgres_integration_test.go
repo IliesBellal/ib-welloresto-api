@@ -112,8 +112,17 @@ func TestKioskRepository_Postgres(t *testing.T) {
 	}
 
 	// --- vie de la borne ---
-	if err := repo.UpdateKioskHeartbeat(ctx, kioskID, "1.2.3", "10.0.0.1"); err != nil {
+	versionCode := 42
+	if err := repo.UpdateKioskHeartbeat(ctx, kioskID, "1.2.3", &versionCode, "10.0.0.1"); err != nil {
 		t.Fatalf("UpdateKioskHeartbeat failed against postgres: %v", err)
+	}
+	// Un heartbeat sans version_code (ancienne appli) ne doit pas l'effacer.
+	if err := repo.UpdateKioskHeartbeat(ctx, kioskID, "1.2.3", nil, "10.0.0.1"); err != nil {
+		t.Fatalf("UpdateKioskHeartbeat (sans version_code) failed against postgres: %v", err)
+	}
+	var storedCode *int
+	if err := db.QueryRowContext(ctx, `SELECT version_code FROM kiosks WHERE id = $1`, kioskID).Scan(&storedCode); err != nil || storedCode == nil || *storedCode != versionCode {
+		t.Fatalf("kiosks.version_code = (%v, %v), want %d", storedCode, err, versionCode)
 	}
 	if err := repo.UpdateKioskLastError(ctx, kioskID, "printer_offline"); err != nil {
 		t.Fatalf("UpdateKioskLastError failed against postgres: %v", err)

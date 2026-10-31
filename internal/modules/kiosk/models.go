@@ -164,6 +164,10 @@ type ReclaimDeviceResponse struct {
 
 type HeartbeatRequest struct {
 	AppVersion string `json:"app_version"`
+	// VersionCode est le build Android installé (suffixe `+N` du pubspec).
+	// Optionnel pour compat ascendante : une appli plus ancienne ne l'envoie
+	// pas, kiosks.version_code conserve alors sa valeur connue.
+	VersionCode *int `json:"version_code"`
 }
 
 // HeartbeatResponse — kiosk_status/enabled sont le mécanisme de fallback si

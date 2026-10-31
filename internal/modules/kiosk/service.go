@@ -313,7 +313,7 @@ func (s *Service) RecordHeartbeat(ctx context.Context, kiosk *AuthenticatedKiosk
 		return nil, models.ErrKioskRevoked
 	}
 
-	if err := s.repo.UpdateKioskHeartbeat(ctx, row.ID, req.AppVersion, ip); err != nil {
+	if err := s.repo.UpdateKioskHeartbeat(ctx, row.ID, req.AppVersion, req.VersionCode, ip); err != nil {
 		return nil, err
 	}
 

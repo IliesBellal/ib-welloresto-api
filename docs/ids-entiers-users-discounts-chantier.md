@@ -160,6 +160,7 @@ Le nom exact de la colonne de signature de `payments` est à confirmer avant de 
   - sans option, elle affiche ce qui va bouger, table par table ;
   - `--apply` fait tout en une seule transaction, puis vide le cache Redis des sessions (`models.UserCachePrefix`) ;
   - elle refuse de démarrer sans `REDIS_URL`, pour ne pas laisser une session en cache écrire l'ancien id dans un paiement qui serait ensuite signé ;
+  - `--apply --skip-redis` (ajouté le 2026-10-31) renumérote sans toucher à Redis, pour qui ne l'atteint pas depuis son poste (Render n'expose que l'URL interne). Les sessions déjà en cache gardent alors l'ancien `UserID` jusqu'à 60 minutes au plus (`models.UserCacheTTL`, durée fixe) : toute écriture faite avec elles porte l'ancien id. Rattrapage : attendre 60 minutes, puis relancer `--apply --skip-redis` (rejouable). Le plus sûr reste de vider Redis depuis le dashboard Render juste après `--apply` ;
   - elle est rejouable : un second passage rattrape les lignes écrites avec un ancien id entre-temps.
 - **Points d'entrée qui passent par le filet :**
   - `/users/{id}/*` (8 routes du back-office) et `/users/{user_id}/location` ;

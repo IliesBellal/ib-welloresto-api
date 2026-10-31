@@ -12,6 +12,15 @@
 // d'écrire quoi que ce soit : une session en cache écrirait l'ancien id dans
 // des paiements, qui seraient ensuite signés avec.
 //
+// Avec --apply --skip-redis : pour qui n'atteint pas Redis depuis son poste
+// (URL interne uniquement). La renumérotation s'applique, le cache n'est pas
+// vidé : les sessions déjà en cache gardent l'ancien UserID jusqu'à leur
+// expiration (models.UserCacheTTL, durée fixe, non glissante). Pendant ce
+// délai, une écriture faite avec une telle session porte l'ancien id.
+// Rattrapage : attendre models.UserCacheTTL, puis relancer
+// --apply --skip-redis (rejouable). Mieux : déconnecter les sessions autrement
+// (redémarrage de Redis, ou FLUSHDB depuis le dashboard Render).
+//
 // Avec --audit : cherche les anciens identifiants dans TOUTES les colonnes texte de la
 // base qui ne figurent pas dans l'inventaire (userids.Columns). À lancer en
 // production avant --apply, et après : l'inventaire vient d'un environnement de
@@ -26,6 +35,7 @@
 //	POSTGRES_URL=... go run ./cmd/renumber_users
 //	POSTGRES_URL=... go run ./cmd/renumber_users --audit
 //	POSTGRES_URL=... REDIS_URL=... go run ./cmd/renumber_users --apply
+//	POSTGRES_URL=... go run ./cmd/renumber_users --apply --skip-redis
 package main
 
 import (
@@ -48,7 +58,12 @@ import (
 func main() {
 	apply := flag.Bool("apply", false, "renuméroter (défaut : aperçu seulement)")
 	audit := flag.Bool("audit", false, "chercher les anciens ids dans toutes les colonnes texte hors inventaire (lecture seule, long)")
+	skipRedis := flag.Bool("skip-redis", false, "avec --apply : ne pas vider le cache des sessions (Redis injoignable depuis ce poste) ; rejouer après l'expiration du cache")
 	flag.Parse()
+
+	if *skipRedis && !*apply {
+		log.Fatal("--skip-redis n'a de sens qu'avec --apply")
+	}
 
 	postgresURL := os.Getenv("POSTGRES_URL")
 	if postgresURL == "" {
@@ -93,9 +108,13 @@ func main() {
 		return
 	}
 
-	cache, err := redis.New()
-	if err != nil {
-		log.Fatalf("Redis indisponible, rien n'a été écrit : %v", err)
+	var cache *redis.Client
+	if !*skipRedis {
+		var err error
+		cache, err = redis.New()
+		if err != nil {
+			log.Fatalf("Redis indisponible, rien n'a été écrit : %v (--skip-redis pour renuméroter sans vider le cache)", err)
+		}
 	}
 
 	rep, err := userids.Apply(ctx, db)
@@ -103,6 +122,12 @@ func main() {
 		log.Fatalf("renumérotation annulée (rollback) : %v", err)
 	}
 	printReport(rep, true)
+
+	if *skipRedis {
+		fmt.Printf("Cache des sessions NON vidé (--skip-redis). Les sessions déjà en cache gardent l'ancien UserID jusqu'à %s au plus.\n", models.UserCacheTTL)
+		fmt.Printf("Une fois ce délai écoulé, relancer : go run ./cmd/renumber_users --apply --skip-redis (rattrape les lignes écrites avec un ancien id entre-temps).\n")
+		return
+	}
 
 	n, err := cache.ScanDeleteByPattern(ctx, models.UserCachePrefix+"*")
 	if err != nil {
