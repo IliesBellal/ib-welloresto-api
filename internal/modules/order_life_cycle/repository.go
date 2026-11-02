@@ -1664,8 +1664,40 @@ func (r *OrdersLifeCycleRepository) upsertCustomer(ctx context.Context, req *mod
 	if req.Order.Customer.Tel != nil {
 		cust.CustomerTel = req.Order.Customer.Tel
 	}
-	if req.Order.Customer.Address != nil {
+	// Adresse de livraison, précisions comprises (porte, étage, complément) : sans
+	// cette copie, porte / étage / complément étaient reçus puis jamais écrits sur
+	// la fiche client, donc absents à la relecture. Une valeur vide n'écrase rien
+	// (cf. extractFieldValue côté customers).
+	//
+	// « Adresse temporaire » (commande à adresse ponctuelle) : l'adresse vit dans les
+	// colonnes customer_temporary_*, que la relecture de la commande utilise quand
+	// use_customer_temporary_address est vrai. L'adresse habituelle du client n'est
+	// alors pas touchée — avant, elle était écrasée par l'adresse ponctuelle, et la
+	// relecture, qui lisait des colonnes temporaires restées vides, la renvoyait vide.
+	if req.Order.UseCustomerTemporaryAddress {
+		cust.CustomerTemporaryAddress = req.Order.Customer.Address
+		cust.CustomerTemporaryDoorNumber = req.Order.Customer.DoorNumber
+		cust.CustomerTemporaryFloorNumber = req.Order.Customer.FloorNumber
+		cust.CustomerTemporaryAdditionalAddress = req.Order.Customer.Additional
+		if req.Order.Customer.Lat != nil {
+			lat := strconv.FormatFloat(*req.Order.Customer.Lat, 'f', -1, 64)
+			cust.CustomerTemporaryLat = &lat
+		}
+		if req.Order.Customer.Lng != nil {
+			lng := strconv.FormatFloat(*req.Order.Customer.Lng, 'f', -1, 64)
+			cust.CustomerTemporaryLng = &lng
+		}
+	} else {
 		cust.CustomerAddress = req.Order.Customer.Address
+		cust.CustomerDoorNumber = req.Order.Customer.DoorNumber
+		cust.CustomerFloorNumber = req.Order.Customer.FloorNumber
+		cust.CustomerAdditionalAddress = req.Order.Customer.Additional
+		if req.Order.Customer.Lat != nil {
+			cust.CustomerLat = req.Order.Customer.Lat
+		}
+		if req.Order.Customer.Lng != nil {
+			cust.CustomerLng = req.Order.Customer.Lng
+		}
 	}
 	// Numéro temporaire et code pour l'appeler : seules les plateformes (Uber Eats,
 	// Deliveroo) les envoient, l'application de caisse n'en envoie jamais.
@@ -1674,12 +1706,6 @@ func (r *OrdersLifeCycleRepository) upsertCustomer(ctx context.Context, req *mod
 	}
 	if req.Order.Customer.TemporaryPhoneCode != nil {
 		cust.CustomerTemporaryPhoneCode = req.Order.Customer.TemporaryPhoneCode
-	}
-	if req.Order.Customer.Lat != nil {
-		cust.CustomerLat = req.Order.Customer.Lat
-	}
-	if req.Order.Customer.Lng != nil {
-		cust.CustomerLng = req.Order.Customer.Lng
 	}
 	if req.Order.Customer.CustomerBrand != "" {
 		cust.CustomerBrand = &req.Order.Customer.CustomerBrand
