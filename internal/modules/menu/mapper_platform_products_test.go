@@ -103,26 +103,5 @@ func TestToUberEatsFormat_SendsSubProductsNotGroups(t *testing.T) {
 	}
 }
 
-func TestToDeliverooFormat_SendsSubProductsNotGroups(t *testing.T) {
-	payload, err := ToDeliverooFormat(platformTestMenu())
-	if err != nil {
-		t.Fatalf("ToDeliverooFormat: %v", err)
-	}
-
-	entry := payload.Menus[0]
-	if len(entry.Categories) != 1 {
-		t.Fatalf("catégories = %d, want 1", len(entry.Categories))
-	}
-	// Le sous-produit 12 n'est pas marqué pour Deliveroo : il est filtré.
-	if want := []string{"1", "11", "13", "2"}; !reflect.DeepEqual(entry.Categories[0].ItemIDs, want) {
-		t.Errorf("articles de la catégorie = %v, want %v", entry.Categories[0].ItemIDs, want)
-	}
-	for _, item := range entry.Items {
-		if item.ID == "10" {
-			t.Errorf("le groupe 10 ne doit pas être envoyé comme article")
-		}
-		if item.ID == "13" && item.PriceMoney.Amount != 390 {
-			t.Errorf("prix du sous-produit 13 = %d, want 390", item.PriceMoney.Amount)
-		}
-	}
-}
+// Le pendant Deliveroo (groupe remplacé par ses sous-produits, filtre
+// sync_deliveroo) est testé dans internal/modules/marketplacecatalog.

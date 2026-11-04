@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/modules/deliveroo"
 	"welloresto-api/internal/infrastructure/r2"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
@@ -1795,13 +1796,27 @@ func (h *MenuHandler) SyncDeliverooMenu(w http.ResponseWriter, r *http.Request) 
 	log := logger.FromContext(ctx)
 	locationID := r.URL.Query().Get("location_id")
 
-	if err := h.service.SyncDeliverooMenu(ctx, token, locationID); err != nil {
+	result, err := h.service.SyncDeliverooMenu(ctx, token, locationID)
+	if err != nil {
 		log.Error("[ERROR] SyncDeliverooMenu error " + err.Error())
+		if deliveroo.IsPublishTooSoon(err) {
+			models.SendJSON(w, http.StatusTooManyRequests, "menu", "sync_deliveroo_menu", map[string]string{"error": "publish_too_soon"})
+			return
+		}
 		models.SendErrorJSON(w, "menu", "sync_deliveroo_menu", err)
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "menu", "sync_deliveroo_menu", map[string]string{"status": "success", "message": "menu synced to deliveroo"})
+	// status/message conservés pour le back-office ; sync_status : processing
+	// (résultat attendu par webhook), success ou unchanged.
+	models.SendJSON(w, http.StatusOK, "menu", "sync_deliveroo_menu", map[string]any{
+		"status":      "success",
+		"message":     "menu sent to deliveroo",
+		"sync_status": result.Status,
+		"sync_id":     result.SyncID,
+		"item_count":  result.ItemCount,
+		"warnings":    result.Warnings,
+	})
 }
 
 // GetUberEatsMenu récupère le menu depuis l'API Uber Eats

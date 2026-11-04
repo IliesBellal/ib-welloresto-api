@@ -42,7 +42,7 @@ func (h *MenuWebhookHandler) HandleMenuWebhook(w http.ResponseWriter, r *http.Re
 	}
 
 	// 3. Routage selon l'événement (même si pour l'instant il n'y en a qu'un)
-	if payload.Event == "menu.upload_result" {
+	if payload.Event == EventMenuUploadResult {
 		err = h.service.ProcessMenuUploadResult(r.Context(), payload)
 	} else {
 		// On loggue si on reçoit un event non géré sur cette URL

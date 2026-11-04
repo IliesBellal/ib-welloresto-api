@@ -169,26 +169,12 @@ func (h *DeliverooHandler) HandleScenario12(w http.ResponseWriter, r *http.Reque
 	w.Write([]byte("Scenario 12: whole_milk updated. Deliveroo will now skip the morning reset."))
 }
 
+// HandleTriggerScenario13 publie le vrai menu du marchand de test en V1 ; le
+// webhook menu.upload_result aligne ensuite les disponibilités (voir
+// docs/deliveroo-menu-sync.md, « Scénarios de certification »).
 func (h *DeliverooHandler) HandleTriggerScenario13(w http.ResponseWriter, r *http.Request) {
-	// On récupère les IDs via la query string
-	merchantID := "2"
-	menuID := "3"
-
-	if merchantID == "" || menuID == "" {
-		http.Error(w, "merchant_id and menu_id are required", http.StatusBadRequest)
-		return
-	}
-
-	// On lance le processus d'upload du gros menu
-	payload, err := h.service.RunScenario13(r.Context(), merchantID, menuID)
-	if err != nil {
-		http.Error(w, "Failed to trigger Scenario 13: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("Scenario 13 triggered: Large menu uploaded. Now wait for the webhook to finalize the test!"))
-	json.NewEncoder(w).Encode(payload)
+	result, err := h.service.RunScenario13(r.Context(), testMerchantID)
+	writeScenarioResult(w, "Scenario 13: menu sent (V1). Wait for the menu.upload_result webhook: item availabilities are then pushed automatically.", result, err)
 }
 
 func (h *DeliverooHandler) HandleScenario14(w http.ResponseWriter, r *http.Request) {
@@ -209,21 +195,28 @@ func (h *DeliverooHandler) HandleScenario14(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// HandleScenario15 publie le vrai menu du marchand de test en V3 (URL
+// présignée, dépôt S3, job) ; le job_id renvoyé se suit avec /test/deliveroo/16/{job_id}.
 func (h *DeliverooHandler) HandleScenario15(w http.ResponseWriter, r *http.Request) {
-	merchantID := "2"
-	menuID := "3"
+	result, err := h.service.RunScenario15(r.Context(), testMerchantID)
+	writeScenarioResult(w, "Scenario 15: menu uploaded to S3 and publish job created (V3). Wait for the menu.upload_result webhook.", result, err)
+}
 
-	jobID, err := h.service.RunScenario15(r.Context(), merchantID, menuID)
+// testMerchantID : marchand de test du sandbox Deliveroo (routes /test).
+const testMerchantID = "2"
+
+func writeScenarioResult(w http.ResponseWriter, message string, result *PublishResult, err error) {
+	w.Header().Set("Content-Type", "application/json")
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		status := http.StatusInternalServerError
+		if IsPublishTooSoon(err) {
+			status = http.StatusTooManyRequests
+		}
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-
-	// TRÈS IMPORTANT : Note bien ce jobID, on en aura besoin pour le Scénario 16
-	json.NewEncoder(w).Encode(map[string]string{
-		"status": "Job Created",
-		"job_id": jobID,
-	})
+	json.NewEncoder(w).Encode(map[string]any{"message": message, "result": result})
 }
 
 func (h *DeliverooHandler) HandleScenario16(w http.ResponseWriter, r *http.Request) {

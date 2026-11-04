@@ -26,9 +26,14 @@ type DeliverooService struct {
 	db     *sql.DB
 	client *DeliverooClient
 	cfg    config.DeliverooConfig
+
+	// Publication du menu (publish.go), branchés par SetMenuPublishing.
+	menuLoader MenuLoader
+	images     ImageStore
 }
 
-const defaultDeliverooMenuID = "main"
+// defaultDeliverooMenuID : menu publié par PublishMenu, cible des mises en rupture.
+const defaultDeliverooMenuID = PublishedMenuID
 
 func NewDeliverooService(db *sql.DB, cfg config.DeliverooConfig) *DeliverooService {
 	dc := NewDeliverooClient(nil, cfg)
@@ -205,18 +210,6 @@ func (s *DeliverooService) GetMenu(ctx context.Context, merchantID, locationID s
 		return nil, err
 	}
 	return s.client.GetMenu(ctx, account.BrandID)
-}
-
-// SyncMenu pousse un menu interne vers l'API Deliveroo. locationID vide cible
-// le compte "principal" du marchand (comportement historique, identique pour
-// un marchand mono-compte) ; locationID renseigné cible ce compte précis -
-// c'est ce qui permet de choisir quel compte Deliveroo synchroniser.
-func (s *DeliverooService) SyncMenu(ctx context.Context, merchantID, locationID string, menu interface{}) error {
-	account, err := s.repo.resolveAccount(ctx, merchantID, locationID)
-	if err != nil {
-		return err
-	}
-	return s.client.SyncMenu(ctx, account.BrandID, menu)
 }
 
 // ToggleItemAvailability updates a single item availability on Deliveroo.
@@ -612,10 +605,6 @@ func (s *DeliverooService) RunScenario11(ctx context.Context, merchantID string,
 	return s.client.UpdateIndividualUnavailabilities(ctx, brandID, menuID, siteID, payload)
 }
 
-func (s *DeliverooService) UpdateIndividualUnavailabilities(ctx context.Context, brandID, menuID, siteID string, payload any) error {
-	return s.client.UpdateIndividualUnavailabilities(ctx, brandID, menuID, siteID, payload)
-}
-
 func (s *DeliverooService) RunScenario12(ctx context.Context, merchantID string, menuID string) error {
 	brandID, err := s.repo.GetBrandIDByMerchant(ctx, merchantID)
 	if err != nil {
@@ -640,78 +629,13 @@ func (s *DeliverooService) RunScenario12(ctx context.Context, merchantID string,
 	return s.client.UpdateIndividualUnavailabilities(ctx, brandID, menuID, siteID, payload)
 }
 
-func (s *DeliverooService) RunScenario13(ctx context.Context, merchantID, menuID string) (map[string]any, error) {
-	brandID, err := s.repo.GetBrandIDByMerchant(ctx, merchantID)
-	if err != nil {
-		return nil, err
-	}
-	siteID, err := s.repo.GetSiteIDByMerchant(ctx, merchantID)
-	if err != nil {
-		return nil, err
-	}
-
-	// 1. Génération du payload de 100 items
-	menuPayload := s.generateScenario13Menu(menuID, siteID)
-
-	// 2. Envoi du menu via PUT
-	// On utilise l'URL officielle de l'API Menu
-	url := fmt.Sprintf("%s/menu/v1/brands/%s/menus/%s", s.client.config.BaseURL, brandID, menuID)
-
-	// On utilise ton helper doRequest via le client
-	// Note: Assure-toi que ton client expose doRequest ou une méthode PutMenu
-	resp, err := s.client.doRequest(ctx, "PUT", url, menuPayload)
-	if err != nil {
-		return nil, fmt.Errorf("error uploading large menu: %w", err)
-	}
-	defer resp.Body.Close()
-
-	return menuPayload, nil
-}
-
-// generateScenario13Menu crée la structure requise par Deliveroo pour ce test
-func (s *DeliverooService) generateScenario13Menu(menuID, siteID string) map[string]any {
-	var items []map[string]any
-	var itemIDs []string
-
-	for i := 1; i <= 100; i++ {
-		id := fmt.Sprintf("item_%d", i)
-		itemIDs = append(itemIDs, id)
-		items = append(items, map[string]any{
-			"id":   id,
-			"name": map[string]string{"en": fmt.Sprintf("Test Item %d", i)},
-			"price_info": map[string]any{
-				"price": 1000,
-			},
-			"plu":      "plu_" + id,
-			"tax_rate": "20",
-			"type":     "ITEM",
-		})
-	}
-
-	return map[string]any{
-		"name":     "Scenario 13 Menu",
-		"site_ids": []string{siteID},
-		"menu": map[string]any{
-			"categories": []map[string]any{
-				{
-					"id":       "cat_scenario_13",
-					"name":     map[string]string{"en": "Main Category"},
-					"item_ids": itemIDs,
-				},
-			},
-			"mealtimes": []map[string]any{
-				{
-					"id":           "morning-time",
-					"name":         map[string]string{"en": "Morning"},
-					"description":  map[string]string{"en": "Morning Selection"},
-					"image":        map[string]any{"url": "https://picsum.photos/seed/morning/800/600"},
-					"category_ids": []string{"cat_scenario_13"}, // Inclus la catégorie bundle
-					"schedule":     s.generateSchedule("00:00:00", "11:00:00"),
-				},
-			},
-			"items": items,
-		},
-	}
+// RunScenario13 (certification Deliveroo, « Update unavailabilities after
+// menu upload is completed ») : publie le vrai menu WelloResto du marchand de
+// test en V1. Le webhook menu.upload_result déclenche ensuite l'alignement des
+// disponibilités (CompleteMenuUpload). Force : révision datée, pour que
+// Deliveroo voie un menu nouveau et envoie bien le webhook à chaque essai.
+func (s *DeliverooService) RunScenario13(ctx context.Context, merchantID string) (*PublishResult, error) {
+	return s.PublishMenu(ctx, merchantID, PublishOptions{Origin: "scenario_13", APIVersion: APIVersionV1, Force: true})
 }
 
 func (s *DeliverooService) RunScenario14(ctx context.Context, merchantID, menuID string) (string, error) {
@@ -722,83 +646,20 @@ func (s *DeliverooService) RunScenario14(ctx context.Context, merchantID, menuID
 
 	log.Printf("Generating V3 S3 Upload URL for Menu %s (Brand %s)", menuID, brandID)
 
-	url, err := s.client.GenerateUploadURL(ctx, brandID, menuID)
+	up, err := s.client.GenerateUploadURL(ctx, brandID, menuID)
 	if err != nil {
 		return "", err
 	}
 
-	return url, nil
+	return up.UploadURL, nil
 }
 
-func (s *DeliverooService) RunScenario15(ctx context.Context, merchantID, menuID string) (string, error) {
-	brandID, _ := s.repo.GetBrandIDByMerchant(ctx, merchantID)
-	// IMPORTANT: Récupère ton site_id de test (ex: "site-1")
-	siteID, _ := s.repo.GetSiteIDByMerchant(ctx, merchantID)
-
-	uploadURL, err := s.client.GenerateUploadURL(ctx, brandID, menuID)
-	if err != nil {
-		return "", err
-	}
-
-	uniqueID := fmt.Sprintf("%d", time.Now().Unix())
-	menuData := s.generateV3Menu(uniqueID, siteID)
-
-	// 1. Upload vers S3
-	err = s.client.UploadToS3(ctx, uploadURL, menuData)
-	if err != nil {
-		return "", err
-	}
-
-	// 2. Publication du Job
-	jobID, err := s.client.CreateMenuJob(ctx, brandID, JobRequest{
-		Action: "publish_menu_to_live",
-		Params: JobParams{
-			MenuID: menuID,
-			//Version: uniqueID,
-			SiteIDs: []string{siteID}, // OBLIGATOIRE
-		},
-	})
-
-	return jobID, err
-}
-
-func (s *DeliverooService) generateV3Menu(uniqueID string, siteID string) map[string]any {
-	return map[string]any{
-		// C'EST ICI QUE LE ROBOT DELIVEROO CHERCHE LES SITES !
-		"site_ids": []string{siteID},
-		// Tout le reste doit être encapsulé dans "menu"
-		"menu": map[string]any{
-			"mealtimes": []map[string]any{
-				{
-					"id":          "meal_" + uniqueID,
-					"name":        map[string]string{"en": "Main Menu " + uniqueID},
-					"description": map[string]string{"en": "Delicious selection updated at " + uniqueID},
-					"image":       "https://images.deliveroo.com/placeholder.jpg",
-				},
-			},
-			"categories": []map[string]any{
-				{
-					"id":       "cat_" + uniqueID,
-					"name":     map[string]string{"en": "Burgers " + uniqueID},
-					"item_ids": []string{"item_" + uniqueID},
-				},
-			},
-			"items": []map[string]any{
-				{
-					"id":               "item_" + uniqueID,
-					"name":             map[string]string{"en": "V3 Burger " + uniqueID},
-					"operational_name": "V3-BURGER-OP-" + uniqueID,
-					"description":      map[string]string{"en": "A premium burger for V3 testing purposes."},
-					"plu":              "PLU-" + uniqueID,
-					"tax_rate":         "10",
-					"price_info": map[string]any{
-						"price": 1500, // 15.00€
-					},
-					"type": "ITEM",
-				},
-			},
-		},
-	}
+// RunScenario15 (certification Deliveroo, « [MENU V3 APIs] Asynchronous Menu
+// create/update and receive webhook callback ») : publie le vrai menu WelloResto
+// du marchand de test en V3 (URL présignée, dépôt S3, job). Le résultat arrive
+// par le même webhook que la V1.
+func (s *DeliverooService) RunScenario15(ctx context.Context, merchantID string) (*PublishResult, error) {
+	return s.PublishMenu(ctx, merchantID, PublishOptions{Origin: "scenario_15", APIVersion: APIVersionV3, Force: true})
 }
 
 func (s *DeliverooService) RunScenario16(ctx context.Context, merchantID, jobID string) (*JobStatusResponse, error) {

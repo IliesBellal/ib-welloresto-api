@@ -304,6 +304,14 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// ---- Deliveroo ----
 	deliverooService := deliverooModule.NewDeliverooService(selectedDB, cfg.Deliveroo)
 	deliverooHandler := deliverooModule.NewDeliverooHandler(deliverooService)
+	// Publication du menu (docs/deliveroo-menu-sync.md) : menu WelloResto +
+	// bucket R2 public pour l'image de couverture. Un *r2.Client nil ne doit
+	// pas devenir une interface non nil.
+	if r2Client != nil {
+		deliverooService.SetMenuPublishing(menuRepoLegacy, r2Client)
+	} else {
+		deliverooService.SetMenuPublishing(menuRepoLegacy, nil)
+	}
 
 	// ---- Customers ----
 	customersRepo := customersModule.NewCustomerRepository(selectedDB)
@@ -501,8 +509,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// Signature des webhooks Deliveroo vérifiée en mode observation, voir deliveroosig.Observe.
 	deliverooWebhookHandler := deliveroo_orders.NewDeliverooHandler(deliverooWebhookService, cfg.Deliveroo.WebhookSecret)
 
-	deliverooMenuWebhookRepo := deliveroo_menu.NewRepository(selectedDB)
-	deliverooMenuWebhookService := deliveroo_menu.NewMenuWebhookService(deliverooMenuWebhookRepo, deliverooService)
+	deliverooMenuWebhookService := deliveroo_menu.NewMenuWebhookService(deliverooService)
 	deliverooMenuWebhookHandler := deliveroo_menu.NewMenuWebhookHandler(deliverooMenuWebhookService, cfg.Deliveroo.WebhookSecret)
 
 	uberWebhookService := webhookuberservice.NewService(

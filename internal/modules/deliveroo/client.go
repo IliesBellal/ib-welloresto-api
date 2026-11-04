@@ -376,20 +376,29 @@ func (c *DeliverooClient) GetMenu(ctx context.Context, brandID string) (map[stri
 	return result, nil
 }
 
-// SyncMenu pousse un menu vers l'API Deliveroo
-func (c *DeliverooClient) SyncMenu(ctx context.Context, brandID string, menu interface{}) error {
-	urlPath := fmt.Sprintf("%s/menu/v1/brands/%s/menus", c.config.BaseURL, url.PathEscape(brandID))
+// PutMenuV1 envoie un menu complet (PUT /menu/v1/brands/{brand}/menus/{id}).
+// Renvoie le code HTTP dans tous les cas où une réponse a été reçue.
+// Limite Deliveroo : 1 requête par minute et par site.
+func (c *DeliverooClient) PutMenuV1(ctx context.Context, brandID, menuID string, doc any) (*UploadMenuResponse, int, error) {
+	urlPath := fmt.Sprintf("%s/menu/v1/brands/%s/menus/%s", c.config.BaseURL, url.PathEscape(brandID), url.PathEscape(menuID))
 
-	resp, err := c.doRequest(ctx, "PUT", urlPath, menu)
+	resp, err := c.doRequest(ctx, "PUT", urlPath, doc)
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		return c.handleError(resp)
+		return nil, resp.StatusCode, c.handleError(resp)
 	}
-	return nil
+	var out UploadMenuResponse
+	body, _ := io.ReadAll(resp.Body)
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &out); err != nil {
+			return nil, resp.StatusCode, fmt.Errorf("deliveroo menu upload: réponse illisible: %w", err)
+		}
+	}
+	return &out, resp.StatusCode, nil
 }
 
 // SendSyncStatus envoie le statut de synchronisation à Deliveroo suite à un Webhook
@@ -480,6 +489,9 @@ func (c *DeliverooClient) UploadMenu(ctx context.Context, brandID string, menuID
 	return nil
 }
 
+// UpdateIndividualUnavailabilities : POST item_unavailabilities. Seuls les
+// articles cités changent ; un identifiant inconnu du menu fait échouer toute
+// la requête (404). Limite Deliveroo : 1 requête / 100 ms / site.
 func (c *DeliverooClient) UpdateIndividualUnavailabilities(ctx context.Context, brandID, menuID, siteID string, payload any) error {
 	url := fmt.Sprintf("%s/menu/v1/brands/%s/menus/%s/item_unavailabilities/%s", c.config.BaseURL, brandID, menuID, siteID)
 
@@ -490,32 +502,34 @@ func (c *DeliverooClient) UpdateIndividualUnavailabilities(ctx context.Context, 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("deliveroo api error (%d)", resp.StatusCode)
+		return c.handleError(resp)
 	}
 	return nil
 }
 
-func (c *DeliverooClient) GenerateUploadURL(ctx context.Context, brandID, menuID string) (string, error) {
-	// Note le "/v3/" dans l'URL
+// GenerateUploadURL (V3) : URL présignée S3 où déposer le document de menu,
+// valable quelques secondes. Aucun corps de requête.
+func (c *DeliverooClient) GenerateUploadURL(ctx context.Context, brandID, menuID string) (*S3UploadResponse, error) {
 	url := fmt.Sprintf("%s/menu/v3/brands/%s/menus/%s", c.config.BaseURL, brandID, menuID)
 
-	// On utilise ton doRequest. payload est nil car l'endpoint n'attend pas de body.
 	resp, err := c.doRequest(ctx, "PUT", url, nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("deliveroo v3 error (%d)", resp.StatusCode)
+		return nil, c.handleError(resp)
 	}
 
 	var result S3UploadResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
+		return nil, err
 	}
-
-	return result.UploadURL, nil
+	if result.UploadURL == "" {
+		return nil, fmt.Errorf("deliveroo v3: upload_url absent de la réponse")
+	}
+	return &result, nil
 }
 
 func (c *DeliverooClient) UploadToS3(ctx context.Context, s3URL string, menuData any) error {
@@ -541,28 +555,35 @@ func (c *DeliverooClient) UploadToS3(ctx context.Context, s3URL string, menuData
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("S3 upload failed with status: %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return fmt.Errorf("S3 upload failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
 	return nil
 }
 
-func (c *DeliverooClient) CreateMenuJob(ctx context.Context, brandID string, jobReq JobRequest) (string, error) {
+// CreateMenuJob (V3) : déclenche la publication du document déposé sur S3.
+func (c *DeliverooClient) CreateMenuJob(ctx context.Context, brandID string, jobReq JobRequest) (*JobResponse, error) {
 	url := fmt.Sprintf("%s/menu/v3/brands/%s/jobs", c.config.BaseURL, brandID)
 
 	resp, err := c.doRequest(ctx, "POST", url, jobReq)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode >= 400 {
+		return nil, c.handleError(resp)
+	}
 	var res JobResponse
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		return "", err
+		return nil, err
 	}
-
-	return res.JobID, nil
+	if res.JobID == "" {
+		return nil, fmt.Errorf("deliveroo v3: job_id absent de la réponse")
+	}
+	return &res, nil
 }
 
 func (c *DeliverooClient) GetJobStatus(ctx context.Context, brandID, jobID string) (*JobStatusResponse, error) {
@@ -574,6 +595,9 @@ func (c *DeliverooClient) GetJobStatus(ctx context.Context, brandID, jobID strin
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode >= 400 {
+		return nil, c.handleError(resp)
+	}
 	var result JobStatusResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err

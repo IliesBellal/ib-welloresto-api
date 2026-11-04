@@ -952,28 +952,19 @@ func (s *MenuService) GetDeliverooMenu(ctx context.Context, token, locationID st
 	return s.deliveroo.GetMenu(ctx, user.MerchantID, locationID)
 }
 
-// SyncDeliverooMenu synchronise le menu interne vers l'API Deliveroo.
-// locationID vide cible le compte "principal" du marchand (comportement
-// historique, identique pour un marchand mono-compte) ; locationID renseigné
-// cible ce compte précis - c'est ce qui permet de choisir quel compte
-// Deliveroo synchroniser.
-func (s *MenuService) SyncDeliverooMenu(ctx context.Context, token, locationID string) error {
+// SyncDeliverooMenu publie le menu WelloResto sur Deliveroo (voir
+// docs/deliveroo-menu-sync.md). locationID vide cible le compte "principal"
+// du marchand ; locationID renseigné cible ce compte précis. Le résultat final
+// arrive par webhook : le statut renvoyé est en général "processing".
+func (s *MenuService) SyncDeliverooMenu(ctx context.Context, token, locationID string) (*deliveroo.PublishResult, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-
-	internalMenu, err := s.legacy.GetMenuWithMarketingCategories(ctx, user.MerchantID)
-	if err != nil {
-		return err
-	}
-
-	deliverooMenu, err := ToDeliverooFormat(internalMenu)
-	if err != nil {
-		return fmt.Errorf("menu sync deliveroo: mapping failed: %w", err)
-	}
-
-	return s.deliveroo.SyncMenu(ctx, user.MerchantID, locationID, deliverooMenu)
+	return s.deliveroo.PublishMenu(ctx, user.MerchantID, deliveroo.PublishOptions{
+		LocationID: locationID,
+		Origin:     "manual",
+	})
 }
 
 // GetUberEatsMenu récupère le menu du restaurant depuis l'API Uber Eats.
