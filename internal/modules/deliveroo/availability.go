@@ -38,6 +38,17 @@ const (
 	reconcileTimeout     = 90 * time.Second
 )
 
+// TODO(options) : la disponibilité des OPTIONS n'est pas alignée — seuls les
+// articles produits le sont. À intégrer aux marketplaces :
+//   - publier l'état des options dans le même POST item_unavailabilities, avec
+//     leurs identifiants d'articles « opt-<id> » (marketplacecatalog.Option n'a
+//     pas encore d'état de disponibilité) ;
+//   - source d'état : configurable_attribute_options.enabled et le stock du
+//     composant lié (component_id) ;
+//   - ajouter les « opt-<id> » publiés à la liste lue par LastPublishedItemIDs
+//     (aujourd'hui seulement les articles produits) ;
+//   - penser à Uber Eats, où une option est un article à part entière aussi.
+
 // itemState : état d'un article chez Deliveroo.
 type itemState string
 

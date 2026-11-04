@@ -85,6 +85,9 @@ type OptionGroup struct {
 }
 
 // Option est un choix d'un groupe (configurable_attribute_options).
+//
+// TODO(options) : pas d'état de disponibilité (rupture d'une option ou de son
+// composant) — voir le TODO(options) de internal/modules/deliveroo/availability.go.
 type Option struct {
 	ID         string
 	Title      string
