@@ -18,7 +18,7 @@ import (
 //
 // Identifiants :
 //   - article = identifiant du produit WelloResto, PLU identique. C'est ce
-//     qu'utilisent la mise en rupture (ToggleItemAvailability) et l'import des
+//     qu'utilisent l'alignement des disponibilités (availability.go) et l'import des
 //     commandes (pos_item_id, via integration_deliveroo_products_mapping) ;
 //   - option = "opt-<id option>", PLU identique (namespace distinct des
 //     produits : les deux identifiants sont des entiers) ;

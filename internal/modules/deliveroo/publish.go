@@ -154,6 +154,12 @@ func (s *DeliverooService) PublishMenu(ctx context.Context, merchantID string, o
 			return nil, err
 		}
 		if prev == built.Fingerprint {
+			result.Status = syncUnchanged
+			// La republication automatique vérifie souvent : une ligne par
+			// vérification noierait le journal du restaurateur.
+			if opts.Origin == "auto" {
+				return result, nil
+			}
 			record.Status = syncUnchanged
 			id, err := s.repo.InsertSync(ctx, record)
 			if err != nil {
@@ -169,6 +175,12 @@ func (s *DeliverooService) PublishMenu(ctx context.Context, merchantID string, o
 		return nil, err
 	}
 	record.ID, result.SyncID = id, id
+
+	// Le compte entre dans la file de réveils : horaires, alignement des
+	// disponibilités, republication automatique des changements de menu.
+	if err := s.repo.EnsureSyncState(ctx, merchantID, account.LocationID); err != nil {
+		log.Warn("[DELIVEROO] compte non inscrit dans la file de réveils (migration 202 jouée ?)", zap.Error(err))
+	}
 
 	// Correspondances AVANT l'envoi : une commande sur le nouveau menu doit
 	// retrouver son produit, jamais en créer un nouveau.

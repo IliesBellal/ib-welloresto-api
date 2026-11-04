@@ -13,6 +13,7 @@ import (
 	"welloresto-api/internal/modules/order_life_cycle"
 	payoutsModule "welloresto-api/internal/modules/payouts"
 	accountingSyncModule "welloresto-api/internal/modules/accountingsync"
+	deliverooModule "welloresto-api/internal/modules/deliveroo"
 	subscriptionInvoicesModule "welloresto-api/internal/modules/subscriptioninvoices"
 	subscriptionsModule "welloresto-api/internal/modules/subscriptions"
 	upsellModule "welloresto-api/internal/modules/upsell"
@@ -45,6 +46,9 @@ type TasksManager struct {
 	// AccountingSyncService — envoi des écritures de ventes aux logiciels de
 	// comptabilité (RunAccountingSync). Nil tant que SetupRoutes ne l'a pas branché.
 	AccountingSyncService *accountingSyncModule.Service
+	// DeliverooService — réveils par compte (RunDeliverooWakeups). Nil tant que
+	// SetupRoutes ne l'a pas branché.
+	DeliverooService *deliverooModule.DeliverooService
 	Logger        *zap.Logger
 }
 

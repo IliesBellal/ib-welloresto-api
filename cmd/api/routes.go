@@ -340,6 +340,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// d'amortissement de `menu_updated` doit être commune aux deux chemins
 	// d'écriture du catalogue.
 	menuChanges := menuModule.NewMenuChangeNotifier(redisClient, notificationService)
+	// Chaque modification du catalogue revérifie le menu Deliveroo et aligne les
+	// disponibilités (docs/deliveroo-menu-sync.md) ; sans effet pour un
+	// établissement sans Deliveroo.
+	menuChanges.OnChange(deliverooService.OnMenuChanged)
 	menuService := menuModule.NewMenuService(menuRepoLegacy, deliverooService, uberService, menuChanges, posAccountingRepo, allergensRepo)
 
 	// ---- Translation ----
@@ -815,6 +819,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		log,
 	)
 	taskManager.AccountingSyncService = accountingSyncService
+	taskManager.DeliverooService = deliverooService
 	accountingSyncH := accountingSyncModule.NewHandler(accountingSyncService, cfg.Accounting.ReturnURL)
 
 	// Attestations individuelles de l'éditeur (conformité caisse lot F).

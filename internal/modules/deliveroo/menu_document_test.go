@@ -239,3 +239,64 @@ func TestReachedPlatform(t *testing.T) {
 		}
 	}
 }
+
+func availabilityCatalog() *marketplacecatalog.Catalog {
+	mk := func(id string, a marketplacecatalog.Availability) *marketplacecatalog.Product {
+		return &marketplacecatalog.Product{ID: id, Availability: a}
+	}
+	return &marketplacecatalog.Catalog{Products: map[string]*marketplacecatalog.Product{
+		"1": mk("1", marketplacecatalog.Available),
+		"2": mk("2", marketplacecatalog.SoldOut),
+		"3": mk("3", marketplacecatalog.Hidden),
+		"4": mk("4", marketplacecatalog.Available),
+	}}
+}
+
+func TestDiffAvailability_SendsOnlyDifferences(t *testing.T) {
+	cur := &UnavailabilitiesResponse{UnavailableIDs: []string{"4", "9"}, HiddenIDs: []string{"3"}}
+	got := diffAvailability([]string{"1", "2", "3", "4"}, availabilityCatalog(), cur)
+	// 1 : disponible des deux côtés ; 2 : à épuiser ; 3 : déjà masqué ;
+	// 4 : épuisé chez Deliveroo (matin, tablette) alors que WelloResto dit disponible.
+	want := []ItemUnavailability{{"2", "unavailable"}, {"4", "available"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("diff = %v, want %v", got, want)
+	}
+}
+
+func TestDiffAvailability_MorningResetIsReapplied(t *testing.T) {
+	// Deliveroo a remis tout disponible à l'ouverture : la rupture et le
+	// masquage de WelloResto doivent être renvoyés.
+	cur := &UnavailabilitiesResponse{}
+	got := diffAvailability([]string{"1", "2", "3"}, availabilityCatalog(), cur)
+	want := []ItemUnavailability{{"2", "unavailable"}, {"3", "hidden"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("diff = %v, want %v", got, want)
+	}
+}
+
+func TestDiffAvailability_ProductGoneFromCatalogIsHidden(t *testing.T) {
+	// Produit retiré du menu WelloResto mais encore publié chez Deliveroo
+	// (republication à venir) : masqué en attendant. Les articles étrangers à
+	// notre menu (ids inconnus de la liste publiée) ne sont jamais touchés.
+	cur := &UnavailabilitiesResponse{UnavailableIDs: []string{"foreign"}}
+	got := diffAvailability([]string{"1", "gone"}, availabilityCatalog(), cur)
+	want := []ItemUnavailability{{"gone", "hidden"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("diff = %v, want %v", got, want)
+	}
+}
+
+func TestDiffAvailability_NothingToDo(t *testing.T) {
+	cur := &UnavailabilitiesResponse{UnavailableIDs: []string{"2"}, HiddenIDs: []string{"3"}}
+	if got := diffAvailability([]string{"1", "2", "3"}, availabilityCatalog(), cur); len(got) != 0 {
+		t.Errorf("diff = %v, want vide", got)
+	}
+}
+
+func TestDiffAvailability_HiddenWinsOverUnavailable(t *testing.T) {
+	// Un article à la fois masqué et épuisé chez Deliveroo compte comme masqué.
+	cur := &UnavailabilitiesResponse{UnavailableIDs: []string{"3"}, HiddenIDs: []string{"3"}}
+	if got := diffAvailability([]string{"3"}, availabilityCatalog(), cur); len(got) != 0 {
+		t.Errorf("diff = %v, want vide", got)
+	}
+}

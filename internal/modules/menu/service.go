@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
@@ -664,32 +663,18 @@ func (s *MenuService) enqueueProductStatusSync(ctx context.Context, merchantID, 
 		taskCtx, cancel := context.WithTimeout(context.Background(), s.statusSyncTimeout)
 		defer cancel()
 
-		var wg sync.WaitGroup
-		wg.Add(2)
-
-		go func() {
-			defer wg.Done()
-			if s.uber == nil {
-				log.Warn("[WARN] UberEats client not initialized, skipping status sync for UberEats")
-				return
-			}
-			if err := s.uber.ToggleItemAvailability(taskCtx, merchantID, "", productID, available); err != nil {
-				log.Warn("[WARN] Uber status sync failed: " + err.Error())
-			}
-		}()
-
-		go func() {
-			defer wg.Done()
-			if s.deliveroo == nil {
-				log.Warn("[WARN] Deliveroo client not initialized, skipping status sync for Deliveroo")
-				return
-			}
-			if err := s.deliveroo.ToggleItemAvailability(taskCtx, merchantID, "", productID, available); err != nil {
-				log.Warn("[WARN] Deliveroo status sync failed: " + err.Error())
-			}
-		}()
-
-		wg.Wait()
+		// Deliveroo n'est plus traité ici : chaque changement de statut passe par
+		// onMenuChanged, qui aligne les disponibilités depuis l'état courant de
+		// WelloResto (deliveroo.OnMenuChanged), sans dépendre de l'ordre des
+		// événements. Uber Eats reste envoyé par événement, en attendant sa
+		// phase (docs/deliveroo-menu-sync.md).
+		if s.uber == nil {
+			log.Warn("[WARN] UberEats client not initialized, skipping status sync for UberEats")
+			return
+		}
+		if err := s.uber.ToggleItemAvailability(taskCtx, merchantID, "", productID, available); err != nil {
+			log.Warn("[WARN] Uber status sync failed: " + err.Error())
+		}
 	}()
 }
 

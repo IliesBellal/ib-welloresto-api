@@ -100,6 +100,12 @@ func SetupTasks(
 	// RunFiscalClosures : elle lit les clôtures qu'elle vient d'écrire.
 	add("@hourly", taskManager.RunAccountingSync)
 
+	// ── Marketplaces ─────────────────────────────────────────────────────────
+	// Réveils par compte Deliveroo : ouverture du site, republication du menu
+	// modifié, alignement des disponibilités (docs/deliveroo-menu-sync.md).
+	// Chaque passage ne traite que les comptes dont le réveil est échu.
+	add("@every 1m", taskManager.RunDeliverooWakeups)
+
 	// ── Justificatifs de versement ───────────────────────────────────────────
 	// Relevé de versement + facture de commission de chaque payout Stripe payé
 	// (docs/payouts-justificatifs.md). Le webhook payout.paid met le payout en

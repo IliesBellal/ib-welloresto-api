@@ -57,6 +57,11 @@ type MenuChangeNotifier struct {
 	broadcaster realtimeBroadcaster
 	window      time.Duration
 
+	// listeners : abonnés à chaque modification du catalogue (synchro des
+	// plateformes de livraison). Appelés hors verrou, dans la goroutine de la
+	// requête : ils doivent revenir tout de suite (travail asynchrone).
+	listeners []func(merchantID string)
+
 	mu      sync.Mutex
 	lastAt  map[string]time.Time
 	pending map[string]struct{}
@@ -100,6 +105,10 @@ func (n *MenuChangeNotifier) Changed(ctx context.Context, merchantID string) {
 
 	if n.cache != nil {
 		n.cache.InvalidateMerchantMenuCaches(ctx, merchantID)
+	}
+
+	for _, listener := range n.listeners {
+		listener(merchantID)
 	}
 
 	n.scheduleBroadcast(merchantID)
@@ -159,4 +168,14 @@ func (n *MenuChangeNotifier) broadcast(merchantID string) {
 		"type":        notification.WSEventMenuUpdated,
 		"merchant_id": merchantID,
 	})
+}
+
+// OnChange abonne un écouteur aux modifications du catalogue (appelé au
+// démarrage, avant toute requête). L'écouteur reçoit l'identifiant de
+// l'établissement et doit revenir tout de suite.
+func (n *MenuChangeNotifier) OnChange(listener func(merchantID string)) {
+	if n == nil || listener == nil {
+		return
+	}
+	n.listeners = append(n.listeners, listener)
 }
