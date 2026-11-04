@@ -2517,6 +2517,12 @@ func (r *MenuRepository) CreateProduct(ctx context.Context, p *CreateProductPayl
 		}
 		productID = id
 
+		if p.ContainsAlcohol != nil {
+			if err := r.setProductContainsAlcohol(txCtx, p.MerchantID, productID, *p.ContainsAlcohol); err != nil {
+				return err
+			}
+		}
+
 		_ = r.setMenuUpdated(txCtx, p.MerchantID)
 
 		return nil
@@ -2845,7 +2851,8 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 			is_available_on_sno,
 			is_available_on_kiosk,
 			available,
-			image_url
+			image_url,
+			contains_alcohol
 		FROM products p
 		INNER JOIN tva_categories tva_in ON tva_in.tva_id = p.tva_in_id
 		INNER JOIN tva_categories tva_delivery ON tva_delivery.tva_id = p.tva_delivery_id
@@ -2862,6 +2869,7 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 	var tvaIn sql.NullFloat64
 	var tvaDelivery sql.NullFloat64
 	var tvaTakeAway sql.NullFloat64
+	var containsAlcohol bool
 
 	err := db.QueryRowContext(ctx, query, merchantID, productID).Scan(
 		&p.ProductID,
@@ -2891,11 +2899,13 @@ func (r *MenuRepository) GetProduct(ctx context.Context, merchantID, productID s
 		&p.IsAvailableOnKiosk,
 		&p.Available,
 		&p.ImageURL,
+		&containsAlcohol,
 	)
 
 	if err != nil {
 		return nil, err
 	}
+	p.ContainsAlcohol = &containsAlcohol
 
 	if tvaIn.Valid {
 		p.TVAIn = &tvaIn.Float64
@@ -4365,6 +4375,12 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 		return fmt.Errorf("failed to sync product integrations: %w", err)
 	}
 
+	if p.ContainsAlcohol != nil {
+		if err := r.setProductContainsAlcohol(ctx, merchantID, productID, *p.ContainsAlcohol); err != nil {
+			return err
+		}
+	}
+
 	// Sync configurable attributes
 	if len(p.Configuration) > 0 {
 		if err := r.SyncProductAttributes(ctx, merchantID, productID, p.Configuration); err != nil {
@@ -4395,6 +4411,21 @@ func (r *MenuRepository) UpdateProduct(ctx context.Context, merchantID, productI
 
 	_ = r.setMenuUpdated(ctx, merchantID)
 
+	return nil
+}
+
+// setProductContainsAlcohol écrit products.contains_alcohol (migration 200),
+// saisi par le restaurateur dans la fiche produit et publié vers les
+// plateformes de livraison. Requête à part : seuls les appelants qui envoient
+// le champ touchent la colonne.
+func (r *MenuRepository) setProductContainsAlcohol(ctx context.Context, merchantID, productID string, v bool) error {
+	db := dbx.GetDB(ctx, r.database)
+	if _, err := db.ExecContext(ctx,
+		`UPDATE products SET contains_alcohol = ? WHERE product_id = ? AND merchant_id = ?`,
+		v, productID, merchantID,
+	); err != nil {
+		return fmt.Errorf("failed to update product contains_alcohol: %w", err)
+	}
 	return nil
 }
 

@@ -8,12 +8,13 @@
 --
 -- Défaut false : aucun produit existant n'est marqué.
 --
--- Seule la synchro des menus marketplace lit cette colonne, par une requête à
--- part (le chargement commun des menus POS / ScanNOrder / borne ne la lit pas).
--- Sans cette migration, la publication d'un menu Deliveroo échoue avec une
--- erreur explicite ; rien d'autre n'est touché.
+-- Lue par la synchro des menus marketplace et par la fiche produit du
+-- back-office (GET /menu/products/{id}, case « Alcool » de l'onglet Général),
+-- écrite seulement quand la fiche l'envoie. Le chargement commun des menus
+-- POS / ScanNOrder / borne ne la lit pas.
 --
--- ORDRE DE DÉPLOIEMENT : migration AVANT le code. Rejouable.
+-- ORDRE DE DÉPLOIEMENT : migration AVANT le code — sans elle, la fiche produit
+-- du back-office et la publication Deliveroo échouent. Rejouable.
 
 ALTER TABLE products
     ADD COLUMN IF NOT EXISTS contains_alcohol boolean NOT NULL DEFAULT false;

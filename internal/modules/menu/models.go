@@ -243,6 +243,7 @@ type CreateProductPayload struct {
 	Components         []ProductComponentUpdate `json:"components,omitempty"`    // Composition (ingrédient + quantité + unité)
 	Tags               []string                 `json:"tags,omitempty"`          // IDs de tags
 	Allergens          []string                 `json:"allergens,omitempty"`     // IDs d'allergènes
+	ContainsAlcohol    *bool                    `json:"contains_alcohol,omitempty"`
 
 	// Pointeur volontairement : sync_uber_eats et sync_deliveroo valent TRUE par
 	// défaut en base. Avec une valeur non-pointeur, « désactivé » et « champ
@@ -298,6 +299,10 @@ type ProductUpdatePayload struct {
 	TvaInID       *string `json:"tva_in_id"`
 	TvaTakeAwayID *string `json:"tva_take_away_id"`
 	TvaDeliveryID *string `json:"tva_delivery_id"`
+
+	// ContainsAlcohol : case « Alcool » de la fiche produit (onglet Général).
+	// nil = colonne non touchée (les autres appelants ne l'envoient pas).
+	ContainsAlcohol *bool `json:"contains_alcohol"`
 }
 
 // ProductAttributesPayload pour la configuration des attributs

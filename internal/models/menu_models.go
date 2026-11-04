@@ -99,6 +99,10 @@ type ProductEntry struct {
 	Comment                      *OrderComment          `json:"comment,omitempty"`
 	DisplayOrder                 *int                   `json:"display_order"`
 	SyncDeliveroo                *bool                  `json:"sync_deliveroo,omitempty"`
+	// ContainsAlcohol : products.contains_alcohol (migration 200), renseigné
+	// uniquement par la fiche produit (GET /menu/products/{id}) ; absent des
+	// menus POS / ScanNOrder / borne.
+	ContainsAlcohol *bool `json:"contains_alcohol,omitempty"`
 	SyncUberEats                 *bool                  `json:"sync_ubereats,omitempty"`
 	Tags                         []TagEntry             `json:"tags"`
 	Allergens                    []AllergenEntry        `json:"allergens"`
