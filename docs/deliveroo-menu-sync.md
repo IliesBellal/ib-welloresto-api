@@ -5,9 +5,9 @@ WelloResto. Les produits cochés « Deliveroo » sont publiés, et leur
 disponibilité suit celle de WelloResto. Le code est pensé pour accueillir
 Uber Eats ensuite, avec le même catalogue commun.
 
-État au 2026-11-04 : étapes 1 à 4 codées (webhook, journal, constructeur de
-menu, scénarios 13 et 15). Rien n'est commité. Les migrations 200 et 201 sont
-à appliquer. L'étape 5 est à faire (voir « Reste à faire »).
+État au 2026-11-04 : étapes 1 à 5 codées (webhook, journal, constructeur de
+menu, scénarios 13 et 15 validés au sandbox, réveils par compte). Migrations
+200, 201 (appliquées) et 202 (à appliquer). Voir « Reste à faire ».
 
 ## Vue d'ensemble
 
@@ -217,37 +217,80 @@ définitif est dans le journal.
   réel.
 - `params.site_ids` du job V3, non documenté : les sites sont dans le document S3.
 
-## Reste à faire (étape 5)
+## Réveils (étape 5)
 
-1. ~~Application POS~~ : fait le 2026-11-04. Le bouton « Disponibilité »
-   envoie `out_of_stock`. Reste à forcer la mise à jour des applications avant
-   la mise en ligne.
-2. Mise en rupture immédiate : `ToggleItemAvailability` envoie encore
-   `unavailable` pour `not_available`. Il faut passer au trio
-   available/unavailable/hidden, et calculer l'envoi depuis l'**état courant**
-   plutôt que depuis l'événement. Aujourd'hui, deux changements rapprochés
-   partent dans deux goroutines sans ordre garanti.
-3. File de réveils par compte, avec la migration suivante :
-   - après un changement ;
-   - après l'ouverture du site (horaires et fuseau lus via l'API Site,
-     confirmation par `GET .../status` = `OPEN`) ;
-   - un filet de sécurité toutes les 2 à 3 heures, étalé dans le temps.
+Migration 202 : `marketplace_sync_state`, une ligne par compte déjà publié
+(`EnsureSyncState` à la première publication). Un compte jamais publié n'est
+jamais touché : la première publication reste manuelle.
 
-   Chaque réveil lit l'état chez Deliveroo, le compare à WelloResto et envoie
-   la différence. Pour Uber Eats, le webhook `store.status.changed` servira de
-   déclencheur.
-4. Republication automatique quand l'empreinte du menu change (produit retiré,
-   prix, nom…), après quelques minutes de calme.
-5. ~~ScanNOrder : masquer `not_available`~~ : **non retenu** (vérifié le
-   2026-11-04). Uber Eats n'a pas le même comportement que Deliveroo : sa
-   documentation ne prévoit qu'un état manuel « Sold Out » (`suspension_info`,
-   jusqu'à une date) et des créneaux de visibilité horaires (`visibility_info`),
-   aucun « masqué » manuel. ScanNOrder garde donc son comportement :
-   `not_available` affiché grisé « Indisponible », `out_of_stock` « Épuisé ».
-   Pour Uber Eats, `not_available` devra être traduit soit par une suspension
-   longue, soit par un retrait du menu publié. À noter aussi :
-   `ubereats.ToggleItemAvailability` ne suspend aujourd'hui que **30 minutes**.
-6. Choisir la V1 ou la V3 pour la production une fois le scénario 15 validé
-   (la doc ne dit pas explicitement qu'un job V3 déclenche le webhook).
-7. Back-office : ~~case « Alcool »~~ (fait le 2026-11-04) ; reste l'affichage
-   du journal.
+**Principe** : on ne scrute pas tous les comptes à intervalle fixe. Un cron
+léger (`RunDeliverooWakeups`, chaque minute) ne traite que les comptes dont
+le réveil est échu (`ClaimDue`, bail de 5 minutes, 40 comptes et 4 traitements
+parallèles au plus). Le coût suit le besoin, pas le nombre d'établissements.
+
+| Réveil (`check_kind`) | Déclencheur | Action |
+|---|---|---|
+| `changed` | modification du catalogue (`MenuChangeNotifier.OnChange`) | alignement des disponibilités 3 s plus tard (regroupe les rafales) ; réveil de secours à 2 min si ça échoue |
+| `opening` | 5 min après le début de chaque plage d'ouverture (horaires Deliveroo, fuseau du site) | attend le statut `OPEN` (essai toutes les 10 min, 6 fois), puis aligne |
+| `recheck` | 30 min après un réveil d'ouverture | second alignement |
+| `safety` | 2 h + jusqu'à 40 min d'étalement | alignement |
+| `retry` | après un échec | nouvel essai dans 2 min |
+
+**Alignement des disponibilités** (`availability.go`) : l'état voulu est calculé
+depuis l'**état courant** de WelloResto, comparé à `GET item_unavailabilities`
+chez Deliveroo, et seule la différence est envoyée en un `POST`. Plus d'envoi par
+événement : deux changements rapprochés (« disponible » puis « épuisé » depuis
+la caisse) donnent toujours le bon état final, un envoi raté est rattrapé au
+réveil suivant, et tous les comptes Deliveroo de l'établissement sont traités
+(l'ancien code n'envoyait qu'au compte principal). Un produit retiré ou décoché
+mais encore publié est masqué en attendant la republication.
+
+**Republication automatique** : chaque modification du catalogue pose
+`menu_dirty_since`. Après 3 minutes de calme, le menu est recalculé et
+comparé à l'empreinte du dernier succès ; il n'est renvoyé que s'il a vraiment
+changé (produit retiré ou décoché, prix, nom, options…). Les changements de
+disponibilité ne font pas partie de l'empreinte. Version d'API :
+`autoPublishAPIVersion` (V1 tant que le webhook V3 n'est pas confirmé). Un
+envoi trop rapproché (1 menu/min/site) est réessayé 3 minutes plus tard. Une
+vérification sans changement n'écrit rien dans le journal.
+
+**Webhook jamais reçu** : une publication restée `processing` plus de 10 minutes
+est clôturée par le cron. Un job V3 est interrogé (`GET /jobs/{id}`) : `success`
+ou `failed`. Sinon (V1, ou job toujours en cours après 30 min), elle passe en
+`unconfirmed`, c'est-à-dire acceptée par Deliveroo mais non confirmée. Dans
+les deux cas les disponibilités sont alignées ensuite. Une publication
+`unconfirmed` ne compte pas comme dernier succès : le menu sera renvoyé, et
+Deliveroo répondra `MATCH_EXISTING_MENU` s'il est déjà en ligne.
+
+**Journal du restaurateur** : `GET /integrations/deliveroo/syncs` et panneau
+« Synchronisation du menu » de la page Deliveroo du back-office.
+
+**Limites connues** :
+- la doc Deliveroo ne dit pas ce que « quand le site ouvre » désigne (heure
+  prévue ou passage en ligne de la tablette) : le réveil d'ouverture couvre les
+  deux, plus le filet de sécurité ;
+- les options (`opt-<id>`) ne sont pas alignées : seule la disponibilité des
+  produits l'est ;
+- la lecture des horaires, du fuseau et du statut (API Site) n'a pas encore été
+  vérifiée au sandbox : en cas d'échec, seul le filet de sécurité joue.
+
+## Reste à faire
+
+1. **Forcer la mise à jour des applications POS** avant la mise en ligne : le
+   bouton « Disponibilité » envoie désormais `out_of_stock` (fait le 2026-11-04).
+2. **Choisir la V1 ou la V3 pour la production** : la doc ne dit pas
+   explicitement qu'un job V3 déclenche le webhook. À trancher d'après le journal
+   du scénario 15, puis ajuster `autoPublishAPIVersion`.
+3. **Phase Uber Eats** : brancher le catalogue commun et la même file de
+   réveils (le webhook `store.status.changed` servira de déclencheur).
+   - Règle commune proposée : `out_of_stock` = « Sold Out » sans limite de
+     durée ; `not_available` = retiré du menu publié ; ScanNOrder masquerait
+     alors `not_available`. Uber Eats n'a pas d'état « masqué » manuel
+     (`suspension_info` : « Sold Out » jusqu'à une date ; `visibility_info` :
+     créneaux horaires), ScanNOrder garde donc son comportement actuel
+     (`not_available` « Indisponible », `out_of_stock` « Épuisé ») tant que la
+     règle n'est pas validée.
+   - Corriger `ubereats.ToggleItemAvailability`, qui ne suspend que **30
+     minutes**, et le mapper Uber, qui publie `not_available` commandable.
+4. **Rejeu complet des scénarios** sans toucher au code, avant l'activation.
+5. Libellé du back-office pour `not_available` (« Masqué du menu »).
