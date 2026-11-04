@@ -37,6 +37,14 @@ const (
 	APIVersionV3 = "v3"
 )
 
+// defaultPublishAPIVersion : version d'API de la synchro du restaurateur// (bouton du back-office et republication automatique). V3 : voie que Deliveroo// annonce comme l'avenir, état du job interrogeable ; son webhook// menu.upload_result est confirmé (scénario 15, résultat en une dizaine de// secondes). Les scénarios de certification fixent leur version explicitement.const defaultPublishAPIVersion = APIVersionV3
+// defaultPublishAPIVersion : version d'API de la synchro du restaurateur
+// (bouton du back-office et republication automatique). V3 : voie que Deliveroo
+// annonce comme l'avenir, état du job interrogeable ; son webhook
+// menu.upload_result est confirmé (scénario 15, résultat en une dizaine de
+// secondes). Les scénarios de certification fixent leur version explicitement.
+const defaultPublishAPIVersion = APIVersionV3
+
 // minPublishInterval : Deliveroo limite l'envoi de menu à 1 par minute et par site.
 const minPublishInterval = time.Minute
 
@@ -58,7 +66,7 @@ type PublishOptions struct {
 	LocationID string
 	// Origin : manual, scenario_13, scenario_15... (marketplace_menu_syncs.origin).
 	Origin string
-	// APIVersion : APIVersionV1 (défaut) ou APIVersionV3.
+	// APIVersion : APIVersionV1 ou APIVersionV3 ; vide = defaultPublishAPIVersion.
 	APIVersion string
 	// Force republie même un menu identique, en y ajoutant une révision
 	// datée (scénarios de certification : ils exigent un webhook).
@@ -93,7 +101,7 @@ func (s *DeliverooService) PublishMenu(ctx context.Context, merchantID string, o
 	}
 	version := opts.APIVersion
 	if version == "" {
-		version = APIVersionV1
+		version = defaultPublishAPIVersion
 	}
 	if version != APIVersionV1 && version != APIVersionV3 {
 		return nil, fmt.Errorf("deliveroo menu: version d'API inconnue %q", version)

@@ -250,7 +250,7 @@ mais encore publié est masqué en attendant la republication.
 comparé à l'empreinte du dernier succès ; il n'est renvoyé que s'il a vraiment
 changé (produit retiré ou décoché, prix, nom, options…). Les changements de
 disponibilité ne font pas partie de l'empreinte. Version d'API :
-`autoPublishAPIVersion` (V1 tant que le webhook V3 n'est pas confirmé). Un
+`defaultPublishAPIVersion` (V3). Un
 envoi trop rapproché (1 menu/min/site) est réessayé 3 minutes plus tard. Une
 vérification sans changement n'écrit rien dans le journal.
 
@@ -278,10 +278,16 @@ Deliveroo répondra `MATCH_EXISTING_MENU` s'il est déjà en ligne.
 
 1. **Forcer la mise à jour des applications POS** avant la mise en ligne : le
    bouton « Disponibilité » envoie désormais `out_of_stock` (fait le 2026-11-04).
-2. **Choisir la V1 ou la V3 pour la production** : la doc ne dit pas
-   explicitement qu'un job V3 déclenche le webhook. À trancher d'après le journal
-   du scénario 15, puis ajuster `autoPublishAPIVersion`.
-3. **Phase Uber Eats** : brancher le catalogue commun et la même file de
+2. ~~Choisir la V1 ou la V3~~ : **V3 retenue** (2026-11-04). Le journal de
+   staging confirme que le job V3 déclenche `menu.upload_result` (résultat en
+   une dizaine de secondes, comme la V1). `defaultPublishAPIVersion` = V3 pour le
+   bouton du back-office et la republication automatique ; les scénarios 13 (V1)
+   et 15 (V3) gardent leur version explicite.
+3. **Disponibilité des options** (`TODO(options)` dans `availability.go` et
+   `marketplacecatalog/catalog.go`) : publier l'état des options (`opt-<id>`)
+   avec celui des produits, d'après `configurable_attribute_options.enabled` et
+   le stock du composant lié.
+4. **Phase Uber Eats** : brancher le catalogue commun et la même file de
    réveils (le webhook `store.status.changed` servira de déclencheur).
    - Règle commune proposée : `out_of_stock` = « Sold Out » sans limite de
      durée ; `not_available` = retiré du menu publié ; ScanNOrder masquerait
@@ -292,5 +298,5 @@ Deliveroo répondra `MATCH_EXISTING_MENU` s'il est déjà en ligne.
      règle n'est pas validée.
    - Corriger `ubereats.ToggleItemAvailability`, qui ne suspend que **30
      minutes**, et le mapper Uber, qui publie `not_available` commandable.
-4. **Rejeu complet des scénarios** sans toucher au code, avant l'activation.
-5. Libellé du back-office pour `not_available` (« Masqué du menu »).
+5. **Rejeu complet des scénarios** sans toucher au code, avant l'activation.
+6. Libellé du back-office pour `not_available` (« Masqué du menu »).

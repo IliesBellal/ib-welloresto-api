@@ -53,11 +53,6 @@ const (
 	wakeBatch       = 40
 	wakeConcurrency = 4
 	wakeTimeout     = 2 * time.Minute
-
-	// autoPublishAPIVersion : version d'API de la republication automatique.
-	// V1 : son webhook de résultat est documenté. Passer à V3 après validation
-	// du webhook V3 (scénario 15).
-	autoPublishAPIVersion = APIVersionV1
 )
 
 // syncUnconfirmed : menu accepté par Deliveroo (réponse 200 / job créé) sans
@@ -250,7 +245,7 @@ func (s *DeliverooService) autoPublish(ctx context.Context, st SyncState) {
 		return // jamais publié avec succès : la première publication reste manuelle
 	}
 
-	res, err := s.PublishMenu(ctx, st.MerchantID, PublishOptions{LocationID: st.LocationID, Origin: "auto", APIVersion: autoPublishAPIVersion})
+	res, err := s.PublishMenu(ctx, st.MerchantID, PublishOptions{LocationID: st.LocationID, Origin: "auto"})
 	switch {
 	case err == nil && res.Status == syncUnchanged:
 		return
