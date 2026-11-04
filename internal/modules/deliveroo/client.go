@@ -233,6 +233,48 @@ func (c *DeliverooClient) ReplaceUnavailabilities(ctx context.Context, brandID, 
 	return nil
 }
 
+// GetOpeningHours : horaires d'ouverture d'un site (heures locales).
+func (c *DeliverooClient) GetOpeningHours(ctx context.Context, brandID, siteID string) (OpeningHours, error) {
+	var out OpeningHoursResponse
+	if err := c.getJSON(ctx, fmt.Sprintf("%s/site/v1/brands/%s/sites/%s/opening_hours", c.config.BaseURL, url.PathEscape(brandID), url.PathEscape(siteID)), &out); err != nil {
+		return nil, err
+	}
+	return out.OpeningHours, nil
+}
+
+// GetTimeZone : fuseau horaire IANA d'un site (« Europe/Paris »).
+func (c *DeliverooClient) GetTimeZone(ctx context.Context, brandID, siteID string) (string, error) {
+	var out TimeZoneResponse
+	if err := c.getJSON(ctx, fmt.Sprintf("%s/site/v1/brands/%s/sites/%s/time_zone", c.config.BaseURL, url.PathEscape(brandID), url.PathEscape(siteID)), &out); err != nil {
+		return "", err
+	}
+	return out.TimeZone, nil
+}
+
+// GetSiteStatus : OPEN, CLOSED ou READY_TO_OPEN.
+func (c *DeliverooClient) GetSiteStatus(ctx context.Context, brandID, siteID string) (string, error) {
+	var out SiteStatusResponse
+	if err := c.getJSON(ctx, fmt.Sprintf("%s/site/v1/brands/%s/sites/%s/status", c.config.BaseURL, url.PathEscape(brandID), url.PathEscape(siteID)), &out); err != nil {
+		return "", err
+	}
+	return out.Status, nil
+}
+
+func (c *DeliverooClient) getJSON(ctx context.Context, urlPath string, out any) error {
+	resp, err := c.doRequest(ctx, "GET", urlPath, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return c.handleError(resp)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return fmt.Errorf("deliveroo: réponse illisible: %w", err)
+	}
+	return nil
+}
+
 // UpdateSiteWorkloadMode sets the current workload mode for a site.
 func (c *DeliverooClient) UpdateSiteWorkloadMode(ctx context.Context, brandID, siteID, mode string) error {
 	url := fmt.Sprintf("%s/site/v1/brands/%s/sites/%s/workload/mode", c.config.BaseURL, url.PathEscape(brandID), url.PathEscape(siteID))
