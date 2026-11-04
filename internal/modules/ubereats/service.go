@@ -704,60 +704,6 @@ func (s *UberEatsService) CloseStoreTemporary(ctx context.Context, merchantID, s
 	return nil
 }
 
-// ToggleItemAvailability active ou désactive un produit. storeID vide cible le
-// compte "principal" du marchand (comportement historique, identique pour un
-// marchand mono-compte) ; storeID renseigné cible ce compte précis.
-func (s *UberEatsService) ToggleItemAvailability(ctx context.Context, merchantID, storeID, itemID string, available bool) error {
-	// Récup Store ID, BasicAuth et Timezone
-	store, err := s.repo.GetStoreInfoForMenu(ctx, merchantID, storeID)
-	if err != nil {
-		return err
-	}
-
-	// Note: Ici j'utilise le token brut de la BDD comme ton PHP ("bearer_token is not null").
-	// Idéalement on utiliserait GetValidToken(tx) pour rafraîchir si besoin.
-
-	token, err := s.GetValidToken(ctx)
-
-	var suspendTimestamp *int64
-
-	// Si available == false (donc "0" en PHP), on suspend pour 30 min
-	if !available {
-		loc, err := time.LoadLocation(store.Timezone)
-		if err != nil {
-			loc = time.UTC
-		}
-
-		ts := time.Now().In(loc).Add(30 * time.Minute).Unix()
-		suspendTimestamp = &ts
-	}
-
-	// Construction Payload complexe
-	suspensionDetail := SuspensionDetail{
-		SuspendUntil: suspendTimestamp,
-		Reason:       "Sold out",
-	}
-
-	req := UberItemSuspensionRequest{
-		SuspensionInfo: SuspensionInfo{
-			Suspension: suspensionDetail,
-			Overrides: []OverrideContext{
-				{
-					ContextType:  "MODIFIER_GROUP",
-					ContextValue: itemID,
-					Suspension:   suspensionDetail,
-				},
-			},
-		},
-	}
-
-	if err := s.client.UpdateItemState(ctx, store.StoreID, itemID, token, req); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 // GetMenu wrapper simple. storeID vide cible le compte "principal" du
 // marchand (comportement historique, identique pour un marchand mono-compte) ;
 // storeID renseigné cible ce compte précis.
@@ -772,22 +718,4 @@ func (s *UberEatsService) GetMenu(ctx context.Context, merchantID, storeID strin
 	}
 
 	return s.client.GetMenu(store.StoreID, token)
-}
-
-// SyncMenu pousse un menu interne vers l'API Uber Eats. storeID vide cible le
-// compte "principal" du marchand (comportement historique, identique pour un
-// marchand mono-compte) ; storeID renseigné cible ce compte précis - c'est ce
-// qui permet de choisir quel compte Uber Eats synchroniser.
-func (s *UberEatsService) SyncMenu(ctx context.Context, merchantID, storeID string, menu interface{}) error {
-	store, err := s.resolveStore(ctx, merchantID, storeID)
-	if err != nil {
-		return err
-	}
-
-	token, err := s.GetValidToken(ctx)
-	if err != nil {
-		return err
-	}
-
-	return s.client.SyncMenu(ctx, store.StoreID, token, menu)
 }

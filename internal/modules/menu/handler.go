@@ -11,6 +11,8 @@ import (
 	"time"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/modules/deliveroo"
+	"welloresto-api/internal/modules/marketplacecatalog"
+	"welloresto-api/internal/modules/ubereats"
 	"welloresto-api/internal/infrastructure/r2"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
@@ -1842,10 +1844,11 @@ func (h *MenuHandler) GetUberEatsMenu(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "menu", "get_ubereats_menu", menu)
 }
 
-// SyncUberEatsMenu synchronise le menu interne vers l'API Uber Eats. store_id
-// optionnel en query string choisit le compte Uber Eats à synchroniser ;
-// absent, synchronise le compte "principal" du marchand (comportement
-// historique, identique pour un marchand mono-compte).
+// SyncUberEatsMenu publie le menu WelloResto sur Uber Eats. store_id optionnel
+// en query string choisit le compte Uber Eats à synchroniser ; absent,
+// synchronise le compte "principal" du marchand. Le premier envoi d'un compte
+// remplace le menu actuel d'Uber Eats : sans confirm_replace=true, la réponse est
+// 409 confirmation_required.
 func (h *MenuHandler) SyncUberEatsMenu(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {
@@ -1856,14 +1859,35 @@ func (h *MenuHandler) SyncUberEatsMenu(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
 	storeID := r.URL.Query().Get("store_id")
+	confirm := r.URL.Query().Get("confirm_replace") == "true"
 
-	if err := h.service.SyncUberEatsMenu(ctx, token, storeID); err != nil {
-		log.Error("[ERROR] SyncUberEatsMenu error " + err.Error())
-		models.SendErrorJSON(w, "menu", "sync_ubereats_menu", err)
+	result, err := h.service.SyncUberEatsMenu(ctx, token, storeID, confirm)
+	if err != nil {
+		switch {
+		case errors.Is(err, ubereats.ErrConfirmationRequired):
+			models.SendJSON(w, http.StatusConflict, "menu", "sync_ubereats_menu", map[string]string{"error": "confirmation_required"})
+		case errors.Is(err, ubereats.ErrNoOpeningHours):
+			models.SendJSON(w, http.StatusUnprocessableEntity, "menu", "sync_ubereats_menu", map[string]string{"error": "no_opening_hours", "message": ubereats.UserMessage(err)})
+		case errors.Is(err, ubereats.ErrNothingPublishable), errors.Is(err, marketplacecatalog.ErrNothingToPublish):
+			models.SendJSON(w, http.StatusUnprocessableEntity, "menu", "sync_ubereats_menu", map[string]string{"error": "nothing_to_publish", "message": ubereats.UserMessage(err)})
+		case errors.Is(err, ubereats.ErrNoAccount):
+			models.SendJSON(w, http.StatusNotFound, "menu", "sync_ubereats_menu", map[string]string{"error": "no_account", "message": ubereats.UserMessage(err)})
+		default:
+			log.Error("[ERROR] SyncUberEatsMenu error " + err.Error())
+			models.SendErrorJSON(w, "menu", "sync_ubereats_menu", err)
+		}
 		return
 	}
 
-	models.SendJSON(w, http.StatusOK, "menu", "sync_ubereats_menu", map[string]string{"status": "success", "message": "menu synced to uber eats"})
+	// status/message conservés pour le back-office ; sync_status : success ou unchanged.
+	models.SendJSON(w, http.StatusOK, "menu", "sync_ubereats_menu", map[string]any{
+		"status":      "success",
+		"message":     "menu sent to uber eats",
+		"sync_status": result.Status,
+		"sync_id":     result.SyncID,
+		"item_count":  result.ItemCount,
+		"warnings":    result.Warnings,
+	})
 }
 
 // SyncProductAllergens — PUT /menu/product/:product_id/allergens

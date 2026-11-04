@@ -344,6 +344,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// disponibilités (docs/deliveroo-menu-sync.md) ; sans effet pour un
 	// établissement sans Deliveroo.
 	menuChanges.OnChange(deliverooService.OnMenuChanged)
+	// Idem pour Uber Eats (docs/ubereats-menu-sync.md) : ruptures alignées depuis
+	// l'état courant de WelloResto, menu modifié republié après quelques minutes.
+	uberService.SetMenuPublishing(menuRepoLegacy)
+	menuChanges.OnChange(uberService.OnMenuChanged)
 	menuService := menuModule.NewMenuService(menuRepoLegacy, deliverooService, uberService, menuChanges, posAccountingRepo, allergensRepo)
 
 	// ---- Translation ----
@@ -820,6 +824,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	)
 	taskManager.AccountingSyncService = accountingSyncService
 	taskManager.DeliverooService = deliverooService
+	taskManager.UberEatsService = uberService
 	accountingSyncH := accountingSyncModule.NewHandler(accountingSyncService, cfg.Accounting.ReturnURL)
 
 	// Attestations individuelles de l'éditeur (conformité caisse lot F).
@@ -2159,6 +2164,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 
 			r.Get("/uber-eats", integrationsHandler.GetUberEats)
 			r.Get("/uber-eats/accounts", integrationsHandler.ListUberEatsAccounts)
+			r.Get("/uber-eats/syncs", uberHandler.ListMenuSyncs)
 			r.Get("/deliveroo", integrationsHandler.GetDeliveroo)
 			r.Get("/deliveroo/accounts", integrationsHandler.ListDeliverooAccounts)
 			r.Get("/deliveroo/syncs", deliverooHandler.ListMenuSyncs)

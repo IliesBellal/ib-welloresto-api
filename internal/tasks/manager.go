@@ -14,6 +14,7 @@ import (
 	payoutsModule "welloresto-api/internal/modules/payouts"
 	accountingSyncModule "welloresto-api/internal/modules/accountingsync"
 	deliverooModule "welloresto-api/internal/modules/deliveroo"
+	ubereatsModule "welloresto-api/internal/modules/ubereats"
 	subscriptionInvoicesModule "welloresto-api/internal/modules/subscriptioninvoices"
 	subscriptionsModule "welloresto-api/internal/modules/subscriptions"
 	upsellModule "welloresto-api/internal/modules/upsell"
@@ -49,6 +50,9 @@ type TasksManager struct {
 	// DeliverooService — réveils par compte (RunDeliverooWakeups). Nil tant que
 	// SetupRoutes ne l'a pas branché.
 	DeliverooService *deliverooModule.DeliverooService
+	// UberEatsService — réveils par compte (RunUberEatsWakeups). Nil tant que
+	// SetupRoutes ne l'a pas branché.
+	UberEatsService *ubereatsModule.UberEatsService
 	Logger        *zap.Logger
 }
 

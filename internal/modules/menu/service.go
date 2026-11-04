@@ -7,18 +7,12 @@ import (
 	"strings"
 	"time"
 	"welloresto-api/internal/helpers"
-	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/deliveroo"
 	"welloresto-api/internal/modules/onboarding"
 	"welloresto-api/internal/modules/pos/accounting"
 	"welloresto-api/internal/modules/ubereats"
-)
-
-const (
-	defaultExternalStatusSyncTimeout  = 8 * time.Second
-	defaultExternalStatusSyncParallel = 64
 )
 
 // merchantHeaderProvider est le sous-ensemble de accounting.AccountingRepository utilisé par ce
@@ -42,9 +36,6 @@ type MenuService struct {
 	merchantHeader   merchantHeaderProvider
 	allergensCatalog allergenCatalogProvider
 
-	statusSyncTimeout time.Duration
-	statusSyncSem     chan struct{}
-
 	onboarding *onboarding.Service
 }
 
@@ -58,14 +49,12 @@ func (s *MenuService) SetOnboardingService(o *onboarding.Service) {
 
 func NewMenuService(legacy *MenuRepository, deliverooSvc *deliveroo.DeliverooService, uberSvc *ubereats.UberEatsService, changes *MenuChangeNotifier, merchantHeader merchantHeaderProvider, allergensCatalog allergenCatalogProvider) *MenuService {
 	return &MenuService{
-		legacy:            legacy,
-		deliveroo:         deliverooSvc,
-		uber:              uberSvc,
-		changes:           changes,
-		merchantHeader:    merchantHeader,
-		allergensCatalog:  allergensCatalog,
-		statusSyncTimeout: defaultExternalStatusSyncTimeout,
-		statusSyncSem:     make(chan struct{}, defaultExternalStatusSyncParallel),
+		legacy:           legacy,
+		deliveroo:        deliverooSvc,
+		uber:             uberSvc,
+		changes:          changes,
+		merchantHeader:   merchantHeader,
+		allergensCatalog: allergensCatalog,
 	}
 }
 
@@ -475,8 +464,9 @@ func (s *MenuService) SetProductStatus(ctx context.Context, token, pid, status s
 	}
 
 	if updated > 0 {
+		// Deliveroo et Uber Eats alignent leurs disponibilités depuis onMenuChanged
+		// (état courant de WelloResto, pas l'événement).
 		s.onMenuChanged(ctx, user.MerchantID)
-		s.enqueueProductStatusSync(ctx, user.MerchantID, pid, status)
 	}
 
 	return updated, nil
@@ -499,9 +489,6 @@ func (s *MenuService) BulkSetProductsStatus(ctx context.Context, token string, p
 
 	if updated > 0 {
 		s.onMenuChanged(ctx, user.MerchantID)
-		for _, productID := range productIDs {
-			s.enqueueProductStatusSync(ctx, user.MerchantID, productID, status)
-		}
 	}
 
 	return updated, nil
@@ -635,63 +622,6 @@ func (s *MenuService) BulkSetProductsAvailability(ctx context.Context, token str
 	}
 
 	return updated, nil
-}
-
-func (s *MenuService) enqueueProductStatusSync(ctx context.Context, merchantID, productID, status string) {
-	available, shouldSync := mapWelloStatusToAvailability(status)
-	if !shouldSync {
-		return
-	}
-
-	log := logger.FromContext(ctx)
-
-	select {
-	case s.statusSyncSem <- struct{}{}:
-	default:
-		log.Warn("[WARN] enqueueProductStatusSync dropped due to full async queue")
-		return
-	}
-
-	go func() {
-		defer func() {
-			if rec := recover(); rec != nil {
-				log.Error(fmt.Sprintf("[ERROR] panic in product status external sync: %v", rec))
-			}
-			<-s.statusSyncSem
-		}()
-
-		taskCtx, cancel := context.WithTimeout(context.Background(), s.statusSyncTimeout)
-		defer cancel()
-
-		// Deliveroo n'est plus traité ici : chaque changement de statut passe par
-		// onMenuChanged, qui aligne les disponibilités depuis l'état courant de
-		// WelloResto (deliveroo.OnMenuChanged), sans dépendre de l'ordre des
-		// événements. Uber Eats reste envoyé par événement, en attendant sa
-		// phase (docs/deliveroo-menu-sync.md).
-		if s.uber == nil {
-			log.Warn("[WARN] UberEats client not initialized, skipping status sync for UberEats")
-			return
-		}
-		if err := s.uber.ToggleItemAvailability(taskCtx, merchantID, "", productID, available); err != nil {
-			log.Warn("[WARN] Uber status sync failed: " + err.Error())
-		}
-	}()
-}
-
-func mapWelloStatusToAvailability(status string) (bool, bool) {
-	v := strings.ToLower(strings.TrimSpace(status))
-
-	switch v {
-	case "1", "true", "available":
-		return true, true
-	// "not_available" est la valeur effectivement envoyée par le toggle POS
-	// (menu_api.dart) — son absence ici sautait silencieusement la sync
-	// Uber Eats/Deliveroo quand un produit était désactivé depuis le POS.
-	case "0", "false", "out_of_stock", "unavailable", "not_available":
-		return false, true
-	default:
-		return false, false
-	}
 }
 
 func (s *MenuService) SetProductCategoryAvailability(ctx context.Context, token, categoryID, status string) (int64, error) {
@@ -965,27 +895,20 @@ func (s *MenuService) GetUberEatsMenu(ctx context.Context, token, storeID string
 	return s.uber.GetMenu(ctx, user.MerchantID, storeID)
 }
 
-// SyncUberEatsMenu synchronise le menu interne vers l'API Uber Eats. storeID
-// vide cible le compte "principal" du marchand (comportement historique,
-// identique pour un marchand mono-compte) ; storeID renseigné cible ce compte
-// précis - c'est ce qui permet de choisir quel compte Uber Eats synchroniser.
-func (s *MenuService) SyncUberEatsMenu(ctx context.Context, token, storeID string) error {
+// SyncUberEatsMenu publie le menu WelloResto sur Uber Eats (voir
+// docs/ubereats-menu-sync.md). storeID vide cible le compte "principal" du
+// marchand ; storeID renseigné cible ce compte précis. Le premier envoi d'un
+// compte REMPLACE le menu actuel d'Uber Eats : il exige confirmReplace.
+func (s *MenuService) SyncUberEatsMenu(ctx context.Context, token, storeID string, confirmReplace bool) (*ubereats.PublishResult, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-
-	internalMenu, err := s.legacy.GetMenuWithMarketingCategories(ctx, user.MerchantID)
-	if err != nil {
-		return err
-	}
-
-	uberMenu, err := ToUberEatsFormat(internalMenu)
-	if err != nil {
-		return fmt.Errorf("menu sync ubereats: mapping failed: %w", err)
-	}
-
-	return s.uber.SyncMenu(ctx, user.MerchantID, storeID, uberMenu)
+	return s.uber.PublishMenu(ctx, user.MerchantID, ubereats.PublishOptions{
+		StoreID:        storeID,
+		Origin:         "manual",
+		ConfirmReplace: confirmReplace,
+	})
 }
 
 func (s *MenuService) CreateProductFromExternal(ctx context.Context, merchantID, title, description string, amount int, alcohol bool) (*string, error) {

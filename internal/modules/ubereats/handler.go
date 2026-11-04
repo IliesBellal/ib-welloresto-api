@@ -2,6 +2,7 @@ package ubereats
 
 import (
 	"net/http"
+	"strconv"
 	"welloresto-api/internal/middleware" // Pour récupérer le MerchantID
 	"welloresto-api/internal/models"     // Pour SendJSON (ton helper de réponse)
 )
@@ -61,4 +62,18 @@ func (h *UberHandler) Disconnect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	models.SendJSON(w, http.StatusOK, "uber", "disconnect", map[string]string{"status": "disconnected"})
+}
+
+// ListMenuSyncs : GET /integrations/uber-eats/syncs?store_id=&limit=
+// Dernières publications du menu de l'établissement connecté.
+func (h *UberHandler) ListMenuSyncs(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+
+	syncs, err := h.svc.ListMenuSyncs(r.Context(), user.MerchantID, r.URL.Query().Get("store_id"), limit)
+	if err != nil {
+		models.SendErrorJSON(w, "integrations", "list_uber_eats_syncs", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "integrations", "list_uber_eats_syncs", map[string]any{"syncs": syncs})
 }

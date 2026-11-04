@@ -283,3 +283,9 @@ func nonEmpty(v, fallback string) string {
 	}
 	return v
 }
+
+// ListMenuSyncs : journal des publications de menu de l'établissement
+// (écran « Synchronisation » du back-office).
+func (s *UberEatsService) ListMenuSyncs(ctx context.Context, merchantID, storeID string, limit int) ([]SyncSummary, error) {
+	return s.repo.ListSyncs(ctx, merchantID, storeID, limit)
+}

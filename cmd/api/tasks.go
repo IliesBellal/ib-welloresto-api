@@ -105,6 +105,9 @@ func SetupTasks(
 	// modifié, alignement des disponibilités (docs/deliveroo-menu-sync.md).
 	// Chaque passage ne traite que les comptes dont le réveil est échu.
 	add("@every 1m", taskManager.RunDeliverooWakeups)
+	// Réveils par compte Uber Eats : republication du menu modifié, alignement
+	// des disponibilités, filet de sécurité (docs/ubereats-menu-sync.md).
+	add("@every 1m", taskManager.RunUberEatsWakeups)
 
 	// ── Justificatifs de versement ───────────────────────────────────────────
 	// Relevé de versement + facture de commission de chaque payout Stripe payé

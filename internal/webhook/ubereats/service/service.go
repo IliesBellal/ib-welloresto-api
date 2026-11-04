@@ -145,6 +145,15 @@ func (s *Service) dispatchEvent(ctx context.Context, event modelsUber.UberWebhoo
 		// return s.HandleStoreStatusChanged(ctx, event.Meta.ResourceID, event.Meta.Status)
 		return nil
 
+	case "store.menu_refresh_request":
+		// Uber Eats demande à revoir le menu : il est renvoyé au prochain tour de
+		// réveils (jamais ici, le webhook doit répondre vite).
+		log.Info("Menu refresh requested for store " + event.Meta.ResourceID)
+		if err := s.uberClient.RequestMenuRefresh(ctx, event.Meta.ResourceID); err != nil {
+			log.Error("[UBER EATS] menu refresh request not scheduled: " + err.Error())
+		}
+		return nil
+
 	case "delivery.state_changed", "delivery.status":
 		log.Info("Delivery status update for store " + event.Meta.ResourceID + " - " + event.Meta.UserID + " - New status: " + event.Meta.Status)
 		return s.HandleDeliveryStatus(ctx, event.Meta.OrderID, event.Meta.Status)
