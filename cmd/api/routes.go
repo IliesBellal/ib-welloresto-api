@@ -2161,6 +2161,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			r.Get("/uber-eats/accounts", integrationsHandler.ListUberEatsAccounts)
 			r.Get("/deliveroo", integrationsHandler.GetDeliveroo)
 			r.Get("/deliveroo/accounts", integrationsHandler.ListDeliverooAccounts)
+			r.Get("/deliveroo/syncs", deliverooHandler.ListMenuSyncs)
 			r.Get("/scannorder", integrationsHandler.GetScanNOrder)
 			r.Get("/stripe/status", integrationsHandler.GetStripeStatus)
 			r.Get("/stripe/bank-accounts", integrationsHandler.GetStripeBankAccounts)

@@ -321,3 +321,64 @@ func mappingItemName(name string) string {
 func reachedPlatform(status string, httpStatus int) bool {
 	return status != syncFailed || httpStatus != 0
 }
+
+// SyncSummary est une ligne du journal telle qu'affichée au restaurateur.
+type SyncSummary struct {
+	ID                 int64           `json:"id"`
+	LocationID         string          `json:"location_id"`
+	Origin             string          `json:"origin"`
+	APIVersion         string          `json:"api_version"`
+	Status             string          `json:"status"`
+	ItemCount          int             `json:"item_count"`
+	HTTPStatus         *int            `json:"http_status,omitempty"`
+	Error              string          `json:"error,omitempty"`
+	Warnings           json.RawMessage `json:"warnings,omitempty"`
+	UploadErrors       json.RawMessage `json:"upload_errors,omitempty"`
+	AvailabilityStatus string          `json:"availability_status,omitempty"`
+	AvailabilityError  string          `json:"availability_error,omitempty"`
+	CreatedAt          time.Time       `json:"created_at"`
+	FinishedAt         *time.Time      `json:"finished_at,omitempty"`
+}
+
+// ListSyncs renvoie les dernières publications de l'établissement, de la plus
+// récente à la plus ancienne. locationID vide = tous ses comptes Deliveroo.
+func (r *DeliverooRepository) ListSyncs(ctx context.Context, merchantID, locationID string, limit int) ([]SyncSummary, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	db := dbx.GetDB(ctx, r.database)
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, location_id, origin, api_version, status, item_count, http_status,
+		       COALESCE(error, ''), warnings, upload_errors,
+		       COALESCE(availability_status, ''), COALESCE(availability_error, ''), created_at, finished_at
+		FROM marketplace_menu_syncs
+		WHERE platform = ? AND merchant_id = ? AND (? = '' OR location_id = ?)
+		ORDER BY id DESC LIMIT ?`, platformDeliveroo, merchantID, locationID, locationID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []SyncSummary{}
+	for rows.Next() {
+		var s SyncSummary
+		var httpStatus sql.NullInt64
+		var finished sql.NullTime
+		var warnings, uploadErrors []byte
+		if err := rows.Scan(&s.ID, &s.LocationID, &s.Origin, &s.APIVersion, &s.Status, &s.ItemCount, &httpStatus,
+			&s.Error, &warnings, &uploadErrors, &s.AvailabilityStatus, &s.AvailabilityError, &s.CreatedAt, &finished); err != nil {
+			return nil, err
+		}
+		if httpStatus.Valid {
+			v := int(httpStatus.Int64)
+			s.HTTPStatus = &v
+		}
+		if finished.Valid {
+			t := finished.Time
+			s.FinishedAt = &t
+		}
+		s.Warnings, s.UploadErrors = warnings, uploadErrors
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}

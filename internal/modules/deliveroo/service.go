@@ -664,3 +664,9 @@ func (s *DeliverooService) RunScenario17(ctx context.Context, merchantID, menuID
 
 	return downloadURL, nil
 }
+
+// ListMenuSyncs : journal des publications de menu de l'établissement
+// (écran « Synchronisation » du back-office).
+func (s *DeliverooService) ListMenuSyncs(ctx context.Context, merchantID, locationID string, limit int) ([]SyncSummary, error) {
+	return s.repo.ListSyncs(ctx, merchantID, locationID, limit)
+}

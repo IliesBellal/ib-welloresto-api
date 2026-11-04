@@ -4,6 +4,10 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
+
+	"welloresto-api/internal/middleware"
+	"welloresto-api/internal/models"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -251,4 +255,18 @@ func (h *DeliverooHandler) HandleScenario17(w http.ResponseWriter, r *http.Reque
 		"status":       "Success",
 		"download_url": downloadURL,
 	})
+}
+
+// ListMenuSyncs : GET /integrations/deliveroo/syncs?location_id=&limit=
+// Dernières publications du menu de l'établissement connecté.
+func (h *DeliverooHandler) ListMenuSyncs(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+
+	syncs, err := h.service.ListMenuSyncs(r.Context(), user.MerchantID, r.URL.Query().Get("location_id"), limit)
+	if err != nil {
+		models.SendErrorJSON(w, "integrations", "list_deliveroo_syncs", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "integrations", "list_deliveroo_syncs", map[string]any{"syncs": syncs})
 }
