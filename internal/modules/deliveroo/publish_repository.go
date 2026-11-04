@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/modules/marketplacecatalog"
 	"welloresto-api/internal/utils/dbutils"
 )
@@ -163,10 +164,10 @@ func (r *DeliverooRepository) MarkSyncSent(ctx context.Context, id int64, status
 	_, err = db.ExecContext(ctx, `
 		UPDATE marketplace_menu_syncs
 		SET status = ?, http_status = ?, job_id = NULLIF(?, ''), warnings = ?::jsonb, error = NULLIF(?, ''),
-		    sent_at = now(),
+		    sent_at = CASE WHEN ? THEN now() ELSE sent_at END,
 		    finished_at = CASE WHEN ? IN ('success', 'failed') THEN now() ELSE finished_at END
 		WHERE id = ? AND status = 'sending'`,
-		status, nullableInt(httpStatus), jobID, w, errText, status, id)
+		status, nullableInt(httpStatus), jobID, w, errText, reachedPlatform(status, httpStatus), status, id)
 	return err
 }
 
@@ -262,7 +263,7 @@ func (r *DeliverooRepository) UpsertPublishedMappings(ctx context.Context, merch
 				VALUES (?, ?, ?, ?, ?, true)
 				ON CONFLICT (item_id, product_id, merchant_id)
 				DO UPDATE SET item_name = EXCLUDED.item_name, location_id = EXCLUDED.location_id, enabled = true, deletion_date = NULL`,
-				productID, name, productID, merchantID, locationID); err != nil {
+				productID, mappingItemName(name), productID, merchantID, locationID); err != nil {
 				return err
 			}
 		}
@@ -303,4 +304,20 @@ func nullableInt(v int) any {
 		return nil
 	}
 	return v
+}
+
+// maxMappingItemNameRunes : taille de integration_deliveroo_products_mapping.item_name
+// (varchar(50)). Un nom plus long est tronqué dans la table ; le document
+// publié, lui, garde le nom complet.
+const maxMappingItemNameRunes = 50
+
+func mappingItemName(name string) string {
+	return helpers.TruncateRunes(name, maxMappingItemNameRunes)
+}
+
+// reachedPlatform dit si l'envoi compte pour la limite d'un menu par minute :
+// un échec avant tout appel à Deliveroo (correspondances, URL présignée, dépôt
+// S3, création du job : httpStatus 0) ne doit pas bloquer la nouvelle tentative.
+func reachedPlatform(status string, httpStatus int) bool {
+	return status != syncFailed || httpStatus != 0
 }

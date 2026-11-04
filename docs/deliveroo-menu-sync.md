@@ -115,6 +115,10 @@ nouveau produit.** Avant chaque envoi, la publication écrit donc :
 - `integration_deliveroo_options_mapping` (item_id = `opt-<id>` → option),
   par upsert sur la clé unique `(merchant_id, item_id)`.
 
+`item_name` est limité à 50 caractères (varchar(50)) : le nom y est tronqué,
+le document publié garde le nom complet. Cette troncature manquait au premier
+essai du scénario 13 (produit de 54 caractères), qui échouait avant tout envoi.
+
 Les deux valeurs (id d'article et PLU) étant identiques, la correspondance
 fonctionne que Deliveroo renvoie l'un ou l'autre dans `pos_item_id`.
 
@@ -130,7 +134,8 @@ Une ligne par tentative. `status` vaut `sending`, `processing`, `success`,
 succès.
 
 Garde-fous :
-- un envoi par minute et par site au maximum (limite Deliveroo). Sinon
+- un envoi par minute et par site au maximum (limite Deliveroo) ; un échec
+  avant tout appel à Deliveroo ne compte pas, on peut réessayer tout de suite. Sinon
   `ErrPublishTooSoon`, et HTTP 429 sur les routes ;
 - un webhook arrivé avant l'enregistrement de la réponse à l'envoi n'est pas
   écrasé (`MarkSyncSent` ne touche qu'une ligne encore en `sending`).

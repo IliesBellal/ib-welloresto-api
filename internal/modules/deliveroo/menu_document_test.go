@@ -210,3 +210,32 @@ func TestRenderCovers_Are1920x1080JPEG(t *testing.T) {
 		t.Errorf("couverture par défaut = %v, want 1920x1080", got)
 	}
 }
+
+func TestMappingItemName_FitsVarchar50(t *testing.T) {
+	long := strings.Repeat("é", 54) // 54 caractères, 108 octets
+	got := mappingItemName(long)
+	if n := len([]rune(got)); n != 50 {
+		t.Errorf("longueur = %d, want 50", n)
+	}
+	if mappingItemName("Pizza") != "Pizza" {
+		t.Error("un nom court ne doit pas changer")
+	}
+}
+
+func TestReachedPlatform(t *testing.T) {
+	cases := []struct {
+		status string
+		http   int
+		want   bool
+	}{
+		{syncFailed, 0, false},  // échec avant tout appel : on peut réessayer tout de suite
+		{syncFailed, 429, true}, // refus de Deliveroo : l'envoi a bien eu lieu
+		{syncProcessing, 200, true},
+		{syncSuccess, 200, true},
+	}
+	for _, c := range cases {
+		if got := reachedPlatform(c.status, c.http); got != c.want {
+			t.Errorf("reachedPlatform(%s, %d) = %v, want %v", c.status, c.http, got, c.want)
+		}
+	}
+}
