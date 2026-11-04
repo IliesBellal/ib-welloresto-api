@@ -23,6 +23,11 @@ type UberEatsService struct {
 	config       ConfigUberEats
 	redis        *redis.Client // Optionnel, pour le caching
 	saleReceipts SaleReceiptIssuer
+
+	// Publication du menu (menu_publish.go, menu_availability.go).
+	menuLoader MenuLoader
+	locks      accountLocks
+	avail      uberRunner
 }
 
 // SaleReceiptIssuer émet le ticket fiscal d'une vente clôturée
