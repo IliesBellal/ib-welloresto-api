@@ -55,7 +55,10 @@ Fichiers :
 - **TVA** : le vrai taux **livraison** du produit (`tva_delivery_id`), en
   pourcentage (`"10"`, `"5.5"`, `"20"`). Il n'est jamais déduit de l'alcool.
 - **Alcool** : `products.contains_alcohol`, saisi par le restaurateur, sans
-  détection automatique. Le bouton du back-office reste à faire.
+  détection automatique. Il est visible et modifiable uniquement dans la fiche
+  produit du back-office (onglet Général). L'API le renvoie dans
+  `GET /menu/products/{id}` et l'accepte en option dans `PATCH` et en
+  création : une requête à part, exécutée seulement quand le champ est envoyé.
 - **Identifiants** :
   - article = identifiant produit, PLU identique ;
   - option = `opt-<id>`, PLU identique ;
@@ -211,9 +214,9 @@ définitif est dans le journal.
 
 ## Reste à faire (étape 5)
 
-1. Application POS : le bouton « Disponibilité » envoie `out_of_stock` au lieu
-   de `not_available` (`menu_api.dart`, `welloresto_menu_controller.dart`).
-   Mise à jour forcée des applications avant la mise en ligne.
+1. ~~Application POS~~ : fait le 2026-11-04. Le bouton « Disponibilité »
+   envoie `out_of_stock`. Reste à forcer la mise à jour des applications avant
+   la mise en ligne.
 2. Mise en rupture immédiate : `ToggleItemAvailability` envoie encore
    `unavailable` pour `not_available`. Il faut passer au trio
    available/unavailable/hidden, et calculer l'envoi depuis l'**état courant**
@@ -230,9 +233,16 @@ définitif est dans le journal.
    déclencheur.
 4. Republication automatique quand l'empreinte du menu change (produit retiré,
    prix, nom…), après quelques minutes de calme.
-5. ScanNOrder : masquer `not_available`, seulement après avoir vérifié qu'il
-   n'y a pas de régression et qu'Uber Eats se comporte de la même façon (sinon
-   on garde le comportement actuel).
+5. ~~ScanNOrder : masquer `not_available`~~ : **non retenu** (vérifié le
+   2026-11-04). Uber Eats n'a pas le même comportement que Deliveroo : sa
+   documentation ne prévoit qu'un état manuel « Sold Out » (`suspension_info`,
+   jusqu'à une date) et des créneaux de visibilité horaires (`visibility_info`),
+   aucun « masqué » manuel. ScanNOrder garde donc son comportement :
+   `not_available` affiché grisé « Indisponible », `out_of_stock` « Épuisé ».
+   Pour Uber Eats, `not_available` devra être traduit soit par une suspension
+   longue, soit par un retrait du menu publié. À noter aussi :
+   `ubereats.ToggleItemAvailability` ne suspend aujourd'hui que **30 minutes**.
 6. Choisir la V1 ou la V3 pour la production une fois le scénario 15 validé
    (la doc ne dit pas explicitement qu'un job V3 déclenche le webhook).
-7. Back-office : bouton « contient de l'alcool » et affichage du journal.
+7. Back-office : ~~case « Alcool »~~ (fait le 2026-11-04) ; reste l'affichage
+   du journal.
