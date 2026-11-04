@@ -871,14 +871,15 @@ func (s *MenuService) GetDeliverooMenu(ctx context.Context, token, locationID st
 // docs/deliveroo-menu-sync.md). locationID vide cible le compte "principal"
 // du marchand ; locationID renseigné cible ce compte précis. Le résultat final
 // arrive par webhook : le statut renvoyé est en général "processing".
-func (s *MenuService) SyncDeliverooMenu(ctx context.Context, token, locationID string) (*deliveroo.PublishResult, error) {
+func (s *MenuService) SyncDeliverooMenu(ctx context.Context, token, locationID string, confirmReplace bool) (*deliveroo.PublishResult, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return s.deliveroo.PublishMenu(ctx, user.MerchantID, deliveroo.PublishOptions{
-		LocationID: locationID,
-		Origin:     "manual",
+		LocationID:     locationID,
+		Origin:         "manual",
+		ConfirmReplace: confirmReplace,
 	})
 }
 

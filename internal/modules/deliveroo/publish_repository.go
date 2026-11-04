@@ -124,6 +124,18 @@ func (r *DeliverooRepository) LastSuccessfulFingerprint(ctx context.Context, mer
 	return fp.String, nil
 }
 
+// HasPublished : ce compte a-t-il déjà reçu un menu de WelloResto (publication
+// réussie, en cours ou non confirmée) ?
+func (r *DeliverooRepository) HasPublished(ctx context.Context, merchantID, locationID string) (bool, error) {
+	db := dbx.GetDB(ctx, r.database)
+	var n int
+	err := db.QueryRowContext(ctx, `
+		SELECT count(*) FROM marketplace_menu_syncs
+		WHERE platform = ? AND merchant_id = ? AND location_id = ? AND status IN ('success', 'processing', 'unconfirmed')`,
+		platformDeliveroo, merchantID, locationID).Scan(&n)
+	return n > 0, err
+}
+
 // LastSentAt : date du dernier envoi à Deliveroo pour ce compte (zéro si aucun).
 func (r *DeliverooRepository) LastSentAt(ctx context.Context, merchantID, locationID string) (time.Time, error) {
 	db := dbx.GetDB(ctx, r.database)

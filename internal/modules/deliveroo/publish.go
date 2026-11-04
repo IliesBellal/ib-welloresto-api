@@ -54,6 +54,10 @@ const availabilityTimeout = 60 * time.Second
 // ErrPublishTooSoon : un menu a déjà été envoyé pour ce site il y a moins d'une minute.
 var ErrPublishTooSoon = errors.New("deliveroo menu: un menu a été envoyé il y a moins d'une minute, réessayez dans un instant")
 
+// ErrConfirmationRequired : le compte n'a jamais reçu de menu de WelloResto ; le
+// premier envoi remplace le menu actuel de Deliveroo et doit être confirmé.
+var ErrConfirmationRequired = errors.New("deliveroo menu: le premier envoi remplace le menu actuel de Deliveroo, confirmation requise")
+
 // MenuLoader charge le menu d'un établissement (satisfait par
 // *menu.MenuRepository ; interface pour éviter un cycle d'import).
 type MenuLoader interface {
@@ -71,6 +75,10 @@ type PublishOptions struct {
 	// Force republie même un menu identique, en y ajoutant une révision
 	// datée (scénarios de certification : ils exigent un webhook).
 	Force bool
+	// ConfirmReplace : le restaurateur a confirmé que le menu actuel de Deliveroo
+	// sera remplacé. Exigé pour le premier envoi d'une publication "manual" (les
+	// scénarios de certification et la synchro automatique n'en ont pas besoin).
+	ConfirmReplace bool
 }
 
 // PublishResult résume une publication.
@@ -117,6 +125,16 @@ func (s *DeliverooService) PublishMenu(ctx context.Context, merchantID string, o
 			return nil, err
 		}
 		account.BrandID = brandID
+	}
+
+	if opts.Origin == "manual" && !opts.ConfirmReplace {
+		published, err := s.repo.HasPublished(ctx, merchantID, account.LocationID)
+		if err != nil {
+			return nil, fmt.Errorf("deliveroo menu: lecture du journal (migration 201 jouée ?): %w", err)
+		}
+		if !published {
+			return nil, ErrConfirmationRequired
+		}
 	}
 
 	last, err := s.repo.LastSentAt(ctx, merchantID, account.LocationID)

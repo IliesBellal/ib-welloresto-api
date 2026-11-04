@@ -1798,8 +1798,14 @@ func (h *MenuHandler) SyncDeliverooMenu(w http.ResponseWriter, r *http.Request) 
 	log := logger.FromContext(ctx)
 	locationID := r.URL.Query().Get("location_id")
 
-	result, err := h.service.SyncDeliverooMenu(ctx, token, locationID)
+	confirm := r.URL.Query().Get("confirm_replace") == "true"
+
+	result, err := h.service.SyncDeliverooMenu(ctx, token, locationID, confirm)
 	if err != nil {
+		if errors.Is(err, deliveroo.ErrConfirmationRequired) {
+			models.SendJSON(w, http.StatusConflict, "menu", "sync_deliveroo_menu", map[string]string{"error": "confirmation_required"})
+			return
+		}
 		log.Error("[ERROR] SyncDeliverooMenu error " + err.Error())
 		if deliveroo.IsPublishTooSoon(err) {
 			models.SendJSON(w, http.StatusTooManyRequests, "menu", "sync_deliveroo_menu", map[string]string{"error": "publish_too_soon"})
