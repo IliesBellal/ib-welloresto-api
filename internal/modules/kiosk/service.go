@@ -1473,7 +1473,7 @@ func flattenKioskProducts(products []models.ProductEntry, availability map[strin
 			continue
 		}
 		isGroup := p.IsProductGroup != nil && *p.IsProductGroup
-		if !isGroup && availability[p.ProductID] && p.IsAvailableForOrderType(orderType) {
+		if !isGroup && availability[p.ProductID] && p.IsAvailableForOrderType(orderType) && !p.IsHiddenByStatus() {
 			out = append(out, mapProductEntryToKioskProduct(&p, orderType))
 			continue
 		}
@@ -1486,7 +1486,7 @@ func flattenKioskProducts(products []models.ProductEntry, availability map[strin
 		if _, outOfSchedule := unavailable[sp.ProductID]; outOfSchedule {
 			continue
 		}
-		if availability[sp.ProductID] && sp.IsAvailableForOrderType(orderType) {
+		if availability[sp.ProductID] && sp.IsAvailableForOrderType(orderType) && !sp.IsHiddenByStatus() {
 			out = append(out, mapProductEntryToKioskProduct(&sp, orderType))
 		}
 	}

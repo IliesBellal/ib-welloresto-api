@@ -851,7 +851,9 @@ func (r *Repository) getMerchantSlug(ctx context.Context, merchantID string) (*s
 // côté sécurité : dans les deux cas, la commande ne doit pas être acceptée).
 // orderType (déjà normalisé, voir normalizeKioskOrderType) exclut aussi les
 // produits dont la disponibilité du mode (available_in/available_take_away)
-// est à FALSE ; NULL vaut disponible.
+// est à FALSE ; NULL vaut disponible. Un produit masqué (status not_available,
+// voir ProductEntry.IsHiddenByStatus) est exclu comme dans le menu ; out_of_stock
+// ne l'est pas.
 func (r *Repository) GetAvailableKioskProductIDs(ctx context.Context, merchantID, orderType string, productIDs []string) (map[string]bool, error) {
 	result := make(map[string]bool)
 	if len(productIDs) == 0 {
@@ -874,7 +876,9 @@ func (r *Repository) GetAvailableKioskProductIDs(ctx context.Context, merchantID
 	// interpolation sûre.
 	query := fmt.Sprintf(`
 	SELECT product_id FROM products
-	WHERE merchant_id = ? AND is_available_on_kiosk = TRUE AND COALESCE(%s, TRUE) = TRUE AND product_id IN (%s)`,
+	WHERE merchant_id = ? AND is_available_on_kiosk = TRUE AND COALESCE(%s, TRUE) = TRUE
+	  AND LOWER(COALESCE(status, '')) NOT IN ('not_available', '0', 'false', 'unavailable')
+	  AND product_id IN (%s)`,
 		models.OrderTypeAvailabilityColumn(orderType), placeholders)
 
 	rows, err := db.QueryContext(ctx, query, args...)

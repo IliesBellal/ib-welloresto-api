@@ -475,7 +475,7 @@ func (s *Service) ComputeGetMenu(ctx context.Context, qr string, deliveryType st
 			}
 			// On vérifie si le produit principal doit être affiché tel quel
 			isGroup := p.IsProductGroup != nil && *p.IsProductGroup
-			isAvailable := p.IsAvailableOnSNO != nil && *p.IsAvailableOnSNO && p.IsAvailableForOrderType(deliveryType)
+			isAvailable := p.IsAvailableOnSNO != nil && *p.IsAvailableOnSNO && p.IsAvailableForOrderType(deliveryType) && !p.IsHiddenByStatus()
 
 			if !isGroup && isAvailable {
 				finalProducts = append(finalProducts, p)
@@ -494,7 +494,7 @@ func (s *Service) ComputeGetMenu(ctx context.Context, qr string, deliveryType st
 				continue
 			}
 			// On ne garde le sous-produit que s'il est disponible (canal + mode)
-			if sp.IsAvailableOnSNO != nil && *sp.IsAvailableOnSNO && sp.IsAvailableForOrderType(deliveryType) {
+			if sp.IsAvailableOnSNO != nil && *sp.IsAvailableOnSNO && sp.IsAvailableForOrderType(deliveryType) && !sp.IsHiddenByStatus() {
 				finalProducts = append(finalProducts, sp)
 			}
 		}

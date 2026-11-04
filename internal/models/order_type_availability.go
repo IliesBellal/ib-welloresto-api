@@ -54,3 +54,17 @@ func (p *ProductEntry) IsAvailableForOrderType(orderType string) bool {
 	}
 	return flag == nil || *flag
 }
+
+// IsHiddenByStatus indique si le produit est « masqué » (products.status =
+// not_available, ou valeurs héritées '0' / 'false' / 'unavailable') : il n'est
+// plus proposé aux clients (ScanNOrder, borne) ni publié sur Deliveroo / Uber
+// Eats, mais reste listé en caisse pour pouvoir être réactivé. out_of_stock
+// n'est PAS masqué : il reste affiché « Épuisé ». Un statut vide ou inconnu
+// n'est pas masqué (comportement historique de ScanNOrder et de la borne).
+func (p *ProductEntry) IsHiddenByStatus() bool {
+	switch strings.ToLower(strings.TrimSpace(p.Status)) {
+	case "not_available", "0", "false", "unavailable":
+		return true
+	}
+	return false
+}
