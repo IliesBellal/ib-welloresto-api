@@ -1,11 +1,7 @@
-{{ template "doc_start" (dict "Title" "Code de vérification" "Pre" (printf "Code %s, valable %d minutes" .MFACode .ExpiresIn) "Bg" "#f5f5f7") }}
-{{ template "s_card_start" }}
-    {{ template "s_icon" (dict "Glyph" "lock") }}
-    {{ template "s_title" "Votre code de vérification" }}
-    <p style="margin:0 0 20px; font-size:15px; line-height:23px; color:#5a5f6b;">Saisissez ce code pour terminer votre connexion à {{ .BrandName }}.</p>
-    {{ template "s_code" .MFACode }}
-    <p style="margin:0 0 4px; font-size:13px; line-height:20px; color:#8a8a92;">Valable {{ .ExpiresIn }} minutes.</p>
-    {{ template "s_note" (printf "%s ne vous demandera jamais ce code, ni par téléphone ni par message. Vous n'êtes pas à l'origine de cette connexion ? Changez votre mot de passe." .BrandName) }}
-{{ template "s_card_end" }}
-{{ template "s_foot" (printf "E-mail de sécurité envoyé par %s · © %d" .BrandName .Year) }}
+{{ template "doc_start" (dict "Title" "Code de vérification" "Pre" (printf "Code %s, valable %d minutes" .MFACode .ExpiresIn)) }}
+{{ template "head_wello" }}
+{{ template "hero" (dict "Tone" "mut" "Pill" "Sécurité" "Title" "Votre code de vérification" "Sub" (printf "Saisissez ce code pour terminer votre connexion à %s." .BrandName)) }}
+{{ template "code" (dict "Code" .MFACode "Sub" (printf "Valable %d minutes" .ExpiresIn)) }}
+{{ template "note" (printf "%s ne vous demandera jamais ce code, ni par téléphone ni par message. Vous n'êtes pas à l'origine de cette connexion ? Changez votre mot de passe." .BrandName) }}
+{{ template "foot_secure" (printf "E-mail de sécurité envoyé par %s · © %d" .BrandName .Year) }}
 {{ template "doc_end" }}

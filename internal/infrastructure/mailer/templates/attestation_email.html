@@ -1,19 +1,15 @@
 {{/* Attestation individuelle envoyée par le restaurateur à un tiers (son
 comptable, par exemple) : le destinataire ne connaît pas forcément Wello Resto. */}}
-{{ template "doc_start" (dict "Title" "Attestation de conformité du logiciel de caisse" "Pre" (printf "%s vous transmet son attestation (PDF joint)" .MerchantName) "Bg" "#f3f5fa") }}
-{{ template "p_band_start" "#0036d9" }}
-    {{ template "p_title" (dict "Title" "Attestation de conformité du logiciel de caisse" "Sub" .MerchantName) }}
-{{ template "p_band_end" }}
-{{ template "p_body_start" }}
-    <p style="margin:0 0 14px; padding:0 4px; font-size:14px; line-height:22px; color:#3c4150;">Bonjour,<br><strong>{{ .MerchantName }}</strong> vous transmet son attestation individuelle relative à l'utilisation d'un logiciel de caisse sécurisé, établie selon le modèle BOI-LETTRE-000242.</p>
-    {{ template "p_card_start" }}
-        {{ template "p_row" (dict "K" "Établissement" "V" .MerchantName) }}
-        {{ template "p_row" (dict "K" "Logiciel" "V" .Software) }}
-        {{ template "p_row" (dict "K" "Version" "V" .Version) }}
-        {{ template "p_row" (dict "K" "Modèle" "V" "BOI-LETTRE-000242" "Last" true) }}
-    {{ template "p_card_end" }}
-    {{ template "p_attach" (dict "Name" "Attestation de conformité" "Note" "En pièce jointe, au format PDF") }}
-    <p style="margin:0 0 14px; padding:0 4px; font-size:14px; line-height:22px; color:#3c4150;">Les volets 1 et 2 de cette attestation sont à présenter à l'administration fiscale en cas de contrôle.</p>
-{{ template "p_body_end" }}
-{{ template "p_foot" "" }}
+{{ template "doc_start" (dict "Title" "Attestation de conformité du logiciel de caisse" "Pre" (printf "%s vous transmet son attestation (PDF joint)" .MerchantName)) }}
+{{ template "head_wello" }}
+{{ template "hero" (dict "Title" "Attestation de conformité du logiciel de caisse" "Sub" .MerchantName) }}
+{{ template "p_open" }}Bonjour,<br><strong style="color:#050817;">{{ .MerchantName }}</strong> vous transmet son attestation individuelle relative à l'utilisation d'un logiciel de caisse sécurisé, établie selon le modèle BOI-LETTRE-000242.{{ template "p_close" }}
+{{ template "facts_start" }}
+    {{ template "fact" (dict "K" "Établissement" "V" .MerchantName "First" true) }}
+    {{ template "fact" (dict "K" "Logiciel" "V" .Software) }}
+    {{ template "fact" (dict "K" "Version" "V" .Version) }}
+    {{ template "fact" (dict "K" "Modèle" "V" "BOI-LETTRE-000242") }}
+{{ template "facts_end" }}
+{{ template "p_open" }}L'attestation est jointe à ce mail, au format PDF. Ses volets 1 et 2 sont à présenter à l'administration fiscale en cas de contrôle.{{ template "p_close" }}
+{{ template "foot_wello" "" }}
 {{ template "doc_end" }}

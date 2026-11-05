@@ -1,13 +1,11 @@
 {{/* Facture client en pièce jointe : envoyée depuis la caisse
 (SendInvoiceEmailToCustomer) ou automatiquement à la clôture d'une commande en
 ligne d'au moins 25 € TTC (orderinvoices, OrderNumber renseigné). */}}
-{{ template "doc_start" (dict "Title" "Votre facture" "Pre" (printf "Facture %s en pièce jointe" .ReceiptNumber) "Bg" "#f4f4f2") }}
-{{ template "c_band" .Brand }}
-{{ template "c_body_start" }}
-    {{ template "c_title" (dict "Title" "Votre facture" "Sub" (printf "Facture n° %s" .ReceiptNumber)) }}
-    <p style="margin:0 0 16px; font-size:15px; line-height:24px; color:#2e2e2e;">{{ if .CustomerName }}Bonjour {{ .CustomerName }},{{ else }}Bonjour,{{ end }}<br>
-    vous trouverez en pièce jointe (PDF) la facture de votre commande{{ if .OrderNumber }} n° <strong>{{ .OrderNumber }}</strong>{{ end }} chez <strong>{{ .MerchantName }}</strong>, avec le détail de la TVA.</p>
-    {{ template "c_sign" (dict "Hello" "Merci et à bientôt," "Name" .Brand.Name) }}
-{{ template "c_body_end" }}
-{{ template "c_foot" .Brand }}
+{{ template "doc_start" (dict "Title" "Votre facture" "Pre" (printf "Facture %s en pièce jointe" .ReceiptNumber)) }}
+{{ template "head_merchant" .Brand }}
+{{ template "hero" (dict "Tone" "mut" "Pill" "Facture" "Title" "Votre facture" "Sub" (printf "Facture n° %s" .ReceiptNumber)) }}
+{{ template "p_open" }}{{ if .CustomerName }}Bonjour {{ .CustomerName }},{{ else }}Bonjour,{{ end }}<br>
+vous trouverez en pièce jointe (PDF) la facture de votre commande{{ if .OrderNumber }} n° <strong style="color:#050817;">{{ .OrderNumber }}</strong>{{ end }} chez <strong style="color:#050817;">{{ .MerchantName }}</strong>, avec le détail de la TVA.{{ template "p_close" }}
+{{ template "sign" (dict "Hello" "Merci et à bientôt," "Name" .Brand.Name) }}
+{{ template "foot_merchant" (dict "Brand" .Brand "Mail" "invoice_email") }}
 {{ template "doc_end" }}

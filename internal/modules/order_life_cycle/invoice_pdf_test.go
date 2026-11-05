@@ -94,6 +94,34 @@ func TestBuildInvoicePDF_OmitsMissingMentions(t *testing.T) {
 	}
 }
 
+// Un paiement Stripe s'imprime « En ligne », pas « STRIPE » ; le ticket figé
+// n'est pas modifié.
+func TestBuildInvoicePDF_StripePaymentPrintedAsOnline(t *testing.T) {
+	rcpt := testInvoiceReceipt()
+	rcpt.PaymentsSnapshot, _ = json.Marshal([]models.SnapshotPayment{{Amount: 1500, MOP: "STRIPE"}})
+	frozen := string(rcpt.PaymentsSnapshot)
+
+	pdfBytes, err := buildInvoicePDF(rcpt, &accounting.MerchantHeader{MerchantName: "Brasserie Du Midi", Currency: "EUR"}, "ORD-42", invoiceCustomer{}, nil)
+	if err != nil {
+		t.Fatalf("buildInvoicePDF() error = %v", err)
+	}
+	if !bytes.Contains(pdfBytes, []byte("En ligne")) || bytes.Contains(pdfBytes, []byte("STRIPE")) {
+		t.Error("le paiement Stripe doit s'imprimer « En ligne »")
+	}
+	if string(rcpt.PaymentsSnapshot) != frozen {
+		t.Error("le ticket figé a été modifié")
+	}
+}
+
+func TestInvoicePaymentLabel(t *testing.T) {
+	cases := map[string]string{"STRIPE": "En ligne", "stripe": "En ligne", "STRIPE_WEB_HOOK": "En ligne", "CB": "CB", "ES": "ES", "": ""}
+	for mop, want := range cases {
+		if got := invoicePaymentLabel(mop); got != want {
+			t.Errorf("invoicePaymentLabel(%q) = %q, want %q", mop, got, want)
+		}
+	}
+}
+
 // strPtr est déclaré dans cancellation_test.go.
 func floatPtr(v float64) *float64 { return &v }
 func intPtr(v int) *int           { return &v }

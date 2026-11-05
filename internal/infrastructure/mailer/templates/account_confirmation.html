@@ -1,13 +1,10 @@
 {{/* Confirmation d'adresse e-mail d'un nouveau compte (ConfirmationEmailData).
 Aucun appel dans le code au 2026-10-26 : modèle prêt, non branché. */}}
-{{ template "doc_start" (dict "Title" "Confirmez votre adresse e-mail" "Pre" "Un clic pour activer votre compte" "Bg" "#f5f5f7") }}
-{{ template "s_card_start" }}
-    {{ template "s_icon" (dict "Glyph" "lock") }}
-    {{ template "s_title" (printf "Bienvenue, %s" .FirstName) }}
-    <p style="margin:0 0 20px; font-size:15px; line-height:23px; color:#5a5f6b;">Confirmez votre adresse e-mail pour finaliser la création de votre compte {{ .BrandName }}.</p>
-    {{ template "s_button" (dict "URL" .ConfirmationURL "Label" "Confirmer mon adresse") }}
-    {{ template "s_note" "Vous n'avez pas créé de compte ? Ignorez cet e-mail." }}
-    <p style="margin:16px 0 0; font-size:12px; line-height:18px; color:#8a8a92; word-break:break-all;">Le bouton ne fonctionne pas ? Copiez ce lien dans votre navigateur :<br>{{ .ConfirmationURL }}</p>
-{{ template "s_card_end" }}
-{{ template "s_foot" (printf "Une question ? %s · © %d %s" .SupportEmail .Year .BrandName) }}
+{{ template "doc_start" (dict "Title" "Confirmez votre adresse e-mail" "Pre" "Un clic pour activer votre compte") }}
+{{ template "head_wello" }}
+{{ template "hero" (dict "Title" (printf "Bienvenue, %s" .FirstName) "Sub" (printf "Confirmez votre adresse e-mail pour finaliser la création de votre compte %s." .BrandName)) }}
+{{ template "button" (dict "URL" .ConfirmationURL "Label" "Confirmer mon adresse") }}
+{{ template "note" "Vous n'avez pas créé de compte ? Ignorez cet e-mail." }}
+<p style="margin:0; font-size:12px; line-height:18px; color:#8a93a8; text-align:center; word-break:break-all;">Le bouton ne fonctionne pas ? Copiez ce lien dans votre navigateur :<br>{{ .ConfirmationURL }}</p>
+{{ template "foot_secure" (printf "Une question ? %s · © %d %s" .SupportEmail .Year .BrandName) }}
 {{ template "doc_end" }}

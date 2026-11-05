@@ -1,23 +1,18 @@
 {{/* Confirmation de commande envoyée au client (le nom du fichier est
-historique : ce n'est pas un mail de versement). */}}
-{{ template "doc_start" (dict "Title" "Confirmation de commande" "Pre" (printf "Commande confirmée · %s %s" .OrderTotal .MerchantCurrency) "Bg" "#f4f4f2") }}
-{{ template "c_band" .Brand }}
-{{ template "c_body_start" }}
-    {{ template "c_title" (dict "Title" "Merci pour votre commande" "Sub" (printf "Elle est bien reçue par %s." .MerchantName)) }}
-    {{ template "c_facts_start" }}
-        {{ template "c_fact" (dict "K" "Total payé" "V" (printf "%s %s" .OrderTotal .MerchantCurrency)) }}
-        {{ if .OrderDate }}{{ template "c_fact" (dict "K" "Date" "V" .OrderDate) }}{{ end }}
-    {{ template "c_facts_end" }}
-    {{ if .TrackingURL }}
-    <p style="margin:0 0 16px; font-size:15px; line-height:24px; color:#2e2e2e;">Suivez sa préparation en temps réel :</p>
-    {{ template "c_button" (dict "URL" .TrackingURL "Label" "Suivre ma commande" "Brand" .Brand) }}
-    {{ end }}
-    {{ template "c_sign" (dict "Hello" "Merci et bon appétit," "Name" .Brand.Name) }}
-    {{ if or .PrivacyURL .TermsURL }}
-    <p style="margin:24px 0 0; font-size:12px; line-height:18px; color:#8a8782;">
-        {{ if .PrivacyURL }}<a href="{{ .PrivacyURL }}" target="_blank" style="color:#8a8782;">Confidentialité</a>{{ end }}{{ if and .PrivacyURL .TermsURL }} · {{ end }}{{ if .TermsURL }}<a href="{{ .TermsURL }}" target="_blank" style="color:#8a8782;">Conditions générales</a>{{ end }}
-    </p>
-    {{ end }}
-{{ template "c_body_end" }}
-{{ template "c_foot" .Brand }}
+historique : ce n'est pas un mail de versement). OrderTotal porte la devise
+(mailer.FormatEuros) ; OrderNumber est le numéro donné au comptoir. */}}
+{{ template "doc_start" (dict "Title" "Confirmation de commande" "Pre" (printf "Commande confirmée · %s" .OrderTotal)) }}
+{{ template "head_merchant" .Brand }}
+{{ template "hero" (dict "Tone" "ok" "Pill" "Commande reçue" "Title" "Merci pour votre commande" "Sub" (printf "Elle est bien reçue par %s." .MerchantName)) }}
+{{ template "facts_start" }}
+    {{ if .OrderNumber }}{{ template "fact" (dict "K" "Numéro" "V" .OrderNumber "First" true) }}{{ end }}
+    {{ template "fact" (dict "K" "Total payé" "V" .OrderTotal "First" (not .OrderNumber)) }}
+    {{ if .OrderDate }}{{ template "fact" (dict "K" "Date" "V" .OrderDate) }}{{ end }}
+{{ template "facts_end" }}
+{{ if .TrackingURL }}
+{{ template "p_open" }}Suivez sa préparation en temps réel :{{ template "p_close" }}
+{{ template "button" (dict "URL" .TrackingURL "Label" "Suivre ma commande" "Color" .Brand.Color "TextColor" .Brand.TextColor) }}
+{{ end }}
+{{ template "sign" (dict "Hello" "Merci et bon appétit," "Name" .Brand.Name) }}
+{{ template "foot_merchant" (dict "Brand" .Brand "Mail" "scannorder_payout" "PrivacyURL" .PrivacyURL "TermsURL" .TermsURL) }}
 {{ template "doc_end" }}

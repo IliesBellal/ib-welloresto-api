@@ -1,16 +1,12 @@
-{{ template "doc_start" (dict "Title" "Votre facture Wello Resto" "Pre" (printf "Paiement de %s reçu · facture %s jointe" .Amount .InvoiceNumber) "Bg" "#f3f5fa") }}
-{{ template "p_band_start" "#0036d9" }}
-    {{ template "p_title" (dict "Title" "Paiement de votre abonnement reçu" "Sub" (printf "Facture n° %s" .InvoiceNumber)) }}
-    {{ template "p_figure" (dict "Label" "Montant payé" "Value" .Amount "Sub" .Period) }}
-{{ template "p_band_end" }}
-{{ template "p_body_start" }}
-    {{ template "p_notice" .TestNotice }}
-    {{ template "establishment" .Establishment }}
-    {{ template "p_attach" (dict "Name" (printf "Facture %s" .InvoiceNumber) "Note" "En pièce jointe, au format PDF") }}
-    <p style="margin:0 0 14px; padding:0 4px; font-size:14px; line-height:22px; color:#3c4150;">Merci de votre confiance. Vous pouvez transmettre cette facture à votre comptable.</p>
-    {{ if .HostedURL }}
-    {{ template "p_button" (dict "URL" .HostedURL "Label" "Voir la facture en ligne" "Color" "#0036d9") }}
-    {{ end }}
-{{ template "p_body_end" }}
-{{ template "p_foot" "" }}
+{{ template "doc_start" (dict "Title" "Votre facture Wello Resto" "Pre" (printf "Paiement de %s reçu · facture %s jointe" .Amount .InvoiceNumber)) }}
+{{ template "head_wello" }}
+{{ template "hero" (dict "Tone" "ok" "Pill" "Payé" "Title" "Paiement de votre abonnement reçu" "Sub" (printf "Facture n° %s" .InvoiceNumber)) }}
+{{ template "figure" (dict "Label" "Montant payé" "Value" .Amount "Sub" .Period) }}
+{{ template "notice" .TestNotice }}
+{{ template "establishment" .Establishment }}
+{{ template "p_open" }}La facture est jointe à ce mail, au format PDF. Merci de votre confiance : vous pouvez la transmettre à votre comptable.{{ template "p_close" }}
+{{ if .HostedURL }}
+{{ template "button" (dict "URL" .HostedURL "Label" "Voir la facture en ligne") }}
+{{ end }}
+{{ template "foot_wello" "" }}
 {{ template "doc_end" }}

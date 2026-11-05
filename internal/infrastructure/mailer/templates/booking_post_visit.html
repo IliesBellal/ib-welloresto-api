@@ -1,10 +1,8 @@
-{{ template "doc_start" (dict "Title" "Merci de votre visite" "Pre" (printf "Merci d'avoir choisi %s" .MerchantName) "Bg" "#f4f4f2") }}
-{{ template "c_band" .Brand }}
-{{ template "c_body_start" }}
-    {{ $title := "Merci de votre visite" }}{{ if .CustomerName }}{{ $title = printf "Merci de votre visite, %s" .CustomerName }}{{ end }}
-    {{ template "c_title" (dict "Title" $title "Sub" "") }}
-    <p style="margin:0 0 16px; font-size:15px; line-height:24px; color:#2e2e2e;">Merci d'avoir choisi <strong>{{ .MerchantName }}</strong>. Nous espérons que vous avez passé un bon moment, et nous serons heureux de vous recevoir à nouveau.</p>
-    {{ template "c_sign" (dict "Hello" "Au plaisir de vous revoir," "Name" .Brand.Name) }}
-{{ template "c_body_end" }}
-{{ template "c_foot" .Brand }}
+{{ template "doc_start" (dict "Title" "Merci de votre visite" "Pre" (printf "Merci d'avoir choisi %s" .MerchantName)) }}
+{{ template "head_merchant" .Brand }}
+{{ $title := "Merci de votre visite" }}{{ if .CustomerName }}{{ $title = printf "Merci de votre visite, %s" .CustomerName }}{{ end }}
+{{ template "hero" (dict "Title" $title) }}
+{{ template "p_open" }}Merci d'avoir choisi <strong style="color:#050817;">{{ .MerchantName }}</strong>. Nous espérons que vous avez passé un bon moment, et nous serons heureux de vous recevoir à nouveau.{{ template "p_close" }}
+{{ template "sign" (dict "Hello" "Au plaisir de vous revoir," "Name" .Brand.Name) }}
+{{ template "foot_merchant" (dict "Brand" .Brand "Mail" "booking_post_visit") }}
 {{ template "doc_end" }}

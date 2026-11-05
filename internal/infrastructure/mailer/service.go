@@ -191,6 +191,18 @@ var templateFuncs = template.FuncMap{
 		return fmt.Sprintf("%d %s", n, one)
 	},
 	"supportEmail": func() string { return SupportEmail },
+	// poweredByURL : lien « Propulsé par Wello Resto » (PoweredByURL).
+	"poweredByURL": PoweredByURL,
+	"welloTileURL": func() string { return WelloTileURL },
+	"welloMarkURL": func() string { return WelloMarkURL },
+	// msoFontFix : Outlook pour ordinateur (moteur Word) affiche en Times
+	// New Roman un texte dont la première police est absente (Plus Jakarta
+	// Sans) ; ce commentaire conditionnel, lu par lui seul, impose Arial.
+	// Renvoyé par une fonction car html/template supprime les commentaires
+	// écrits dans le modèle.
+	"msoFontFix": func() template.HTML {
+		return template.HTML(`<!--[if mso]><style>body, table, td, p, a, h1, span, div { font-family: Arial, Helvetica, sans-serif !important; }</style><![endif]-->`)
+	},
 }
 
 // RenderTemplate is a public helper function to render templates from the embedded FS

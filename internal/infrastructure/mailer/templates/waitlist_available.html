@@ -1,14 +1,12 @@
-{{ template "doc_start" (dict "Title" "Une table s'est libérée" "Pre" (printf "Elle vous est réservée %d minutes" .ExpiryMinutes) "Bg" "#f4f4f2") }}
-{{ template "c_band" .Brand }}
-{{ template "c_body_start" }}
-    {{ template "c_title" (dict "Title" "Une table s'est libérée" "Sub" (printf "Elle vous est réservée %d minutes." .ExpiryMinutes)) }}
-    <p style="margin:0 0 16px; font-size:15px; line-height:24px; color:#2e2e2e;">{{ if .CustomerName }}Bonne nouvelle, {{ .CustomerName }} : une{{ else }}Bonne nouvelle : une{{ end }} table vient de se libérer chez <strong>{{ .MerchantName }}</strong>.</p>
-    {{ template "c_facts_start" }}
-        {{ template "c_fact" (dict "K" "Couverts" "V" (plural .PartySize "personne" "personnes")) }}
-        {{ template "c_fact" (dict "K" "Réservée pendant" "V" (printf "%d minutes" .ExpiryMinutes)) }}
-    {{ template "c_facts_end" }}
-    <p style="margin:0 0 16px; font-size:15px; line-height:24px; color:#2e2e2e;">Présentez-vous au restaurant ou contactez-le rapidement pour la confirmer. Passé ce délai, elle sera proposée au client suivant.</p>
-    {{ template "c_sign" (dict "Hello" "À tout de suite," "Name" .Brand.Name) }}
-{{ template "c_body_end" }}
-{{ template "c_foot" .Brand }}
+{{ template "doc_start" (dict "Title" "Une table s'est libérée" "Pre" (printf "Elle vous est réservée %d minutes" .ExpiryMinutes)) }}
+{{ template "head_merchant" .Brand }}
+{{ template "hero" (dict "Tone" "warn" "Pill" (printf "Réservée %d minutes" .ExpiryMinutes) "Title" "Une table s'est libérée") }}
+{{ template "p_open" }}{{ if .CustomerName }}Bonne nouvelle, {{ .CustomerName }} : une{{ else }}Bonne nouvelle : une{{ end }} table vient de se libérer chez <strong style="color:#050817;">{{ .MerchantName }}</strong>.{{ template "p_close" }}
+{{ template "facts_start" }}
+    {{ template "fact" (dict "K" "Couverts" "V" (plural .PartySize "personne" "personnes") "First" true) }}
+    {{ template "fact" (dict "K" "Réservée pendant" "V" (printf "%d minutes" .ExpiryMinutes)) }}
+{{ template "facts_end" }}
+{{ template "p_open" }}Présentez-vous au restaurant ou contactez-le rapidement pour la confirmer. Passé ce délai, elle sera proposée au client suivant.{{ template "p_close" }}
+{{ template "sign" (dict "Hello" "À tout de suite," "Name" .Brand.Name) }}
+{{ template "foot_merchant" (dict "Brand" .Brand "Mail" "waitlist_available") }}
 {{ template "doc_end" }}

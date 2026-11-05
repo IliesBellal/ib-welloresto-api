@@ -1,18 +1,21 @@
-{{ template "doc_start" (dict "Title" "Remboursement effectué" "Pre" (printf "Remboursement de %s confirmé" .Amount) "Bg" "#f4f4f2") }}
-{{ template "c_band" .Brand }}
-{{ template "c_body_start" }}
-    {{ template "c_title" (dict "Title" "Votre remboursement est confirmé" "Sub" "") }}
-    <p style="margin:0 0 16px; font-size:15px; line-height:24px; color:#2e2e2e;">{{ if .CustomerName }}Bonjour {{ .CustomerName }}, nous{{ else }}Nous{{ end }} avons remboursé votre paiement{{ if .MerchantName }} chez <strong>{{ .MerchantName }}</strong>{{ end }}.</p>
-    {{ template "c_facts_start" }}
-        {{ template "c_fact" (dict "K" "Montant" "V" .Amount) }}
-        {{ if .PaymentMethod }}{{ if .PaymentDetail }}{{ template "c_fact" (dict "K" "Moyen de paiement" "V" (printf "%s %s" .PaymentMethod .PaymentDetail)) }}{{ else if .CardLast4 }}{{ template "c_fact" (dict "K" "Moyen de paiement" "V" (printf "%s •••• %s" .PaymentMethod .CardLast4)) }}{{ else }}{{ template "c_fact" (dict "K" "Moyen de paiement" "V" .PaymentMethod) }}{{ end }}{{ end }}
-        {{ if .Date }}{{ template "c_fact" (dict "K" "Date" "V" .Date) }}{{ end }}
-    {{ template "c_facts_end" }}
-    <p style="margin:0 0 16px; font-size:15px; line-height:24px; color:#2e2e2e;">Le montant apparaîtra sur votre relevé bancaire sous 5 à 10 jours ouvrés, selon votre banque.</p>
-    {{ if .ReceiptURL }}
-    {{ template "c_button" (dict "URL" .ReceiptURL "Label" "Voir le reçu" "Brand" .Brand) }}
-    {{ end }}
-    {{ if .Brand.Name }}{{ template "c_sign" (dict "Hello" "À bientôt," "Name" .Brand.Name) }}{{ end }}
-{{ template "c_body_end" }}
-{{ template "c_foot" .Brand }}
+{{/* Remboursement Stripe (charge.refunded). Tant que l'établissement n'est
+pas retrouvé (docs/emails-styles.md, R2), Brand est vide : en-tête Wello
+Resto. */}}
+{{ template "doc_start" (dict "Title" "Remboursement effectué" "Pre" (printf "Remboursement de %s confirmé" .Amount)) }}
+{{ if .Brand.Name }}{{ template "head_merchant" .Brand }}{{ else }}{{ template "head_wello" }}{{ end }}
+{{ $sub := "" }}{{ if .MerchantName }}{{ $sub = printf "Votre paiement chez %s a été remboursé." .MerchantName }}{{ end }}
+{{ template "hero" (dict "Tone" "ok" "Pill" "Remboursé" "Title" "Votre remboursement est confirmé" "Sub" $sub) }}
+{{ template "figure" (dict "Label" "Montant remboursé" "Value" .Amount) }}
+{{ if or .PaymentMethod .Date }}
+{{ template "facts_start" }}
+    {{ if .PaymentMethod }}{{ if .PaymentDetail }}{{ template "fact" (dict "K" "Moyen de paiement" "V" (printf "%s %s" .PaymentMethod .PaymentDetail) "First" true) }}{{ else if .CardLast4 }}{{ template "fact" (dict "K" "Moyen de paiement" "V" (printf "%s •••• %s" .PaymentMethod .CardLast4) "First" true) }}{{ else }}{{ template "fact" (dict "K" "Moyen de paiement" "V" .PaymentMethod "First" true) }}{{ end }}{{ end }}
+    {{ if .Date }}{{ template "fact" (dict "K" "Date" "V" .Date "First" (not .PaymentMethod)) }}{{ end }}
+{{ template "facts_end" }}
+{{ end }}
+{{ template "p_open" }}Le montant apparaîtra sur votre relevé bancaire sous 5 à 10 jours ouvrés, selon votre banque.{{ template "p_close" }}
+{{ if .ReceiptURL }}
+{{ template "button" (dict "URL" .ReceiptURL "Label" "Voir le reçu" "Color" .Brand.Color "TextColor" .Brand.TextColor) }}
+{{ end }}
+{{ if .Brand.Name }}{{ template "sign" (dict "Hello" "À bientôt," "Name" .Brand.Name) }}{{ end }}
+{{ template "foot_merchant" (dict "Brand" .Brand "Mail" "customer_refund") }}
 {{ template "doc_end" }}

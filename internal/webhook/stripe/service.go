@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -374,9 +375,16 @@ func (s *StripeWebhookService) HandleCheckoutSessionCompleted(ctx context.Contex
 			if trackingURL == "" {
 				log.Printf("Warning: no tracking URL for order %s (QR code or public id missing)", order.OrderID)
 			}
+			// Montant à la française et numéro de retrait (celui du SMS) :
+			// docs/emails-styles.md, 2026-11-04.
+			orderTotal := fmt.Sprintf("%.2f %s", float64(order.Price)/100, merchant.Currency)
+			if strings.EqualFold(strings.TrimSpace(merchant.Currency), "EUR") {
+				orderTotal = mailer.FormatEuros(int64(math.Round(float64(order.Price))))
+			}
 			emailPayload := mailer.ScanNOrderConfirmationData{
 				Brand:        s.brand(ctx, merchantID, merchant.BusinessName),
-				OrderTotal:   fmt.Sprintf("%.2f", float64(order.Price)/100) + merchant.Currency,
+				OrderTotal:   orderTotal,
+				OrderNumber:  order.OrderNum,
 				MerchantLogo: merchant.LogoURL,
 				MerchantName: merchant.BusinessName,
 				OrderDate:    order.CreationDate.Format("02/01/2006"),
@@ -1070,7 +1078,7 @@ func (s *StripeWebhookService) HandleRefund(ctx context.Context, data json.RawMe
 
 	// Préparation des données pour le mail
 	refundData := mailer.RefundData{
-		Amount:        fmt.Sprintf("%.2f %s", float64(refundedCharge.Amount)/100, strings.ToUpper(string(refundedCharge.Currency))),
+		Amount:        refundAmountLabel(refundedCharge.AmountRefunded, string(refundedCharge.Currency)),
 		PaymentMethod: paymentMethod,
 		PaymentDetail: paymentDetail,
 		CardLast4:     cardLast4,
@@ -1081,6 +1089,16 @@ func (s *StripeWebhookService) HandleRefund(ctx context.Context, data json.RawMe
 	}
 	go s.email.SendRefundNotification(refundedCharge.BillingDetails.Email, refundData)
 	return nil
+}
+
+// refundAmountLabel : montant remboursé affiché au client. AmountRefunded
+// (cumul remboursé sur la charge) et non Amount (montant payé) : jusqu'au
+// 2026-11-04, un remboursement partiel affichait le total payé.
+func refundAmountLabel(cents int64, currency string) string {
+	if strings.EqualFold(currency, "eur") {
+		return mailer.FormatEuros(cents)
+	}
+	return fmt.Sprintf("%.2f %s", float64(cents)/100, strings.ToUpper(currency))
 }
 
 // cancelRefundedPayments applique un remboursement Stripe à la caisse (lot C

@@ -1,0 +1,203 @@
+{{/* Blocs des mails, direction « Blanc » (A) choisie le 2026-11-04
+(docs/emails-styles.md). Un seul système pour les trois familles ; seuls
+l'en-tête et le pied changent :
+  - clients d'un établissement : head_merchant + foot_merchant (logo ou
+    initiales et couleur de l'établissement, « Propulsé par Wello Resto ») ;
+  - restaurateurs : head_wello + foot_wello (support) ;
+  - sécurité : head_wello + foot_secure (head_merchant + foot_merchant pour le
+    planning, envoyé au nom de l'établissement).
+
+La couleur ne sert qu'à agir (bouton) et à reconnaître l'expéditeur (logo) ;
+l'état d'un mail passe par la pastille du titre (Tone) :
+  ok    vert   c'est fait (confirmée, reçue, remboursé, payé)
+  warn  orange une action est attendue (à confirmer, paiement en attente)
+  danger rouge suspension annoncée (restaurateurs seulement)
+  info  bleu   information Wello Resto (restaurateurs seulement)
+  mut   gris   information (rappel, modifiée, annulée, facture) : défaut
+Jamais de rouge ni de bleu Wello Resto dans un mail client.
+
+Séquence type :
+  {{ template "doc_start" (dict "Title" "…" "Pre" "…") }}
+  {{ template "head_merchant" .Brand }}            ou {{ template "head_wello" }}
+  {{ template "hero" (dict "Tone" "ok" "Pill" "Confirmée" "Title" "…" "Sub" "…") }}
+  {{ template "figure" (dict "Label" "…" "Value" .Amount "Sub" "…") }}
+  {{ template "facts_start" }}
+    {{ template "fact" (dict "K" "Date" "V" .DateLabel "First" true) }}
+    {{ template "fact" (dict "K" "Heure" "V" .TimeLabel) }}
+  {{ template "facts_end" }}
+  {{ template "p_open" }}Texte, <strong style="color:#050817;">gras</strong>…{{ template "p_close" }}
+  {{ template "button" (dict "URL" .Link "Label" "…" "Color" .Brand.Color "TextColor" .Brand.TextColor) }}
+  {{ template "sign" (dict "Hello" "À très bientôt," "Name" .Brand.Name) }}
+  {{ template "foot_merchant" (dict "Brand" .Brand "Mail" "booking_confirmation") }}
+  {{ template "doc_end" }}
+
+Pas de carte « pièce jointe » : elle ressemblait à un fichier cliquable. Une
+pièce jointe se signale dans une phrase (p_open). */}}
+
+{{/* En-tête d'un mail envoyé au nom d'un établissement (MerchantBrand) : logo
+de 56 px s'il existe, sinon ses initiales dans un carré à sa couleur, puis son
+nom. Le logo est supposé à peu près carré (même usage que ScanNOrder). */}}
+{{ define "head_merchant" }}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+    <tr>
+        <td align="center" style="padding:0 0 28px; text-align:center;">
+            {{ if .LogoURL }}<img src="{{ .LogoURL }}" alt="{{ if not .Name }}Logo{{ end }}" width="56" style="display:block; width:56px; max-width:56px; height:auto; border:0; border-radius:12px; margin:0 auto;">
+            {{ else if .Initials }}<table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;">
+                <tr>
+                    <td width="48" height="48" align="center" valign="middle" bgcolor="{{ .Color }}" style="width:48px; height:48px; background-color:{{ .Color }}; border-radius:12px; font-size:16px; line-height:48px; font-weight:800; letter-spacing:0.5px; color:{{ .TextColor }}; text-align:center;">{{ .Initials }}</td>
+                </tr>
+            </table>{{ end }}
+            {{ if .Name }}<p style="margin:{{ if or .LogoURL .Initials }}10px{{ else }}0{{ end }} 0 0; font-size:14px; line-height:20px; font-weight:700; color:#050817;">{{ .Name }}</p>{{ end }}
+        </td>
+    </tr>
+</table>
+{{ end }}
+
+{{/* En-tête des mails Wello Resto : le W de la vitrine (PNG, WelloTileURL)
+puis le nom. */}}
+{{ define "head_wello" }}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+    <tr>
+        <td align="center" style="padding:0 0 28px; text-align:center;">
+            <img src="{{ welloTileURL }}" alt="" width="40" height="40" style="display:block; width:40px; height:40px; border:0; margin:0 auto;">
+            <p style="margin:10px 0 0; font-size:14px; line-height:20px; font-weight:700; color:#050817;">Wello Resto</p>
+        </td>
+    </tr>
+</table>
+{{ end }}
+
+{{/* Pastille d'état : dict "Tone" "ok|warn|danger|info|mut" "Label" "…". */}}
+{{ define "pill" }}{{ $t := or .Tone "mut" }}{{ $bg := "#eef0f4" }}{{ $fg := "#3b4357" }}{{ if eq $t "ok" }}{{ $bg = "#e7f5ee" }}{{ $fg = "#17794a" }}{{ else if eq $t "warn" }}{{ $bg = "#fff1e0" }}{{ $fg = "#a14a00" }}{{ else if eq $t "danger" }}{{ $bg = "#fdecec" }}{{ $fg = "#a32121" }}{{ else if eq $t "info" }}{{ $bg = "#edf3fc" }}{{ $fg = "#0036d9" }}{{ end }}<span style="display:inline-block; padding:5px 12px; border-radius:999px; background-color:{{ $bg }}; font-size:12px; line-height:16px; font-weight:700; color:{{ $fg }};"><span style="font-size:8px; line-height:16px; vertical-align:top;">&#9679;</span>&nbsp;{{ .Label }}</span>{{ end }}
+
+{{/* Haut du mail, centré : pastille facultative, titre, sous-titre. */}}
+{{ define "hero" }}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+    <tr>
+        <td align="center" style="padding:0 0 24px; text-align:center;">
+            {{ if .Pill }}{{ template "pill" (dict "Tone" .Tone "Label" .Pill) }}{{ end }}
+            <h1 style="margin:{{ if .Pill }}14px{{ else }}0{{ end }} 0 0; font-size:24px; line-height:30px; font-weight:800; letter-spacing:-0.3px; color:#050817;">{{ .Title }}</h1>
+            {{ if .Sub }}<p style="margin:8px 0 0; font-size:15px; line-height:22px; color:#5b6680;">{{ .Sub }}</p>{{ end }}
+        </td>
+    </tr>
+</table>
+{{ end }}
+
+{{/* Chiffre clé centré (montant, date limite) : dict "Label" "Value" "Sub". */}}
+{{ define "figure" }}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+    <tr>
+        <td align="center" style="padding:0 0 24px; text-align:center;">
+            {{ if .Label }}<p style="margin:0; font-size:13px; line-height:18px; color:#5b6680;">{{ .Label }}</p>{{ end }}
+            <p style="margin:{{ if .Label }}4px{{ else }}0{{ end }} 0 0; font-size:36px; line-height:42px; font-weight:800; letter-spacing:-0.5px; color:#050817;">{{ .Value }}</p>
+            {{ if .Sub }}<p style="margin:6px 0 0; font-size:13px; line-height:18px; color:#5b6680;">{{ .Sub }}</p>{{ end }}
+        </td>
+    </tr>
+</table>
+{{ end }}
+
+{{/* Résumé : lignes libellé / valeur dans un bloc gris bleuté. La première
+ligne porte "First" true (pas de filet au-dessus). */}}
+{{ define "facts_start" }}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f5f7fb" style="background-color:#f5f7fb; border-radius:14px; margin:0 0 24px;">
+    <tr>
+        <td style="padding:4px 18px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">{{ end }}
+
+{{ define "fact" }}
+                <tr>
+                    <td valign="top" style="padding:12px 12px 12px 0;{{ if not .First }} border-top:1px solid #e6eaf2;{{ end }} font-size:14px; line-height:20px; color:#5b6680;">{{ .K }}</td>
+                    <td valign="top" align="right" style="padding:12px 0;{{ if not .First }} border-top:1px solid #e6eaf2;{{ end }} font-size:14px; line-height:20px; font-weight:700; color:#050817; text-align:right;">{{ .V }}</td>
+                </tr>
+{{ end }}
+
+{{ define "facts_end" }}
+            </table>
+        </td>
+    </tr>
+</table>{{ end }}
+
+{{/* Paragraphe courant et paragraphe secondaire (plus petit, gris). */}}
+{{ define "p_open" }}<p style="margin:0 0 16px; font-size:15px; line-height:24px; color:#3b4b72;">{{ end }}
+{{ define "small_open" }}<p style="margin:0 0 16px; font-size:13px; line-height:20px; color:#5b6680;">{{ end }}
+{{ define "p_close" }}</p>{{ end }}
+
+{{/* Bouton principal, un seul par mail, pleine largeur, en pilule. Sans
+"Color" : bleu Wello Resto. */}}
+{{ define "button" }}{{ $bg := or .Color "#0036d9" }}{{ $fg := or .TextColor "#ffffff" }}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 20px;">
+    <tr>
+        <td align="center" bgcolor="{{ $bg }}" style="background-color:{{ $bg }}; border-radius:999px;">
+            <a href="{{ .URL }}" target="_blank" style="display:block; padding:15px 24px; font-size:15px; line-height:20px; font-weight:700; color:{{ $fg }}; text-decoration:none; text-align:center; border-radius:999px;">{{ .Label }}</a>
+        </td>
+    </tr>
+</table>
+{{ end }}
+
+{{/* Lien Google Agenda sous le bouton, quand un .ics est joint. */}}
+{{ define "calendar" }}{{ if . }}<p style="margin:0 0 20px; text-align:center; font-size:13px; line-height:20px; color:#5b6680;"><a href="{{ . }}" target="_blank" style="color:#050817; font-weight:700; text-decoration:underline;">Ajouter à Google Agenda</a> · ou ouvrez le fichier joint</p>{{ end }}{{ end }}
+
+{{/* Avertissement d'envoi de test (TestNotice), rien s'il est vide. */}}
+{{ define "notice" }}{{ if . }}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#fff5e0" style="background-color:#fff5e0; border-radius:14px; margin:0 0 20px;">
+    <tr>
+        <td style="padding:12px 18px; font-size:13px; line-height:19px; color:#7a4a00;">{{ . }}</td>
+    </tr>
+</table>{{ end }}{{ end }}
+
+{{/* Code de vérification : dict "Code" "482913" "Sub" "Valable 10 minutes".
+Groupé par 3 dans deux <span> séparés par un retrait, pas par une espace : un
+copier-coller donne « 482913 ». user-select:all : un appui sélectionne tout le
+code (Apple Mail). Un bouton « Copier » est impossible (pas de JavaScript dans
+les messageries) ; le code est aussi dans l'objet (SendOTP) pour la détection
+automatique d'iOS et de Gmail. */}}
+{{ define "code" }}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f5f7fb" style="background-color:#f5f7fb; border-radius:14px; margin:0 0 20px;">
+    <tr>
+        <td align="center" style="padding:22px 10px 18px; text-align:center;">
+            <div style="-webkit-user-select:all; user-select:all; font-family:Menlo, Consolas, 'Courier New', monospace; font-size:36px; line-height:42px; font-weight:bold; letter-spacing:4px; color:#050817;">{{ if eq (len .Code) 6 }}<span>{{ slice .Code 0 3 }}</span><span style="padding-left:16px;">{{ slice .Code 3 }}</span>{{ else }}{{ .Code }}{{ end }}</div>
+            {{ if .Sub }}<p style="margin:6px 0 0; font-size:12px; line-height:18px; color:#5b6680;">{{ .Sub }}</p>{{ end }}
+        </td>
+    </tr>
+</table>
+{{ end }}
+
+{{/* Remarque centrée en petit (mise en garde de sécurité). */}}
+{{ define "note" }}<p style="margin:0 0 16px; font-size:13px; line-height:20px; color:#5b6680; text-align:center;">{{ . }}</p>{{ end }}
+
+{{/* Signature d'un mail client : dict "Hello" "À très bientôt," "Name" .Brand.Name. */}}
+{{ define "sign" }}<p style="margin:8px 0 0; font-size:15px; line-height:24px; color:#3b4b72;">{{ .Hello }}{{ if .Name }}<br><strong style="color:#050817;">{{ .Name }}</strong>{{ end }}</p>{{ end }}
+
+{{/* Pied d'un mail envoyé au nom d'un établissement : son nom, ses liens
+légaux s'ils sont connus, puis « Propulsé par Wello Resto » vers le site
+vitrine (PoweredByURL : utm_campaign = slug de l'établissement, utm_content =
+nom du mail). dict "Brand" .Brand "Mail" "booking_confirmation" ["PrivacyURL"
+"…" "TermsURL" "…"]. */}}
+{{ define "foot_merchant" }}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:32px 0 0; border-top:1px solid #edf0f5;">
+    <tr>
+        <td align="center" style="padding:20px 0 0; font-size:12px; line-height:18px; color:#8a93a8; text-align:center;">
+            {{ if or .Brand.Name .PrivacyURL .TermsURL }}<p style="margin:0 0 10px;">{{ .Brand.Name }}{{ if .PrivacyURL }}{{ if .Brand.Name }} · {{ end }}<a href="{{ .PrivacyURL }}" target="_blank" style="color:#5b6680; text-decoration:underline;">Confidentialité</a>{{ end }}{{ if .TermsURL }}{{ if or .Brand.Name .PrivacyURL }} · {{ end }}<a href="{{ .TermsURL }}" target="_blank" style="color:#5b6680; text-decoration:underline;">Conditions générales</a>{{ end }}</p>{{ end }}
+            <p style="margin:0;"><a href="{{ poweredByURL .Brand.Code .Mail }}" target="_blank" style="color:#8a93a8; text-decoration:none;">Propulsé par&nbsp;<img src="{{ welloMarkURL }}" alt="" width="21" height="14" style="display:inline-block; width:21px; height:14px; border:0; vertical-align:middle;">&nbsp;<strong style="color:#5b6680;">Wello Resto</strong></a></p>
+        </td>
+    </tr>
+</table>
+{{ end }}
+
+{{/* Pied d'un mail Wello Resto au restaurateur : ligne facultative, puis
+support. Argument : texte de la ligne ou "". */}}
+{{ define "foot_wello" }}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:32px 0 0; border-top:1px solid #edf0f5;">
+    <tr>
+        <td align="center" style="padding:20px 0 0; font-size:12px; line-height:18px; color:#8a93a8; text-align:center;">
+            {{ if . }}{{ . }}<br>{{ end }}Une question ? <a href="mailto:{{ supportEmail }}" style="color:#5b6680; text-decoration:underline;">{{ supportEmail }}</a><br>Wello Resto
+        </td>
+    </tr>
+</table>
+{{ end }}
+
+{{/* Pied d'un mail de sécurité : une ligne de texte. */}}
+{{ define "foot_secure" }}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:32px 0 0; border-top:1px solid #edf0f5;">
+    <tr>
+        <td align="center" style="padding:20px 0 0; font-size:12px; line-height:18px; color:#8a93a8; text-align:center;">{{ . }}</td>
+    </tr>
+</table>
+{{ end }}

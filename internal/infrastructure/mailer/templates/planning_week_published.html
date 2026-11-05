@@ -1,26 +1,24 @@
 {{/* Planning publié, envoyé au nom de l'établissement à un employé
 (planningcomm). Données (map) : Brand (mailer.MerchantBrand), MerchantName,
 EmployeeName, WeekLabel, PlanningURL, Shifts ([]planningcomm.ShiftSummary). */}}
-{{ template "doc_start" (dict "Title" "Planning publié" "Pre" (printf "Votre planning pour %s" .WeekLabel) "Bg" "#f5f5f7") }}
-{{ template "s_card_start_merchant" .Brand }}
-    {{ template "s_icon" (dict "Glyph" "calendar" "Color" .Brand.Color "TextColor" .Brand.TextColor) }}
-    {{ template "s_title" "Votre planning est publié" }}
-    <p style="margin:0 0 20px; font-size:15px; line-height:23px; color:#5a5f6b;">{{ if .EmployeeName }}Bonjour {{ .EmployeeName }}, voici{{ else }}Voici{{ end }} vos horaires pour <strong style="color:#121521;">{{ .WeekLabel }}</strong>.</p>
-    {{ if .Shifts }}
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 22px; border-top:1px solid #ededf1; text-align:left;">
-        {{ range .Shifts }}
-        <tr>
-            <td valign="top" style="padding:10px 12px 10px 0; border-bottom:1px solid #ededf1; font-family:Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; font-weight:bold; color:#121521;">{{ .DayLabel }}</td>
-            <td valign="top" align="right" style="padding:10px 0; border-bottom:1px solid #ededf1; font-family:Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; color:#2e2e33; text-align:right;">{{ .StartTime }} – {{ .EndTime }}{{ if .PositionLabel }}<br><span style="font-size:12px; color:#8a8a92;">{{ .PositionLabel }}</span>{{ end }}</td>
-        </tr>
-        {{ end }}
-    </table>
-    {{ else }}
-    <p style="margin:0 0 20px; font-size:15px; line-height:23px; color:#5a5f6b;">Aucun créneau n'est prévu pour vous cette semaine.</p>
+{{ template "doc_start" (dict "Title" "Planning publié" "Pre" (printf "Votre planning pour %s" .WeekLabel)) }}
+{{ template "head_merchant" .Brand }}
+{{ $sub := printf "Voici vos horaires pour %s." .WeekLabel }}{{ if .EmployeeName }}{{ $sub = printf "Bonjour %s, voici vos horaires pour %s." .EmployeeName .WeekLabel }}{{ end }}
+{{ template "hero" (dict "Tone" "mut" "Pill" "Planning" "Title" "Votre planning est publié" "Sub" $sub) }}
+{{ if .Shifts }}
+{{ template "facts_start" }}
+    {{ range $i, $s := .Shifts }}
+    <tr>
+        <td valign="top" style="padding:12px 12px 12px 0;{{ if $i }} border-top:1px solid #e6eaf2;{{ end }} font-size:14px; line-height:20px; font-weight:700; color:#050817;">{{ $s.DayLabel }}</td>
+        <td valign="top" align="right" style="padding:12px 0;{{ if $i }} border-top:1px solid #e6eaf2;{{ end }} font-size:14px; line-height:20px; color:#3b4b72; text-align:right;">{{ $s.StartTime }} – {{ $s.EndTime }}{{ if $s.PositionLabel }}<br><span style="font-size:12px; color:#5b6680;">{{ $s.PositionLabel }}</span>{{ end }}</td>
+    </tr>
     {{ end }}
-    {{ if .PlanningURL }}
-    {{ template "s_button" (dict "URL" .PlanningURL "Label" "Ouvrir le planning" "Color" .Brand.Color "TextColor" .Brand.TextColor) }}
-    {{ end }}
-{{ template "s_card_end" }}
-{{ template "s_foot" (printf "%s · envoyé avec Wello Resto" .MerchantName) }}
+{{ template "facts_end" }}
+{{ else }}
+{{ template "p_open" }}Aucun créneau n'est prévu pour vous cette semaine.{{ template "p_close" }}
+{{ end }}
+{{ if .PlanningURL }}
+{{ template "button" (dict "URL" .PlanningURL "Label" "Ouvrir le planning" "Color" .Brand.Color "TextColor" .Brand.TextColor) }}
+{{ end }}
+{{ template "foot_merchant" (dict "Brand" .Brand "Mail" "planning_week_published") }}
 {{ template "doc_end" }}

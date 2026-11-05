@@ -1,20 +1,18 @@
-{{ template "doc_start" (dict "Title" "Réservation confirmée" "Pre" (printf "%s à %s · %s" .DateLabel .TimeLabel (plural .PartySize "personne" "personnes")) "Bg" "#f4f4f2") }}
-{{ template "c_band" .Brand }}
-{{ template "c_body_start" }}
-    {{ $sub := "Nous avons hâte de vous recevoir." }}{{ if .CustomerName }}{{ $sub = printf "Nous avons hâte de vous recevoir, %s." .CustomerName }}{{ end }}
-    {{ template "c_title" (dict "Title" "Votre table est réservée" "Sub" $sub) }}
-    {{ template "c_facts_start" }}
-        {{ template "c_fact" (dict "K" "Date" "V" .DateLabel) }}
-        {{ template "c_fact" (dict "K" "Heure" "V" .TimeLabel) }}
-        {{ template "c_fact" (dict "K" "Couverts" "V" (plural .PartySize "personne" "personnes")) }}
-        {{ template "c_fact" (dict "K" "Référence" "V" .BookingNumber) }}
-    {{ template "c_facts_end" }}
-    {{ if .ManagementLink }}
-    <p style="margin:0 0 16px; font-size:15px; line-height:24px; color:#2e2e2e;">Un empêchement ? Vous pouvez modifier ou annuler votre réservation à tout moment.</p>
-    {{ template "c_button" (dict "URL" .ManagementLink "Label" "Gérer ma réservation" "Brand" .Brand) }}
-    {{ end }}
-    {{ template "c_calendar" .CalendarLink }}
-    {{ template "c_sign" (dict "Hello" "À très bientôt," "Name" .Brand.Name) }}
-{{ template "c_body_end" }}
-{{ template "c_foot" .Brand }}
+{{ template "doc_start" (dict "Title" "Réservation confirmée" "Pre" (printf "%s à %s · %s" .DateLabel .TimeLabel (plural .PartySize "personne" "personnes"))) }}
+{{ template "head_merchant" .Brand }}
+{{ $sub := "Nous avons hâte de vous recevoir." }}{{ if .CustomerName }}{{ $sub = printf "Nous avons hâte de vous recevoir, %s." .CustomerName }}{{ end }}
+{{ template "hero" (dict "Tone" "ok" "Pill" "Confirmée" "Title" "Votre table est réservée" "Sub" $sub) }}
+{{ template "facts_start" }}
+    {{ template "fact" (dict "K" "Date" "V" .DateLabel "First" true) }}
+    {{ template "fact" (dict "K" "Heure" "V" .TimeLabel) }}
+    {{ template "fact" (dict "K" "Couverts" "V" (plural .PartySize "personne" "personnes")) }}
+    {{ template "fact" (dict "K" "Référence" "V" .BookingNumber) }}
+{{ template "facts_end" }}
+{{ if .ManagementLink }}
+{{ template "p_open" }}Un empêchement ? Vous pouvez modifier ou annuler votre réservation à tout moment.{{ template "p_close" }}
+{{ template "button" (dict "URL" .ManagementLink "Label" "Gérer ma réservation" "Color" .Brand.Color "TextColor" .Brand.TextColor) }}
+{{ end }}
+{{ template "calendar" .CalendarLink }}
+{{ template "sign" (dict "Hello" "À très bientôt," "Name" .Brand.Name) }}
+{{ template "foot_merchant" (dict "Brand" .Brand "Mail" "booking_confirmation") }}
 {{ template "doc_end" }}

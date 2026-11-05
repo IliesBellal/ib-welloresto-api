@@ -1,19 +1,17 @@
 {{/* Confirmation de rendez-vous de démo envoyée au prospect (site vitrine),
 avec un fichier .ics en pièce jointe. */}}
-{{ template "doc_start" (dict "Title" "Votre rendez-vous est confirmé" "Pre" (printf "Démonstration Wello Resto le %s à %s" .DateLabel .TimeLabel) "Bg" "#f3f5fa") }}
-{{ template "p_band_start" "#0036d9" }}
-    {{ template "p_title" (dict "Title" "Votre rendez-vous est confirmé" "Sub" "Démonstration Wello Resto par téléphone") }}
-    {{ template "p_figure" (dict "Label" "Nous vous appelons le" "Value" (printf "%s à %s" .DateLabel .TimeLabel) "Sub" "") }}
-{{ template "p_band_end" }}
-{{ template "p_body_start" }}
-    {{ template "p_card_start" }}
-        {{ template "p_row" (dict "K" "Établissement" "V" .Establishment) }}
-        {{ template "p_row" (dict "K" "Numéro appelé" "V" .Phone "Last" true) }}
-    {{ template "p_card_end" }}
-    {{ if .GoogleCalendarLink }}
-    {{ template "p_button" (dict "URL" .GoogleCalendarLink "Label" "Ajouter à Google Agenda" "Color" "#0036d9") }}
-    {{ end }}
-    <p style="margin:0 0 14px; padding:0 4px; font-size:13px; line-height:20px; color:#6b7080;">Pour Outlook, Apple Calendar ou un autre agenda, ouvrez le fichier joint à cet e-mail.</p>
-{{ template "p_body_end" }}
-{{ template "p_foot" "Un empêchement ? Répondez simplement à cet e-mail." }}
+{{ template "doc_start" (dict "Title" "Votre rendez-vous est confirmé" "Pre" (printf "Démonstration Wello Resto le %s à %s" .DateLabel .TimeLabel)) }}
+{{ template "head_wello" }}
+{{ template "hero" (dict "Tone" "ok" "Pill" "Confirmé" "Title" "Votre rendez-vous est confirmé" "Sub" "Démonstration Wello Resto par téléphone") }}
+{{ template "facts_start" }}
+    {{ template "fact" (dict "K" "Date" "V" .DateLabel "First" true) }}
+    {{ template "fact" (dict "K" "Heure" "V" .TimeLabel) }}
+    {{ template "fact" (dict "K" "Établissement" "V" .Establishment) }}
+    {{ template "fact" (dict "K" "Numéro appelé" "V" .Phone) }}
+{{ template "facts_end" }}
+{{ if .GoogleCalendarLink }}
+{{ template "button" (dict "URL" .GoogleCalendarLink "Label" "Ajouter à Google Agenda") }}
+{{ end }}
+{{ template "small_open" }}Pour Outlook, Apple Calendar ou un autre agenda, ouvrez le fichier joint à cet e-mail.{{ template "p_close" }}
+{{ template "foot_wello" "Un empêchement ? Répondez simplement à cet e-mail." }}
 {{ template "doc_end" }}

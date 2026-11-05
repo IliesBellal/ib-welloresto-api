@@ -1,13 +1,7 @@
 {{/* Bloc « établissement » des mails adressés au restaurateur : plusieurs
 établissements d'un même groupe peuvent recevoir leurs mails à la même adresse.
-Carte blanche du cadre « Tableau de bord » (partial_pro.html).
+Ligne discrète sous le titre (direction A, partial_ui.html).
 Appel : {{ template "establishment" .Establishment }} (mailer.Establishment). */}}
 {{ define "establishment" }}{{ if .Name }}
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="background-color:#ffffff; border-radius:12px; margin:0 0 12px;">
-    <tr>
-        <td style="padding:14px 20px; font-family:Helvetica, Arial, sans-serif; font-size:13px; line-height:20px; color:#3c4150;">
-            Établissement : <strong>{{ .Name }}</strong>{{ if .Address }}<br>{{ .Address }}{{ end }}{{ if .ID }}<br><span style="color:#7a8194;">Identifiant Wello Resto : {{ .ID }}</span>{{ end }}
-        </td>
-    </tr>
-</table>
+<p style="margin:0 0 20px; font-size:13px; line-height:20px; color:#5b6680; text-align:center;">Établissement : <strong style="color:#050817;">{{ .Name }}</strong>{{ if .Address }}<br>{{ .Address }}{{ end }}{{ if .ID }}<br>Identifiant Wello Resto : {{ .ID }}{{ end }}</p>
 {{ end }}{{ end }}

@@ -1,19 +1,17 @@
-{{ template "doc_start" (dict "Title" "Rappel de votre réservation" "Pre" (printf "%s à %s · %s" .DateLabel .TimeLabel (plural .PartySize "personne" "personnes")) "Bg" "#f4f4f2") }}
-{{ template "c_band" .Brand }}
-{{ template "c_body_start" }}
-    {{ $title := "C'est bientôt !" }}{{ if .CustomerName }}{{ $title = printf "C'est bientôt, %s !" .CustomerName }}{{ end }}
-    {{ template "c_title" (dict "Title" $title "Sub" "Petit rappel de votre réservation.") }}
-    {{ template "c_facts_start" }}
-        {{ template "c_fact" (dict "K" "Date" "V" .DateLabel) }}
-        {{ template "c_fact" (dict "K" "Heure" "V" .TimeLabel) }}
-        {{ template "c_fact" (dict "K" "Couverts" "V" (plural .PartySize "personne" "personnes")) }}
-        {{ template "c_fact" (dict "K" "Référence" "V" .BookingNumber) }}
-    {{ template "c_facts_end" }}
-    {{ if .ManagementLink }}
-    <p style="margin:0 0 16px; font-size:15px; line-height:24px; color:#2e2e2e;">Un changement de programme ? Prévenez-nous en modifiant ou en annulant votre réservation.</p>
-    {{ template "c_button" (dict "URL" .ManagementLink "Label" "Gérer ma réservation" "Brand" .Brand) }}
-    {{ end }}
-    {{ template "c_sign" (dict "Hello" "À très bientôt," "Name" .Brand.Name) }}
-{{ template "c_body_end" }}
-{{ template "c_foot" .Brand }}
+{{ template "doc_start" (dict "Title" "Rappel de votre réservation" "Pre" (printf "%s à %s · %s" .DateLabel .TimeLabel (plural .PartySize "personne" "personnes"))) }}
+{{ template "head_merchant" .Brand }}
+{{ $title := "C'est bientôt !" }}{{ if .CustomerName }}{{ $title = printf "C'est bientôt, %s !" .CustomerName }}{{ end }}
+{{ template "hero" (dict "Tone" "mut" "Pill" "Rappel" "Title" $title "Sub" "Petit rappel de votre réservation.") }}
+{{ template "facts_start" }}
+    {{ template "fact" (dict "K" "Date" "V" .DateLabel "First" true) }}
+    {{ template "fact" (dict "K" "Heure" "V" .TimeLabel) }}
+    {{ template "fact" (dict "K" "Couverts" "V" (plural .PartySize "personne" "personnes")) }}
+    {{ template "fact" (dict "K" "Référence" "V" .BookingNumber) }}
+{{ template "facts_end" }}
+{{ if .ManagementLink }}
+{{ template "p_open" }}Un changement de programme ? Prévenez-nous en modifiant ou en annulant votre réservation.{{ template "p_close" }}
+{{ template "button" (dict "URL" .ManagementLink "Label" "Gérer ma réservation" "Color" .Brand.Color "TextColor" .Brand.TextColor) }}
+{{ end }}
+{{ template "sign" (dict "Hello" "À très bientôt," "Name" .Brand.Name) }}
+{{ template "foot_merchant" (dict "Brand" .Brand "Mail" "booking_reminder") }}
 {{ template "doc_end" }}

@@ -41,6 +41,19 @@ type invoiceVATLine struct {
 	TTC  int64
 }
 
+// invoicePaymentLabel : libellé imprimé dans « Encaissements » pour le code de
+// moyen de paiement figé dans le ticket (payments.mop, repris tel quel dans
+// PaymentsSnapshot). Seul l'affichage change : le ticket figé n'est jamais
+// réécrit. Paiement Stripe (commande en ligne ScanNOrder) : « En ligne »,
+// demandé par Ilies le 2026-11-04. Les autres codes restent imprimés tels quels.
+func invoicePaymentLabel(mop string) string {
+	switch strings.ToUpper(strings.TrimSpace(mop)) {
+	case models.StripeMOP, "STRIPE_WEB_HOOK":
+		return "En ligne"
+	}
+	return mop
+}
+
 // buildInvoicePDF génère le PDF de facture à partir du Receipt déjà figé (NF525) : les totaux
 // HT/TTC sont repris tels quels, et vatLines (cf. computeInvoiceVATBreakdown) se recale sur eux.
 // Les mentions absentes (SIRET, n° de TVA, adresse, téléphone, client) sont omises.
@@ -134,7 +147,7 @@ func buildInvoicePDF(rcpt *models.Receipt, header *accounting.MerchantHeader, or
 
 	pdf.SetFont("Arial", "", 11)
 	for _, payment := range payments {
-		pdf.CellFormat(120, 8, translate(payment.MOP), "1", 0, "L", false, 0, "")
+		pdf.CellFormat(120, 8, translate(invoicePaymentLabel(payment.MOP)), "1", 0, "L", false, 0, "")
 		pdf.CellFormat(70, 8, formatAmount(int64(payment.Amount)), "1", 1, "R", false, 0, "")
 	}
 

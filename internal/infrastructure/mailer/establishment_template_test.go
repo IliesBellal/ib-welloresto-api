@@ -23,7 +23,7 @@ func TestRestaurateurMailsShowTheEstablishment(t *testing.T) {
 			if err != nil {
 				t.Fatalf("RenderTemplate() error = %v", err)
 			}
-			for _, want := range []string{"Établissement : <strong>Chez Camille</strong>", "1 rue de la Gare, 57000 Metz", "Identifiant Wello Resto : 212"} {
+			for _, want := range []string{`Établissement : <strong style="color:#050817;">Chez Camille</strong>`, "1 rue de la Gare, 57000 Metz", "Identifiant Wello Resto : 212"} {
 				if !strings.Contains(html, want) {
 					t.Errorf("mail sans %q", want)
 				}

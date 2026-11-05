@@ -15,6 +15,7 @@ import (
 func templateFixtures() map[string]interface{} {
 	base := EmailBaseData{BrandName: "Wello Resto", BrandLogoURL: BrandLogoURL, SupportEmail: SupportEmail, Year: 2026}
 	brand := NewMerchantBrand("Trattoria Nonna Lucia", "https://example.com/logo.png", "#8C1C2B", "#ffffff")
+	brand.Code = "nonna-lucia"
 	booking := BookingMessageData{
 		EmailBaseData: base, Brand: brand, MerchantName: brand.Name, CustomerName: "Camille",
 		BookingNumber: "R-48213", DateLabel: "samedi 7 novembre 2026", TimeLabel: "20:00", PartySize: 4,
@@ -32,11 +33,11 @@ func templateFixtures() map[string]interface{} {
 		"booking_post_visit.html":     BookingPostVisitData{EmailBaseData: base, Brand: brand, MerchantName: brand.Name, CustomerName: "Camille"},
 		"waitlist_available.html":     WaitlistAvailableData{EmailBaseData: base, Brand: brand, MerchantName: brand.Name, CustomerName: "Camille", PartySize: 2, ExpiryMinutes: 15},
 		"scannorder_payout.html": ScanNOrderConfirmationData{
-			Brand: brand, MerchantName: brand.Name, OrderTotal: "33.00", MerchantCurrency: "€", OrderDate: "26/10/2026",
+			Brand: brand, MerchantName: brand.Name, OrderTotal: "33,00 €", OrderNumber: "142", OrderDate: "26/10/2026",
 			TrackingURL: "https://scannorder.welloresto.fr/suivi/abc", PrivacyURL: "https://welloresto.fr/confidentialite",
 		},
 		"customer_refund.html": RefundData{
-			Brand: brand, MerchantName: brand.Name, Amount: "15.50 EUR", PaymentMethod: "visa", PaymentDetail: "•••• 4242",
+			Brand: brand, MerchantName: brand.Name, Amount: "15,50 €", PaymentMethod: "visa", PaymentDetail: "•••• 4242",
 			ReceiptURL: "https://pay.stripe.com/receipts/abc",
 		},
 		"invoice_email.html": InvoiceEmailData{Brand: brand, MerchantName: brand.Name, CustomerName: "Camille", ReceiptNumber: "F-2026-0042", OrderNumber: "1042"},
@@ -175,5 +176,110 @@ func TestNewMerchantBrand(t *testing.T) {
 		if b.LogoURL != "" {
 			t.Errorf("logo non http(s) conservé : %q", b.LogoURL)
 		}
+	}
+}
+
+func TestInitials(t *testing.T) {
+	cases := map[string]string{
+		"Croq'O Pizzas":       "CP",
+		"Timgad":              "T",
+		"  le petit   zinc  ": "LP",
+		"L'Atelier du Goût":   "LD",
+		"123 Burger":          "1B",
+		"":                    "",
+		"« Chez Baba »":       "CB",
+	}
+	for name, want := range cases {
+		if got := initials(name); got != want {
+			t.Errorf("initials(%q) = %q, want %q", name, got, want)
+		}
+	}
+	if b := NewMerchantBrand("Chez Baba", "", "", ""); b.Initials != "CB" {
+		t.Errorf("NewMerchantBrand ne pose pas les initiales : %q", b.Initials)
+	}
+}
+
+func TestFormatEuros(t *testing.T) {
+	cases := map[int64]string{
+		0:        "0,00 €",
+		5:        "0,05 €",
+		3300:     "33,00 €",
+		128460:   "1 284,60 €",
+		-1550:    "-15,50 €",
+		12345678: "123 456,78 €",
+	}
+	for cents, want := range cases {
+		if got := FormatEuros(cents); got != want {
+			t.Errorf("FormatEuros(%d) = %q, want %q", cents, got, want)
+		}
+	}
+}
+
+func TestPoweredByURL(t *testing.T) {
+	got := PoweredByURL("nonna-lucia", "booking_confirmation")
+	want := "https://welloresto.fr/?utm_campaign=nonna-lucia&utm_content=booking_confirmation&utm_medium=powered_by&utm_source=email"
+	if got != want {
+		t.Errorf("PoweredByURL = %q, want %q", got, want)
+	}
+	if got := PoweredByURL(" ", ""); got != "https://welloresto.fr/?utm_medium=powered_by&utm_source=email" {
+		t.Errorf("PoweredByURL sans slug ni mail = %q", got)
+	}
+}
+
+// Les mails envoyés au nom d'un établissement finissent par « Propulsé par
+// Wello Resto », lien suivi vers la vitrine ; plus aucune carte « pièce
+// jointe » ni ancien cadre (bandeau, Georgia, emoji).
+func TestClientFooterAndNoLegacyFrame(t *testing.T) {
+	fixtures := templateFixtures()
+	clientMails := []string{
+		"booking_confirmation.html", "booking_reminder.html", "booking_modification.html",
+		"booking_cancellation.html", "booking_reconfirmation.html", "booking_post_visit.html",
+		"waitlist_available.html", "scannorder_payout.html", "customer_refund.html",
+		"invoice_email.html", "planning_week_published.html",
+	}
+	for _, name := range clientMails {
+		html, err := RenderTemplate(name, fixtures[name])
+		if err != nil {
+			t.Fatalf("%s : %v", name, err)
+		}
+		if !strings.Contains(html, "Propulsé par") || !strings.Contains(html, WelloMarkURL) {
+			t.Errorf("%s : pied « Propulsé par Wello Resto » absent", name)
+		}
+		mail := strings.TrimSuffix(name, ".html")
+		if !strings.Contains(html, "utm_content="+mail) {
+			t.Errorf("%s : le lien de la vitrine ne porte pas utm_content=%s", name, mail)
+		}
+	}
+	for name, data := range fixtures {
+		html, err := RenderTemplate(name, data)
+		if err != nil {
+			t.Fatalf("%s : %v", name, err)
+		}
+		for _, legacy := range []string{"Envoyé avec Wello Resto", "Georgia", "&#128274;", "&#128197;", ">PDF<"} {
+			if strings.Contains(html, legacy) {
+				t.Errorf("%s contient encore %q (ancien cadre)", name, legacy)
+			}
+		}
+	}
+}
+
+// Sans logo, l'en-tête d'un mail client affiche les initiales à la couleur de
+// l'établissement ; avec logo, l'image.
+func TestMerchantHeadLogoOrInitials(t *testing.T) {
+	data := templateFixtures()["booking_post_visit.html"].(BookingPostVisitData)
+	html, err := RenderTemplate("booking_post_visit.html", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(html, `src="https://example.com/logo.png"`) {
+		t.Error("logo de l'établissement absent")
+	}
+	data.Brand = NewMerchantBrand("Croq'O Pizzas", "", "#c8102e", "")
+	html, err = RenderTemplate("booking_post_visit.html", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(html, ">CP</td>") || !strings.Contains(html, "background-color:#c8102e") {
+		t.Error("initiales sur la couleur de l'établissement absentes")
 	}
 }

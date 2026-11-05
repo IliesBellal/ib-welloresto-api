@@ -1,9 +1,12 @@
-{{/* Squelette commun à tous les mails (docs/emails-styles.md) : document,
-pré-en-tête masqué (la ligne grise affichée sous l'objet dans la boîte de
-réception) et colonne centrée de 600 px. Le contenu se compose de lignes <tr>.
+{{/* Squelette commun à tous les mails, direction « Blanc » (A) choisie le
+2026-11-04 (docs/emails-styles.md) : page blanche, colonne centrée de 560 px,
+police de la vitrine (Plus Jakarta Sans, servie par welloresto.fr pour Apple
+Mail et iOS ; Gmail et Outlook prennent la police système), pré-en-tête masqué
+(la ligne grise affichée sous l'objet dans la boîte de réception). Tout le
+contenu se place dans une seule cellule, bloc après bloc (partial_ui.html).
 Appel :
-  {{ template "doc_start" (dict "Title" "…" "Pre" "…" "Bg" "#f4f4f2") }}
-  … lignes <tr> …
+  {{ template "doc_start" (dict "Title" "…" "Pre" "…") }}
+  … blocs …
   {{ template "doc_end" }} */}}
 {{ define "doc_start" }}<!DOCTYPE html>
 <html lang="fr">
@@ -14,16 +17,27 @@ Appel :
     <meta name="color-scheme" content="light">
     <meta name="supported-color-schemes" content="light">
     <title>{{ .Title }}</title>
+    <style>
+        @font-face { font-family: 'Plus Jakarta Sans'; font-style: normal; font-weight: 400; src: url(https://welloresto.fr/email/fonts/plus-jakarta-sans-latin-400-normal.woff2) format('woff2'); }
+        @font-face { font-family: 'Plus Jakarta Sans'; font-style: normal; font-weight: 700; src: url(https://welloresto.fr/email/fonts/plus-jakarta-sans-latin-700-normal.woff2) format('woff2'); }
+        @font-face { font-family: 'Plus Jakarta Sans'; font-style: normal; font-weight: 800; src: url(https://welloresto.fr/email/fonts/plus-jakarta-sans-latin-800-normal.woff2) format('woff2'); }
+        @media (max-width: 480px) { .wr-col { padding: 28px 18px 24px !important; } }
+    </style>
+    {{ msoFontFix }}
 </head>
-<body style="margin:0; padding:0; background-color:{{ .Bg }}; -webkit-text-size-adjust:100%;">
-{{ if .Pre }}<div style="display:none; max-height:0; overflow:hidden; mso-hide:all; font-size:1px; line-height:1px; color:{{ .Bg }};">{{ .Pre }}&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;</div>{{ end }}
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{{ .Bg }}" style="background-color:{{ .Bg }};">
+<body style="margin:0; padding:0; background-color:#ffffff; -webkit-text-size-adjust:100%;">
+{{ if .Pre }}<div style="display:none; max-height:0; overflow:hidden; mso-hide:all; font-size:1px; line-height:1px; color:#ffffff;">{{ .Pre }}&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;</div>{{ end }}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="background-color:#ffffff;">
     <tr>
-        <td align="center" style="padding:24px 12px 32px;">
-            <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px;">
+        <td align="center" style="padding:0 12px;">
+            <table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:560px;">
+                <tr>
+                    <td class="wr-col" style="padding:40px 24px 32px; font-family:'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size:15px; line-height:24px; color:#3b4b72;">
 {{ end }}
 
 {{ define "doc_end" }}
+                    </td>
+                </tr>
             </table>
         </td>
     </tr>

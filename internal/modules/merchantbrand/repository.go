@@ -33,13 +33,21 @@ func (r *Repository) Resolve(ctx context.Context, merchantID, name string) maile
 	if r == nil || r.database == nil || strings.TrimSpace(merchantID) == "" {
 		return fallback
 	}
-	var dbName, logoURL, color, textColor string
+	// code : slug ScanNOrder du QR principal (même règle que
+	// scannorder.snoMainQRCondition), repris dans le lien « Propulsé par Wello
+	// Resto » du pied des mails (mailer.PoweredByURL).
+	var dbName, logoURL, color, textColor, code string
 	err := dbx.GetDB(ctx, r.database).QueryRowContext(ctx, `
 		SELECT COALESCE(m.fullName, ''), COALESCE(m.logo_url, ''),
-		       COALESCE(mp.primary_color, ''), COALESCE(mp.text_color_on_primary_color, '')
+		       COALESCE(mp.primary_color, ''), COALESCE(mp.text_color_on_primary_color, ''),
+		       COALESCE((SELECT qr.code FROM qrcodes qr
+		                 WHERE qr.merchant_id = m.id::text
+		                   AND qr.location_id IS NULL AND qr.user_id IS NULL
+		                   AND qr.deleted = false AND qr.enabled = true
+		                 ORDER BY qr.qr_id LIMIT 1), '')
 		FROM merchant m
 		LEFT JOIN merchant_parameters mp ON mp.merchant_id = m.id::text
-		WHERE m.id::text = ?`, merchantID).Scan(&dbName, &logoURL, &color, &textColor)
+		WHERE m.id::text = ?`, merchantID).Scan(&dbName, &logoURL, &color, &textColor, &code)
 	if err != nil {
 		if err != sql.ErrNoRows {
 			logger.FromContext(ctx).Warn("merchantbrand: lecture de l'identité impossible, cadre par défaut",
@@ -50,5 +58,7 @@ func (r *Repository) Resolve(ctx context.Context, merchantID, name string) maile
 	if strings.TrimSpace(name) == "" {
 		name = dbName
 	}
-	return mailer.NewMerchantBrand(name, logoURL, color, textColor)
+	brand := mailer.NewMerchantBrand(name, logoURL, color, textColor)
+	brand.Code = strings.TrimSpace(code)
+	return brand
 }

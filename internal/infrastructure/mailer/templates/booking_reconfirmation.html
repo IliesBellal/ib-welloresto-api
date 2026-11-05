@@ -1,18 +1,16 @@
-{{ template "doc_start" (dict "Title" "Merci de confirmer votre réservation" "Pre" (printf "%s à %s · %s : confirmez-vous votre venue ?" .DateLabel .TimeLabel (plural .PartySize "personne" "personnes")) "Bg" "#f4f4f2") }}
-{{ template "c_band" .Brand }}
-{{ template "c_body_start" }}
-    {{ template "c_title" (dict "Title" "Confirmez-vous votre venue ?" "Sub" "Votre table vous attend.") }}
-    {{ template "c_facts_start" }}
-        {{ template "c_fact" (dict "K" "Date" "V" .DateLabel) }}
-        {{ template "c_fact" (dict "K" "Heure" "V" .TimeLabel) }}
-        {{ template "c_fact" (dict "K" "Couverts" "V" (plural .PartySize "personne" "personnes")) }}
-        {{ template "c_fact" (dict "K" "Référence" "V" .BookingNumber) }}
-    {{ template "c_facts_end" }}
-    <p style="margin:0 0 16px; font-size:15px; line-height:24px; color:#2e2e2e;">Merci de nous confirmer votre venue{{ if .ManagementLink }} avec le bouton ci-dessous{{ end }}. Si vous avez reçu notre SMS, vous pouvez aussi y répondre <strong>OUI</strong>.</p>
-    {{ if .ManagementLink }}
-    {{ template "c_button" (dict "URL" .ManagementLink "Label" "Confirmer ou modifier ma réservation" "Brand" .Brand) }}
-    {{ end }}
-    {{ template "c_sign" (dict "Hello" "À très bientôt," "Name" .Brand.Name) }}
-{{ template "c_body_end" }}
-{{ template "c_foot" .Brand }}
+{{ template "doc_start" (dict "Title" "Merci de confirmer votre réservation" "Pre" (printf "%s à %s · %s : confirmez-vous votre venue ?" .DateLabel .TimeLabel (plural .PartySize "personne" "personnes"))) }}
+{{ template "head_merchant" .Brand }}
+{{ template "hero" (dict "Tone" "warn" "Pill" "À confirmer" "Title" "Confirmez-vous votre venue ?" "Sub" "Votre table vous attend.") }}
+{{ template "facts_start" }}
+    {{ template "fact" (dict "K" "Date" "V" .DateLabel "First" true) }}
+    {{ template "fact" (dict "K" "Heure" "V" .TimeLabel) }}
+    {{ template "fact" (dict "K" "Couverts" "V" (plural .PartySize "personne" "personnes")) }}
+    {{ template "fact" (dict "K" "Référence" "V" .BookingNumber) }}
+{{ template "facts_end" }}
+{{ template "p_open" }}Merci de nous confirmer votre venue{{ if .ManagementLink }} avec le bouton ci-dessous{{ end }}. Si vous avez reçu notre SMS, vous pouvez aussi y répondre <strong style="color:#050817;">OUI</strong>.{{ template "p_close" }}
+{{ if .ManagementLink }}
+{{ template "button" (dict "URL" .ManagementLink "Label" "Confirmer ou modifier ma réservation" "Color" .Brand.Color "TextColor" .Brand.TextColor) }}
+{{ end }}
+{{ template "sign" (dict "Hello" "À très bientôt," "Name" .Brand.Name) }}
+{{ template "foot_merchant" (dict "Brand" .Brand "Mail" "booking_reconfirmation") }}
 {{ template "doc_end" }}

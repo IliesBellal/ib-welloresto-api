@@ -1,13 +1,11 @@
-{{ template "doc_start" (dict "Title" "Réservation annulée" "Pre" (printf "Réservation du %s à %s annulée" .DateLabel .TimeLabel) "Bg" "#f4f4f2") }}
-{{ template "c_band" .Brand }}
-{{ template "c_body_start" }}
-    {{ template "c_title" (dict "Title" "Votre réservation est annulée" "Sub" "") }}
-    <p style="margin:0 0 16px; font-size:15px; line-height:24px; color:#2e2e2e;">{{ if .CustomerName }}Bonjour {{ .CustomerName }}, votre{{ else }}Votre{{ end }} réservation du <strong>{{ .DateLabel }}</strong> à <strong>{{ .TimeLabel }}</strong> a bien été annulée.</p>
-    {{ template "c_facts_start" }}
-        {{ template "c_fact" (dict "K" "Référence" "V" .BookingNumber) }}
-    {{ template "c_facts_end" }}
-    <p style="margin:0 0 16px; font-size:15px; line-height:24px; color:#2e2e2e;">Vous pouvez réserver une nouvelle table quand vous le souhaitez.</p>
-    {{ template "c_sign" (dict "Hello" "Au plaisir de vous accueillir," "Name" .Brand.Name) }}
-{{ template "c_body_end" }}
-{{ template "c_foot" .Brand }}
+{{ template "doc_start" (dict "Title" "Réservation annulée" "Pre" (printf "Réservation du %s à %s annulée" .DateLabel .TimeLabel)) }}
+{{ template "head_merchant" .Brand }}
+{{ template "hero" (dict "Tone" "mut" "Pill" "Annulée" "Title" "Votre réservation est annulée") }}
+{{ template "p_open" }}{{ if .CustomerName }}Bonjour {{ .CustomerName }}, votre{{ else }}Votre{{ end }} réservation du <strong style="color:#050817;">{{ .DateLabel }}</strong> à <strong style="color:#050817;">{{ .TimeLabel }}</strong> a bien été annulée.{{ template "p_close" }}
+{{ template "facts_start" }}
+    {{ template "fact" (dict "K" "Référence" "V" .BookingNumber "First" true) }}
+{{ template "facts_end" }}
+{{ template "p_open" }}Vous pouvez réserver une nouvelle table quand vous le souhaitez.{{ template "p_close" }}
+{{ template "sign" (dict "Hello" "Au plaisir de vous accueillir," "Name" .Brand.Name) }}
+{{ template "foot_merchant" (dict "Brand" .Brand "Mail" "booking_cancellation") }}
 {{ template "doc_end" }}
