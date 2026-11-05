@@ -320,7 +320,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 	{
 		step := "configuration_attribute"
 		q := `
-		SELECT oi.order_item_id, ca.id, ca.title, ca.max_options, ca.attribute_type
+		SELECT oi.order_item_id, ca.id, ca.title, ca.max_options, ca.attribute_type, pca.num_order
 		FROM orders o
 		INNER JOIN orderitems oi on oi.order_id = o.order_id
 		INNER JOIN product_configurable_attribute pca on pca.product_id = ` + castChar("oi.product_id") + `
@@ -334,10 +334,16 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			return nil, err
 		}
 		defer rows.Close()
+		type attributeWithOrder struct {
+			attribute models.ConfigurableAttribute
+			numOrder  int
+		}
+		attributesByOrderItem := map[string][]attributeWithOrder{}
 		for rows.Next() {
 			var id, orderItemID, title, attrType sql.NullString
 			var maxOptions sql.NullInt64
-			if err := rows.Scan(&orderItemID, &id, &title, &maxOptions, &attrType); err != nil {
+			var numOrder sql.NullInt64
+			if err := rows.Scan(&orderItemID, &id, &title, &maxOptions, &attrType, &numOrder); err != nil {
 				return nil, err
 			}
 
@@ -347,14 +353,28 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				opts = val
 			}
 
-			configurableAttributesMap[orderItemID.String] = append(configurableAttributesMap[orderItemID.String], models.ConfigurableAttribute{
-				ID:            id.String,
-				OrderItemID:   orderItemID.String,
-				AttributeType: attrType.String,
-				Title:         title.String,
-				MaxOptions:    int(maxOptions.Int64),
-				Options:       opts,
+			attributesByOrderItem[orderItemID.String] = append(attributesByOrderItem[orderItemID.String], attributeWithOrder{
+				attribute: models.ConfigurableAttribute{
+					ID:            id.String,
+					OrderItemID:   orderItemID.String,
+					AttributeType: attrType.String,
+					Title:         title.String,
+					MaxOptions:    int(maxOptions.Int64),
+					Options:       opts,
+				},
+				numOrder: int(numOrder.Int64),
 			})
+		}
+		// Tri en Go (même raison que pour les options ci-dessus) : préserve
+		// l'ordre défini dans le back-office (product_configurable_attribute.num_order),
+		// sinon les attributs ressortent dans l'ordre de lecture SQL, qui est arbitraire.
+		for orderItemID, attrs := range attributesByOrderItem {
+			sort.SliceStable(attrs, func(i, j int) bool {
+				return attrs[i].numOrder < attrs[j].numOrder
+			})
+			for _, a := range attrs {
+				configurableAttributesMap[orderItemID] = append(configurableAttributesMap[orderItemID], a.attribute)
+			}
 		}
 	}
 
