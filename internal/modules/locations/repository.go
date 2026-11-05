@@ -205,7 +205,7 @@ func (r *LocationsRepository) GetLocations(ctx context.Context, merchantID strin
 
 	// Révision du plan (publication par lot). Lecture tolérante : cette route
 	// est aussi celle du POS, elle ne doit jamais échouer parce que la table
-	// floor_plan_revisions n'existe pas encore (migration 202) — dans ce cas
+	// floor_plan_revisions n'existe pas encore (migration 204) — dans ce cas
 	// la révision reste à 0.
 	res.Revision = r.currentPlanRevision(ctx, merchantID)
 

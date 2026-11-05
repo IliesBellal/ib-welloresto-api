@@ -17,7 +17,7 @@ import (
 // TestPublishPlan_Postgres rejoue, contre un vrai Postgres, les garanties de
 // POST /locations/plan/publish : ids temporaires résolus, tout-ou-rien,
 // contrôle de révision, ordre des suppressions, sérialisation des publications
-// concurrentes. Prérequis : migrations 202 et 203 appliquées.
+// concurrentes. Prérequis : migrations 204 et 205 appliquées.
 func TestPublishPlan_Postgres(t *testing.T) {
 	db := pgtest.Open(t)
 	ctx := context.Background()
