@@ -1752,6 +1752,9 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			r.Post("/floors/{floor_id}/tables", locationsH.CreateTable)
 			r.Patch("/tables/{location_id}", locationsH.UpdateTable)
 			r.Delete("/tables/{location_id}", locationsH.DeleteTable)
+
+			// Publication du brouillon du plan de salle, en une transaction.
+			r.Post("/plan/publish", locationsH.PublishPlan)
 		})
 	})
 

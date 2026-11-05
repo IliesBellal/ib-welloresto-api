@@ -163,10 +163,16 @@ func (s *LocationsService) DeleteFloor(ctx context.Context, token, floorID strin
 	}, nil
 }
 
-// validObstacleTypes reflète les quatre types d'obstacles proposés par l'éditeur BO.
+// validObstacleTypes reflète le catalogue d'obstacles proposé par l'éditeur BO
+// et la contrainte floor_obstacles_type_check (migration 203).
 var validObstacleTypes = map[ObstacleType]bool{
 	ObstacleTypeWall: true, ObstacleTypeBar: true, ObstacleTypeStairs: true, ObstacleTypeDoor: true,
+	ObstacleTypeWindow: true, ObstacleTypePlant: true, ObstacleTypePillar: true,
 }
+
+// maxObstacleSize : un mur dessiné d'un bord à l'autre du plan mesure jusqu'à
+// 1000 unités (le canvas virtuel).
+const maxObstacleSize = 1000
 
 // validateObstacleGeometry borne les propriétés d'un obstacle au référentiel du
 // plan (canvas virtuel 1000×1000). Champs nil = non modifiés (payload partiel
@@ -182,7 +188,7 @@ func validateObstacleGeometry(obsType *ObstacleType, x, y, width, height, angle,
 	if !inRange(x, 0, 1000) || !inRange(y, 0, 1000) {
 		return models.ErrInvalidObstacleGeometry
 	}
-	if !inRange(width, 10, 500) || !inRange(height, 10, 500) {
+	if !inRange(width, 10, maxObstacleSize) || !inRange(height, 10, maxObstacleSize) {
 		return models.ErrInvalidObstacleGeometry
 	}
 	if !inRange(angle, 0, 359) {

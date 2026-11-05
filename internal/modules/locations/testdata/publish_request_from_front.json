@@ -1,0 +1,199 @@
+{
+  "base_revision": 4,
+  "floors": {
+    "create": [
+      {
+        "temp_id": "tmp_f1",
+        "name": "Mezzanine"
+      }
+    ],
+    "update": [
+      {
+        "id": "13",
+        "name": "Terrasse couverte"
+      }
+    ],
+    "delete": [
+      "14"
+    ]
+  },
+  "tables": {
+    "create": [
+      {
+        "temp_id": "tmp_t2",
+        "floor_id": "tmp_f1",
+        "location_name": "Table 3",
+        "seats": 4,
+        "shape": "circle",
+        "x": 40,
+        "y": 40,
+        "width": 80,
+        "height": 80,
+        "angle": 0,
+        "attributes": {
+          "pmr": true,
+          "terrace": false,
+          "vip": true,
+          "window": false
+        }
+      },
+      {
+        "temp_id": "tmp_t3",
+        "floor_id": "tmp_f1",
+        "location_name": "Table 4",
+        "seats": 4,
+        "shape": "circle",
+        "x": 140,
+        "y": 40,
+        "width": 80,
+        "height": 80,
+        "angle": 0,
+        "attributes": {
+          "pmr": true,
+          "terrace": false,
+          "vip": true,
+          "window": false
+        }
+      }
+    ],
+    "update": [
+      {
+        "id": "41",
+        "location_name": "Table 2",
+        "seats": 8,
+        "floor_id": "tmp_f1",
+        "shape": "rectangle",
+        "x": 320,
+        "y": 200,
+        "width": 120,
+        "height": 80,
+        "angle": 45,
+        "enabled": true,
+        "attributes": {
+          "pmr": true,
+          "terrace": false,
+          "vip": false,
+          "window": false
+        }
+      }
+    ],
+    "delete": [
+      "40"
+    ]
+  },
+  "obstacles": {
+    "create": [
+      {
+        "temp_id": "tmp_o4",
+        "floor_id": "12",
+        "type": "door",
+        "x": 200,
+        "y": 100,
+        "width": 80,
+        "height": 12,
+        "angle": 0,
+        "direction": 90
+      },
+      {
+        "temp_id": "tmp_o5",
+        "floor_id": "tmp_f1",
+        "type": "plant",
+        "x": 300,
+        "y": 300,
+        "width": 40,
+        "height": 40,
+        "angle": 0
+      },
+      {
+        "temp_id": "tmp_o6",
+        "floor_id": "12",
+        "type": "wall",
+        "x": 400,
+        "y": 600,
+        "width": 200,
+        "height": 12,
+        "angle": 90
+      }
+    ],
+    "update": [
+      {
+        "id": "obs-1",
+        "type": "wall",
+        "x": 500,
+        "y": 100,
+        "width": 600,
+        "height": 12,
+        "angle": 0
+      },
+      {
+        "id": "obs-2",
+        "type": "door",
+        "x": 300,
+        "y": 100,
+        "width": 80,
+        "height": 12,
+        "angle": 0,
+        "direction": 120
+      }
+    ],
+    "delete": [
+      "obs-3"
+    ]
+  },
+  "areas": {
+    "create": [
+      {
+        "temp_id": "tmp_a7",
+        "floor_id": "tmp_f1",
+        "name": "Nouvelle zone",
+        "stroke_color": "#64748B",
+        "color": "#E2E8F0",
+        "x": 10,
+        "y": 10,
+        "points": [
+          {
+            "x": 10,
+            "y": 10
+          },
+          {
+            "x": 200,
+            "y": 10
+          },
+          {
+            "x": 200,
+            "y": 200
+          }
+        ],
+        "angle": 0
+      }
+    ],
+    "update": [
+      {
+        "id": "5",
+        "name": "Coin enfants",
+        "stroke_color": "#64748B",
+        "color": "#FFEEDD",
+        "x": 0,
+        "y": 0,
+        "points": [
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 100,
+            "y": 0
+          },
+          {
+            "x": 100,
+            "y": 100
+          }
+        ],
+        "angle": 0
+      }
+    ],
+    "delete": [
+      "6"
+    ]
+  }
+}
