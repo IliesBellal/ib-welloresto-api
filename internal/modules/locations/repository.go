@@ -203,6 +203,12 @@ func (r *LocationsRepository) GetLocations(ctx context.Context, merchantID strin
 		}
 	}
 
+	// Révision du plan (publication par lot). Lecture tolérante : cette route
+	// est aussi celle du POS, elle ne doit jamais échouer parce que la table
+	// floor_plan_revisions n'existe pas encore (migration 200) — dans ce cas
+	// la révision reste à 0.
+	res.Revision = r.currentPlanRevision(ctx, merchantID)
+
 	// 6. CONFLITS DE RÉSERVATION SUR UN CRÉNEAU DONNÉ (optionnel)
 	// N'est calculé que si l'appelant a fourni booking_date_from/booking_date_to
 	// (flux réservation) ; le flux commande (aucun window) ne déclenche pas

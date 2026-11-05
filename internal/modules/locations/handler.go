@@ -168,6 +168,30 @@ func (h *LocationsHandler) DeleteTable(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "locations", "delete_table", result)
 }
 
+// PublishPlan : POST /locations/plan/publish — applique en une transaction le
+// différentiel d'un brouillon de plan (étages, tables, obstacles, zones).
+func (h *LocationsHandler) PublishPlan(w http.ResponseWriter, r *http.Request) {
+	token := helpers.ExtractToken(r)
+	if strings.TrimSpace(token) == "" {
+		models.SendJSON(w, http.StatusUnauthorized, "locations", "publish_plan", map[string]string{"error": "missing_token"})
+		return
+	}
+
+	var payload PublishPlanRequest
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "locations", "publish_plan", map[string]string{"error": "invalid_body"})
+		return
+	}
+
+	result, err := h.locationsService.PublishPlan(r.Context(), token, payload)
+	if err != nil {
+		models.SendErrorJSON(w, "locations", "publish_plan", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "locations", "publish_plan", result)
+}
+
 func (h *LocationsHandler) CreateFloor(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {

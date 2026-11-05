@@ -577,6 +577,9 @@ var (
 	ErrInvalidObstacleGeometry = errors.New("invalid_obstacle_geometry")
 	ErrInvalidAreaGeometry     = errors.New("invalid_area_geometry")
 	ErrInvalidBookingWindow    = errors.New("invalid_booking_window")
+	// Publication du plan par lot (POST /locations/plan/publish)
+	ErrInvalidPlanPayload   = errors.New("invalid_plan_payload")
+	ErrPlanRevisionConflict = errors.New("plan_revision_conflict")
 
 	// Erreurs du module réservation
 	ErrTableConflict   = errors.New("table_conflict")
@@ -1951,7 +1954,17 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 	case errors.Is(err, ErrInvalidObstacleGeometry):
 		status = http.StatusUnprocessableEntity
 		errorStatus = "invalid_obstacle_geometry"
-		errorMsg = "Obstacle properties are out of bounds (x/y 0-1000, width/height 10-500, angle 0-359, direction only for type=door)."
+		errorMsg = "Obstacle properties are out of bounds (x/y 0-1000, width/height 10-1000, angle 0-359, direction only for type=door)."
+
+	case errors.Is(err, ErrInvalidPlanPayload):
+		status = http.StatusUnprocessableEntity
+		errorStatus = "invalid_plan_payload"
+		errorMsg = "The floor plan payload is invalid (temporary ids must start with tmp_ and be unique, references must resolve, no entity may be both updated and deleted)."
+
+	case errors.Is(err, ErrPlanRevisionConflict):
+		status = http.StatusConflict
+		errorStatus = "plan_revision_conflict"
+		errorMsg = "The floor plan was published by someone else since your draft was loaded. Reload the plan and reapply your changes."
 
 	case errors.Is(err, ErrInvalidAreaGeometry):
 		status = http.StatusUnprocessableEntity
