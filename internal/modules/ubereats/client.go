@@ -1,7 +1,6 @@
 package ubereats
 
 import (
-	requestlogger "welloresto-api/internal/middleware/request_logger"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,6 +10,7 @@ import (
 	"net/url"
 	"time"
 	"welloresto-api/internal/logger"
+	requestlogger "welloresto-api/internal/middleware/request_logger"
 	ueModels "welloresto-api/internal/webhook/ubereats/models"
 )
 
@@ -45,7 +45,6 @@ func (c *UberClient) doJSONRequest(ctx context.Context, method, url, token strin
 
 	log := logger.FromContext(ctx)
 	log.Info("UberClient.doJSONRequest - doJSONRequest : " + url + " response : " + resp.Status)
-	log.Info("UberClient.doJSONRequest - token : " + token)
 	log.Info("UberClient.doJSONRequest - payload : " + fmt.Sprint(payload))
 	if resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
