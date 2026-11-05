@@ -222,6 +222,10 @@ type LocationResponse struct {
 	Floors    []Floor    `json:"floors"`
 	Areas     []Area     `json:"areas"`
 	Obstacles []Obstacle `json:"obstacles"`
+	// Revision du plan de salle (floor_plan_revisions). L'éditeur la renvoie
+	// à la publication (base_revision) pour détecter une publication
+	// concurrente. 0 = jamais publié par lot.
+	Revision int64 `json:"revision"`
 }
 
 type Floor struct {

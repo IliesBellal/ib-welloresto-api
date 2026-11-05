@@ -71,6 +71,9 @@ const (
 	ObstacleTypeBar    ObstacleType = "bar"
 	ObstacleTypeStairs ObstacleType = "stairs"
 	ObstacleTypeDoor   ObstacleType = "door"
+	ObstacleTypeWindow ObstacleType = "window"
+	ObstacleTypePlant  ObstacleType = "plant"
+	ObstacleTypePillar ObstacleType = "pillar"
 )
 
 // Obstacle est le modèle de lecture d'un obstacle du plan de salle (mur, bar,
