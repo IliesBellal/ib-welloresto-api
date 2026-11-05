@@ -164,7 +164,7 @@ func (s *LocationsService) DeleteFloor(ctx context.Context, token, floorID strin
 }
 
 // validObstacleTypes reflète le catalogue d'obstacles proposé par l'éditeur BO
-// et la contrainte floor_obstacles_type_check (migration 201).
+// et la contrainte floor_obstacles_type_check (migration 203).
 var validObstacleTypes = map[ObstacleType]bool{
 	ObstacleTypeWall: true, ObstacleTypeBar: true, ObstacleTypeStairs: true, ObstacleTypeDoor: true,
 	ObstacleTypeWindow: true, ObstacleTypePlant: true, ObstacleTypePillar: true,

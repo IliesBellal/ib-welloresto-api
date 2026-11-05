@@ -14,7 +14,7 @@ et gardent leur comportement ; l'éditeur ne s'en sert plus.
 Inchangée, plus un champ `revision` (entier, `0` si l'établissement n'a jamais
 publié par lot). L'éditeur le mémorise au chargement et le renvoie à la
 publication. Les clients qui l'ignorent (POS) ne sont pas affectés. La lecture
-reste fonctionnelle si la migration 200 n'est pas encore appliquée (`revision`
+reste fonctionnelle si la migration 202 n'est pas encore appliquée (`revision`
 vaut alors `0`).
 
 ## Publication : `POST /locations/plan/publish`
@@ -98,13 +98,13 @@ accepté que pour `door`. Les coordonnées d'un obstacle désignent son **centre
 
 Migrations **avant** le code (appliquées à la main, rejouables) :
 
-1. `200_floor_plan_revisions` — table `floor_plan_revisions`.
-2. `201_floor_obstacle_types` — `floor_obstacles.type` passe d'un enum natif
+1. `202_floor_plan_revisions` — table `floor_plan_revisions`.
+2. `203_floor_obstacle_types` — `floor_obstacles.type` passe d'un enum natif
    (`floor_obstacles_type_enum`) à `varchar(32)` + contrainte `CHECK` à sept
    types. Sans elle, l'insertion d'une fenêtre, d'une plante ou d'un pilier
    échoue.
 
 Tests : `go test ./internal/modules/locations/` (validation, contrat HTTP) et
 `go test -tags postgres_integration ./internal/modules/locations/` avec
-`POSTGRES_URL` (transaction, rollback, conflit, concurrence) — migrations 200 et
-201 appliquées.
+`POSTGRES_URL` (transaction, rollback, conflit, concurrence) — migrations 202 et
+203 appliquées.

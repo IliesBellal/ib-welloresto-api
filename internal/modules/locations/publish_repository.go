@@ -11,7 +11,7 @@ import (
 
 // currentPlanRevision lit la révision publiée du plan (0 si l'établissement n'a
 // jamais publié par lot). Tolérante : toute erreur — notamment l'absence de la
-// table avant la migration 200 — vaut 0, pour ne jamais faire échouer
+// table avant la migration 202 — vaut 0, pour ne jamais faire échouer
 // GET /locations, qui sert aussi le POS.
 func (r *LocationsRepository) currentPlanRevision(ctx context.Context, merchantID string) int64 {
 	db := dbx.GetDB(ctx, r.db)
