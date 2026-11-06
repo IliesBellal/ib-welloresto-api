@@ -1,10 +1,15 @@
 package ubereats
 
 import (
+	"encoding/json"
+	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
-	"welloresto-api/internal/middleware" // Pour récupérer le MerchantID
-	"welloresto-api/internal/models"     // Pour SendJSON (ton helper de réponse)
+	"welloresto-api/internal/middleware"
+	"welloresto-api/internal/models"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type UberHandler struct {
@@ -15,53 +20,109 @@ func NewUberHandler(svc *UberEatsService) *UberHandler {
 	return &UberHandler{svc: svc}
 }
 
-const (
-	redirectURI = "https://api.welloresto.com/api/integrations/uber/callback"
-	callbackURL = "https://app.welloresto.com/settings/integrations"
-)
-
-// GetConnectURL renvoie l'URL vers laquelle le frontend doit rediriger l'utilisateur
-func (h *UberHandler) GetConnectURL(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r) // Récupéré via ton AuthMiddleware
-
-	// C'est l'URL de ton back-end qui recevra la réponse d'Uber
-	redirectURI := redirectURI
-
-	urlStr := h.svc.GenerateAuthURL(user.MerchantID, redirectURI)
-
-	models.SendJSON(w, http.StatusOK, "uber", "connect", AuthURLResponse{URL: urlStr})
-}
-
-// Callback est appelé directement par Uber après la validation du restaurateur
-func (h *UberHandler) Callback(w http.ResponseWriter, r *http.Request) {
-	// Uber renvoie les paramètres en Query string (?code=xxx&state=yyy)
-	code := r.URL.Query().Get("code")
-	state := r.URL.Query().Get("state") // Contient le MerchantID
-	redirectURI := redirectURI          // Doit être identique à la demande
-
-	if err := h.svc.HandleCallback(r.Context(), code, state, redirectURI); err != nil {
-		// Rediriger vers le front-end avec une erreur
-		http.Redirect(w, r, callbackURL+"?error=uber_failed", http.StatusTemporaryRedirect)
+// writeOnboardingError traduit les erreurs de la connexion en codes que le
+// back-office sait afficher.
+func writeOnboardingError(w http.ResponseWriter, fn string, err error) {
+	status, code := 0, ""
+	switch {
+	case errors.Is(err, ErrOnboardingNotConfigured):
+		status, code = http.StatusServiceUnavailable, "not_configured"
+	case errors.Is(err, ErrConnectSessionNotFound):
+		status, code = http.StatusNotFound, "session_expired"
+	case errors.Is(err, ErrNoStoreSelected):
+		status, code = http.StatusBadRequest, "no_store_selected"
+	case errors.Is(err, ErrAccountNotFound):
+		status, code = http.StatusNotFound, "account_not_found"
+	}
+	if status == 0 {
+		models.SendErrorJSON(w, "uber", fn, err)
 		return
 	}
-
-	// Succès ! On redirige le restaurateur vers son dashboard avec un message de succès
-	http.Redirect(w, r, callbackURL+"?success=uber_connected", http.StatusTemporaryRedirect)
+	models.SendJSON(w, status, "uber", fn, map[string]string{"status": "0", "error": code})
 }
 
-// Disconnect coupe la liaison. store_id optionnel en query string : absent,
-// déconnecte tous les comptes du marchand (comportement historique) ; fourni,
-// ne déconnecte que ce compte précis.
+// Connect : GET /integrations/uber-eats/connect — adresse d'autorisation Uber
+// vers laquelle le back-office redirige le restaurateur.
+func (h *UberHandler) Connect(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+	authURL, err := h.svc.ConnectURL(user.MerchantID, user.UserID)
+	if err != nil {
+		writeOnboardingError(w, "connect", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "uber", "connect", AuthURLResponse{URL: authURL})
+}
+
+// Callback : GET /integrations/uber-eats/callback — retour d'Uber (public, le
+// navigateur du restaurateur ; l'établissement est dans le state signé).
+// Renvoie vers le back-office avec ?uber=select&session=… | disconnected |
+// error&reason=…
+func (h *UberHandler) Callback(w http.ResponseWriter, r *http.Request) {
+	outcome := h.svc.HandleOAuthCallback(r.Context(), r.URL.Query())
+
+	returnURL := h.svc.ConnectReturnURL()
+	target, err := url.Parse(returnURL)
+	if returnURL == "" || err != nil {
+		models.SendJSON(w, http.StatusOK, "uber", "callback", map[string]string{
+			"result": outcome.Result, "reason": outcome.Reason,
+		})
+		return
+	}
+	params := target.Query()
+	params.Set("uber", outcome.Result)
+	if outcome.Reason != "" {
+		params.Set("reason", outcome.Reason)
+	}
+	if outcome.Session != "" {
+		params.Set("session", outcome.Session)
+	}
+	target.RawQuery = params.Encode()
+	http.Redirect(w, r, target.String(), http.StatusFound)
+}
+
+// GetConnectSession : GET /integrations/uber-eats/connect/sessions/{session_id}
+// — restaurants du compte Uber Eats à choisir.
+func (h *UberHandler) GetConnectSession(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+	view, err := h.svc.GetConnectSession(r.Context(), user.MerchantID, chi.URLParam(r, "session_id"))
+	if err != nil {
+		writeOnboardingError(w, "get_connect_session", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "uber", "get_connect_session", view)
+}
+
+// CompleteConnect : POST /integrations/uber-eats/connect/sessions/{session_id}
+// body {"store_ids": [...]} — connecte les restaurants choisis.
+func (h *UberHandler) CompleteConnect(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+	var body struct {
+		StoreIDs []string `json:"store_ids"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
+		models.SendErrorJSON(w, "uber", "complete_connect", models.ErrInvalidRequestBody)
+		return
+	}
+	results, err := h.svc.CompleteConnect(r.Context(), user.MerchantID, user.UserID, chi.URLParam(r, "session_id"), body.StoreIDs)
+	if err != nil {
+		writeOnboardingError(w, "complete_connect", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "uber", "complete_connect", map[string]any{"results": results})
+}
+
+// Disconnect : POST /integrations/uber-eats/disconnect?store_id= — adresse
+// d'autorisation Uber qui, au retour, retire l'intégration du restaurant
+// (store_id absent : compte principal). Uber exige le token du restaurateur
+// pour ce retrait, d'où le passage par sa page de connexion.
 func (h *UberHandler) Disconnect(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r)
-	storeID := r.URL.Query().Get("store_id")
-
-	if err := h.svc.Disconnect(r.Context(), user.MerchantID, storeID); err != nil {
-		models.SendErrorJSON(w, "uber", "disconnect", err)
+	authURL, err := h.svc.DisconnectURL(r.Context(), user.MerchantID, user.UserID, r.URL.Query().Get("store_id"))
+	if err != nil {
+		writeOnboardingError(w, "disconnect", err)
 		return
 	}
-
-	models.SendJSON(w, http.StatusOK, "uber", "disconnect", map[string]string{"status": "disconnected"})
+	models.SendJSON(w, http.StatusOK, "uber", "disconnect", AuthURLResponse{URL: authURL})
 }
 
 // ListMenuSyncs : GET /integrations/uber-eats/syncs?store_id=&limit=

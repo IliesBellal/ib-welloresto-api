@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -204,7 +205,10 @@ type Account struct {
 func (r *DeliverooRepository) GetBrandIDByMerchant(ctx context.Context, merchantID string) (string, error) {
 	db := dbx.GetDB(ctx, r.database)
 
-	const q = `SELECT brand_id FROM integration_deliveroo id WHERE id.merchant_id = ? ORDER BY id.location_id LIMIT 1`
+	// Compte actif d'abord (un site déconnecté puis remplacé ne reste pas
+	// "principal"), même ordre que GetSiteIDByMerchant : resolveAccount combine
+	// les deux.
+	const q = `SELECT brand_id FROM integration_deliveroo id WHERE id.merchant_id = ? ORDER BY id.enabled DESC, id.location_id LIMIT 1`
 
 	var brandID sql.NullString
 	if err := db.QueryRowContext(ctx, q, merchantID).Scan(&brandID); err != nil {
@@ -233,7 +237,7 @@ func (r *DeliverooRepository) UpdateMerchantBrandID(ctx context.Context, merchan
 func (r *DeliverooRepository) GetSiteIDByMerchant(ctx context.Context, merchantID string) (string, error) {
 	db := dbx.GetDB(ctx, r.database)
 
-	const q = `SELECT location_id FROM integration_deliveroo WHERE merchant_id = ? ORDER BY location_id LIMIT 1`
+	const q = `SELECT location_id FROM integration_deliveroo WHERE merchant_id = ? ORDER BY enabled DESC, location_id LIMIT 1`
 
 	var siteID sql.NullString
 	if err := db.QueryRowContext(ctx, q, merchantID).Scan(&siteID); err != nil {
@@ -271,7 +275,7 @@ func (r *DeliverooRepository) GetAccountByLocationID(ctx context.Context, mercha
 func (r *DeliverooRepository) GetAccountsByMerchant(ctx context.Context, merchantID string) ([]Account, error) {
 	db := dbx.GetDB(ctx, r.database)
 
-	const q = `SELECT merchant_id, location_id, brand_id FROM integration_deliveroo WHERE merchant_id = ? ORDER BY location_id`
+	const q = `SELECT merchant_id, location_id, brand_id FROM integration_deliveroo WHERE merchant_id = ? ORDER BY enabled DESC, location_id`
 
 	rows, err := db.QueryContext(ctx, q, merchantID)
 	if err != nil {
@@ -288,6 +292,56 @@ func (r *DeliverooRepository) GetAccountsByMerchant(ctx context.Context, merchan
 		accounts = append(accounts, acc)
 	}
 	return accounts, rows.Err()
+}
+
+// ListSites : sites Deliveroo de l'établissement, actifs d'abord
+// (docs/marketplace-onboarding.md).
+func (r *DeliverooRepository) ListSites(ctx context.Context, merchantID string) ([]ConnectedSite, error) {
+	db := dbx.GetDB(ctx, r.database)
+	const q = `SELECT location_id, enabled FROM integration_deliveroo WHERE merchant_id = ? ORDER BY enabled DESC, location_id`
+	rows, err := db.QueryContext(ctx, q, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	sites := []ConnectedSite{}
+	for rows.Next() {
+		var site ConnectedSite
+		if err := rows.Scan(&site.LocationID, &site.Enabled); err != nil {
+			return nil, err
+		}
+		sites = append(sites, site)
+	}
+	return sites, rows.Err()
+}
+
+// ActiveLocationOwner : marchand dont un compte actif porte ce location_id (""
+// s'il n'y en a pas). Un même site ne doit être relié qu'à un établissement.
+func (r *DeliverooRepository) ActiveLocationOwner(ctx context.Context, locationID string) (string, error) {
+	db := dbx.GetDB(ctx, r.database)
+	const q = `SELECT merchant_id FROM integration_deliveroo WHERE location_id = ? AND enabled = true ORDER BY merchant_id LIMIT 1`
+	var m string
+	err := db.QueryRowContext(ctx, q, locationID).Scan(&m)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return m, err
+}
+
+// ActivateSite crée (ou réactive) le compte Deliveroo d'un site relié depuis
+// le back-office. Une réactivation conserve les réglages (acceptation
+// automatique, temps de préparation, commission) ; les autres colonnes ont
+// leur valeur par défaut. Postgres uniquement.
+func (r *DeliverooRepository) ActivateSite(ctx context.Context, merchantID, locationID, brandID string) error {
+	db := dbx.GetDB(ctx, r.database)
+	const q = `
+		INSERT INTO integration_deliveroo (merchant_id, location_id, brand_id, enabled)
+		VALUES (?, ?, ?, true)
+		ON CONFLICT (merchant_id, location_id) DO UPDATE SET
+			brand_id = EXCLUDED.brand_id,
+			enabled = true`
+	_, err := db.ExecContext(ctx, q, merchantID, locationID, brandID)
+	return err
 }
 
 // resolveAccount détermine le compte Deliveroo à utiliser pour une action.

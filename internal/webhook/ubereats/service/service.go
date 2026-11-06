@@ -154,6 +154,15 @@ func (s *Service) dispatchEvent(ctx context.Context, event modelsUber.UberWebhoo
 		}
 		return nil
 
+	case "store.provisioned":
+		// Restaurant relié à Wello Resto (docs/marketplace-onboarding.md).
+		return s.uberClient.HandleStoreProvisioned(ctx, storeIDFromEvent(event))
+
+	case "store.deprovisioned":
+		// Intégration retirée (depuis Wello Resto, chez Uber ou par Uber) :
+		// le compte est désactivé chez nous.
+		return s.uberClient.HandleStoreDeprovisioned(ctx, storeIDFromEvent(event))
+
 	case "delivery.state_changed", "delivery.status":
 		log.Info("Delivery status update for store " + event.Meta.ResourceID + " - " + event.Meta.UserID + " - New status: " + event.Meta.Status)
 		return s.HandleDeliveryStatus(ctx, event.Meta.OrderID, event.Meta.Status)
@@ -162,6 +171,17 @@ func (s *Service) dispatchEvent(ctx context.Context, event modelsUber.UberWebhoo
 		log.Error("[UBER EATS] Unhandled event type: " + event.EventType)
 		return nil
 	}
+}
+
+// storeIDFromEvent : restaurant visé par un webhook store.* . La doc Uber
+// indique que meta.user_id correspond au store_id ; resource_id sert de repli
+// (le contenu exact des événements store.provisioned/deprovisioned n'est pas
+// documenté, à confirmer au premier événement reçu).
+func storeIDFromEvent(event modelsUber.UberWebhookEvent) string {
+	if event.Meta.UserID != "" {
+		return event.Meta.UserID
+	}
+	return event.Meta.ResourceID
 }
 
 // VerifySignature contrôle la signature d'un webhook Uber Eats en mode

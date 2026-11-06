@@ -587,9 +587,13 @@ client appelant encore en `GET` doit migrer vers `POST` (voir
 
 | Méthode | Route | Auth | Droit requis |
 |---|---|---|---|
-| GET | `/integrations/uber-eats/connect` | aucune (OAuth) | aucun |
-| GET | `/integrations/uber-eats/callback` | aucune (OAuth) | aucun |
-| GET | `/integrations/uber-eats/disconnect` | aucune (OAuth) | aucun |
+| GET | `/integrations/uber-eats/callback` | aucune (retour OAuth, state signé — docs/marketplace-onboarding.md) | aucun |
+| GET | `/integrations/uber-eats/connect` | authMiddleware | `platforms.manage` |
+| GET | `/integrations/uber-eats/connect/sessions/{session_id}` | authMiddleware | `platforms.manage` |
+| POST | `/integrations/uber-eats/connect/sessions/{session_id}` | authMiddleware | `platforms.manage` |
+| POST | `/integrations/uber-eats/disconnect` | authMiddleware | `platforms.manage` |
+| GET | `/integrations/deliveroo/connect` | authMiddleware | `platforms.manage` |
+| POST | `/integrations/deliveroo/connect` | authMiddleware | `platforms.manage` |
 | GET | `/integrations/uber-eats` | authMiddleware | aucun |
 | GET | `/integrations/deliveroo` | authMiddleware | aucun |
 | GET | `/integrations/scannorder` | authMiddleware | aucun |

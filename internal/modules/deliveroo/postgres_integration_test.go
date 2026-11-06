@@ -146,3 +146,70 @@ func itoa(v int64) string {
 func containsFold(s, substr string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }
+
+// TestDeliverooOnboardingRepository_Postgres : écritures de la connexion d'un
+// site depuis le back-office (docs/marketplace-onboarding.md).
+func TestDeliverooOnboardingRepository_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+
+	const merchantID = "9394002"
+	const otherMerchant = "9394003"
+	cleanup := func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM integration_deliveroo WHERE merchant_id IN ($1, $2)`, merchantID, otherMerchant)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	repo := NewDeliverooRepo(db)
+
+	// Création : valeurs par défaut (acceptation automatique off, 60 min).
+	if err := repo.ActivateSite(ctx, merchantID, merchantID, "brand-a"); err != nil {
+		t.Fatalf("ActivateSite (insert): %v", err)
+	}
+	var enabled, autoAccept bool
+	var prep int
+	var brand string
+	if err := db.QueryRowContext(ctx, `SELECT enabled, auto_accept_orders, preparation_time_minutes, brand_id FROM integration_deliveroo WHERE merchant_id = $1 AND location_id = $1`, merchantID).Scan(&enabled, &autoAccept, &prep, &brand); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if !enabled || autoAccept || prep != 60 || brand != "brand-a" {
+		t.Fatalf("new site row: enabled=%v auto=%v prep=%d brand=%s", enabled, autoAccept, prep, brand)
+	}
+
+	// Réactivation : réglages conservés, brand_id rafraîchi.
+	if _, err := db.ExecContext(ctx, `UPDATE integration_deliveroo SET enabled = false, auto_accept_orders = true WHERE merchant_id = $1`, merchantID); err != nil {
+		t.Fatal(err)
+	}
+	if owner, _ := repo.ActiveLocationOwner(ctx, merchantID); owner != "" {
+		t.Fatalf("ActiveLocationOwner on disabled row = %q", owner)
+	}
+	if err := repo.ActivateSite(ctx, merchantID, merchantID, "brand-b"); err != nil {
+		t.Fatalf("ActivateSite (reactivate): %v", err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT enabled, auto_accept_orders, brand_id FROM integration_deliveroo WHERE merchant_id = $1 AND location_id = $1`, merchantID).Scan(&enabled, &autoAccept, &brand); err != nil {
+		t.Fatal(err)
+	}
+	if !enabled || !autoAccept || brand != "brand-b" {
+		t.Fatalf("reactivated row: enabled=%v auto=%v brand=%s", enabled, autoAccept, brand)
+	}
+	if owner, err := repo.ActiveLocationOwner(ctx, merchantID); err != nil || owner != merchantID {
+		t.Fatalf("ActiveLocationOwner = (%q, %v)", owner, err)
+	}
+
+	// Compte principal = actif d'abord : un site inactif « plus petit » ne
+	// passe pas devant.
+	if _, err := db.ExecContext(ctx, `INSERT INTO integration_deliveroo (merchant_id, location_id, brand_id, enabled) VALUES ($1, '0-old', 'brand-old', false)`, merchantID); err != nil {
+		t.Fatal(err)
+	}
+	if site, err := repo.GetSiteIDByMerchant(ctx, merchantID); err != nil || site != merchantID {
+		t.Fatalf("GetSiteIDByMerchant = (%q, %v), want the active site", site, err)
+	}
+	if b, err := repo.GetBrandIDByMerchant(ctx, merchantID); err != nil || b != "brand-b" {
+		t.Fatalf("GetBrandIDByMerchant = (%q, %v), want brand-b", b, err)
+	}
+	sites, err := repo.ListSites(ctx, merchantID)
+	if err != nil || len(sites) != 2 || sites[0].LocationID != merchantID || !sites[0].Enabled || sites[1].Enabled {
+		t.Fatalf("ListSites = (%+v, %v)", sites, err)
+	}
+}

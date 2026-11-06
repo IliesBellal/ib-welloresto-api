@@ -652,13 +652,18 @@ func (s *MenuService) SetProductAvailability(ctx context.Context, token, product
 	return updated, nil
 }
 
-func (s *MenuService) UpdateProductCategory(ctx context.Context, token, categoryID string, payload UpsertComponentCategoryPayload) error {
+func (s *MenuService) UpdateProductCategory(ctx context.Context, token, categoryID string, payload UpdateProductCategoryPayload) error {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return err
 	}
 
-	if err := s.legacy.UpdateProductCategory(ctx, user.MerchantID, categoryID, payload.Name); err != nil {
+	name, bgColor, err := normalizeProductCategoryUpdate(payload)
+	if err != nil {
+		return err
+	}
+
+	if err := s.legacy.UpdateProductCategory(ctx, user.MerchantID, categoryID, name, bgColor); err != nil {
 		return err
 	}
 	s.onMenuChanged(ctx, user.MerchantID)

@@ -2155,10 +2155,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 
 	r.Route("/integrations", func(r chi.Router) {
 
-		// OAuth / connection flows (no auth required)
-		r.Get("/uber-eats/connect", uberHandler.GetConnectURL)
+		// Retour d'Uber après l'autorisation du restaurateur (public : la
+		// requête vient de son navigateur, l'établissement est dans le state
+		// signé). Voir docs/marketplace-onboarding.md.
 		r.Get("/uber-eats/callback", uberHandler.Callback)
-		r.Get("/uber-eats/disconnect", uberHandler.Disconnect)
 
 		// Dashboard endpoints (auth required)
 		r.Group(func(r chi.Router) {
@@ -2185,6 +2185,15 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 
 				r.Put("/scannorder/logo", integrationsHandler.UploadScanNOrderLogo)
 				r.Put("/scannorder/banner", integrationsHandler.UploadScanNOrderBanner)
+				// Connexion / déconnexion des restaurants Uber Eats et des
+				// sites Deliveroo (docs/marketplace-onboarding.md).
+				r.Get("/uber-eats/connect", uberHandler.Connect)
+				r.Get("/uber-eats/connect/sessions/{session_id}", uberHandler.GetConnectSession)
+				r.Post("/uber-eats/connect/sessions/{session_id}", uberHandler.CompleteConnect)
+				r.Post("/uber-eats/disconnect", uberHandler.Disconnect)
+				r.Get("/deliveroo/connect", deliverooHandler.GetConnectInfo)
+				r.Post("/deliveroo/connect", deliverooHandler.Connect)
+
 				r.Patch("/uber-eats", integrationsHandler.UpdateUberEats)
 				r.Patch("/uber-eats/disable", integrationsHandler.DisableUberEats)
 				r.Patch("/deliveroo", integrationsHandler.UpdateDeliveroo)

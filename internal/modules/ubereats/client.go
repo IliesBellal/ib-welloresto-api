@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 	"welloresto-api/internal/logger"
 	requestlogger "welloresto-api/internal/middleware/request_logger"
@@ -78,7 +80,10 @@ func (c *UberClient) GetNewToken() (*UberAuthResponse, error) {
 	return &tokenResp, nil
 }
 
-// ExchangeAuthCode transforme le code reçu par Uber en AccessToken/RefreshToken
+// ExchangeAuthCode échange le code reçu au retour d'Uber contre le token du
+// restaurateur (scope eats.pos_provisioning). Le corps de la réponse n'est
+// jamais remonté dans l'erreur : il porterait le token en cas de succès
+// partiel, et l'appel est déjà tracé (masqué) par requestlogger.
 func (c *UberClient) ExchangeAuthCode(ctx context.Context, code string, redirectURI string) (*TokenExchangeResponse, error) {
 	data := url.Values{}
 	data.Set("client_secret", c.config.ClientSecret)
@@ -87,32 +92,11 @@ func (c *UberClient) ExchangeAuthCode(ctx context.Context, code string, redirect
 	data.Set("code", code)
 	data.Set("redirect_uri", redirectURI)
 
-	resp, err := c.client.PostForm("https://auth.uber.com/oauth/v2/token", data)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.config.TokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("uber token exchange error: status %d, body: %s", resp.StatusCode, string(respBody))
-	}
-
-	var tokenResp TokenExchangeResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		return nil, err
-	}
-	return &tokenResp, nil
-}
-
-// GetMerchantStores récupère la liste des magasins associés au compte Uber du restaurateur
-func (c *UberClient) GetMerchantStores(ctx context.Context, accessToken string) (*MerchantInfoResponse, error) {
-	req, err := http.NewRequest("GET", "https://api.uber.com/v1/eats/stores", nil)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -120,15 +104,125 @@ func (c *UberClient) GetMerchantStores(ctx context.Context, accessToken string) 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("uber get stores error: status %d", resp.StatusCode)
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("uber token exchange error: status %d", resp.StatusCode)
 	}
 
-	var storesResp MerchantInfoResponse
-	if err := json.NewDecoder(resp.Body).Decode(&storesResp); err != nil {
+	var tokenResp TokenExchangeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
 		return nil, err
 	}
-	return &storesResp, nil
+	if tokenResp.AccessToken == "" {
+		return nil, fmt.Errorf("uber token exchange: empty access token")
+	}
+	return &tokenResp, nil
+}
+
+// apiBase : hôte de l'API Uber Eats (UBER_EATS_BASE_URL), https://api.uber.com
+// par défaut.
+func (c *UberClient) apiBase() string {
+	if b := strings.TrimRight(strings.TrimSpace(c.config.BaseURL), "/"); b != "" {
+		return b
+	}
+	return "https://api.uber.com"
+}
+
+// maxStorePages borne la pagination de ListStores (50 restaurants par page) :
+// au-delà, c'est un groupe qu'on n'onboarde pas depuis l'écran du back-office.
+const maxStorePages = 10
+
+// ListStores liste tous les restaurants accessibles avec le token du
+// restaurateur (GET /v1/eats/stores, paginé par start_key / next_key).
+func (c *UberClient) ListStores(ctx context.Context, userToken string) ([]UberStoreInfo, error) {
+	var all []UberStoreInfo
+	startKey := ""
+	for page := 0; page < maxStorePages; page++ {
+		q := url.Values{}
+		q.Set("limit", "50")
+		if startKey != "" {
+			q.Set("start_key", startKey)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.apiBase()+"/v1/eats/stores?"+q.Encode(), nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+userToken)
+
+		resp, err := c.client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		var body UberStoresPage
+		status := resp.StatusCode
+		if status < 300 {
+			err = json.NewDecoder(resp.Body).Decode(&body)
+		}
+		resp.Body.Close()
+		if status >= 300 {
+			return nil, fmt.Errorf("uber list stores error: status %d", status)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("uber list stores: %w", err)
+		}
+
+		all = append(all, body.Stores...)
+		if body.NextKey == nil || *body.NextKey == "" {
+			return all, nil
+		}
+		startKey = *body.NextKey
+	}
+	return all, nil
+}
+
+// ErrUberStoreNotFound : Uber répond 404 sur le restaurant (déjà retiré, ou
+// inaccessible avec ce token).
+var ErrUberStoreNotFound = errors.New("uber eats: store not found")
+
+// ProvisionStore active l'intégration Wello Resto sur un restaurant
+// (POST /v1/eats/stores/{store_id}/pos_data, token du restaurateur).
+func (c *UberClient) ProvisionStore(ctx context.Context, userToken, storeID string, body PosDataRequest) error {
+	return c.posData(ctx, http.MethodPost, userToken, storeID, body)
+}
+
+// DeprovisionStore retire l'intégration d'un restaurant
+// (DELETE /v1/eats/stores/{store_id}/pos_data, token du restaurateur).
+func (c *UberClient) DeprovisionStore(ctx context.Context, userToken, storeID string) error {
+	return c.posData(ctx, http.MethodDelete, userToken, storeID, nil)
+}
+
+func (c *UberClient) posData(ctx context.Context, method, userToken, storeID string, body any) error {
+	var reader io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		reader = bytes.NewReader(raw)
+	}
+	endpoint := fmt.Sprintf("%s/v1/eats/stores/%s/pos_data", c.apiBase(), url.PathEscape(storeID))
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+userToken)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrUberStoreNotFound
+	}
+	if resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return fmt.Errorf("uber pos_data %s error %d: %s", method, resp.StatusCode, string(respBody))
+	}
+	return nil
 }
 
 // AcceptOrder envoie la requête d'acceptation

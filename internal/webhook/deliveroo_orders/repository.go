@@ -49,7 +49,13 @@ func (r *Repository) GetMerchantByLocationID(ctx context.Context, locationID str
 		SELECT id.merchant_id, id.auto_accept_orders
 		FROM merchant m
 		INNER JOIN integration_deliveroo id on id.merchant_id = %s
-		WHERE id.location_id = ?`, joinCast)
+		WHERE id.location_id = ?
+		ORDER BY id.enabled DESC, id.merchant_id
+		LIMIT 1`, joinCast)
+	// location_id n'est pas unique : un site déconnecté d'un établissement puis
+	// relié à un autre laisse une ligne inactive. La ligne active l'emporte ;
+	// une seule ligne active par location_id est garantie à la connexion
+	// (DeliverooService.Connect, docs/marketplace-onboarding.md).
 
 	var data MerchantData
 	err := db.QueryRowContext(ctx, query, locationID).Scan(&data.MerchantID, &data.AutoAcceptOrders)

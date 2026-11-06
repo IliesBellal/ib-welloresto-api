@@ -910,7 +910,7 @@ func (h *MenuHandler) UpdateProductCategory(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var payload UpsertComponentCategoryPayload
+	var payload UpdateProductCategoryPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		models.SendJSON(w, http.StatusBadRequest, "menu", "update_product_category", map[string]string{"error": "invalid_body"})
 		return

@@ -3583,14 +3583,18 @@ func (r *MenuRepository) SetProductAvailability(ctx context.Context, merchantID,
 	return res.RowsAffected()
 }
 
-func (r *MenuRepository) UpdateProductCategory(ctx context.Context, merchantID, categoryID, name string) error {
+// UpdateProductCategory modifie le nom et/ou la couleur de fond d'une catégorie
+// caisse. Un champ nil est laissé inchangé (COALESCE) ; les valeurs doivent
+// avoir été validées par normalizeProductCategoryUpdate.
+func (r *MenuRepository) UpdateProductCategory(ctx context.Context, merchantID, categoryID string, name, bgColor *string) error {
 	db := dbx.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx,
-		`UPDATE productcateg 
-			 SET categ_name = ?
+		`UPDATE productcateg
+			 SET categ_name = COALESCE(?, categ_name),
+			     bg_color = COALESCE(?, bg_color)
 			 WHERE merchant_categ_id = ? AND merchant_id = ?`,
-		name, categoryID, merchantID,
+		name, bgColor, categoryID, merchantID,
 	)
 	if err != nil {
 		return err

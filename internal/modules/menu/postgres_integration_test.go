@@ -742,8 +742,21 @@ func TestMenuRepository_Postgres(t *testing.T) {
 	if n, err := repo.SetProductCategoryAvailability(ctx, merchantID, catID, "true"); err != nil {
 		t.Fatalf("SetProductCategoryAvailability = (%d, %v)", n, err)
 	}
-	if err := repo.UpdateProductCategory(ctx, merchantID, catID, "entrees itest v2"); err != nil {
+	newName, newColor := "entrees itest v2", "#ff8800"
+	if err := repo.UpdateProductCategory(ctx, merchantID, catID, &newName, &newColor); err != nil {
 		t.Fatalf("UpdateProductCategory: %v", err)
+	}
+	var gotName, gotColor string
+	if err := db.QueryRowContext(ctx, `SELECT categ_name, bg_color FROM productcateg WHERE merchant_categ_id = $1 AND merchant_id = $2`, catID, merchantID).Scan(&gotName, &gotColor); err != nil || gotName != newName || gotColor != newColor {
+		t.Fatalf("catégorie après UpdateProductCategory = (%q, %q, %v), want (%q, %q)", gotName, gotColor, err, newName, newColor)
+	}
+	// Couleur seule : le nom ne doit pas bouger.
+	onlyColor := "#112233"
+	if err := repo.UpdateProductCategory(ctx, merchantID, catID, nil, &onlyColor); err != nil {
+		t.Fatalf("UpdateProductCategory (couleur seule): %v", err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT categ_name, bg_color FROM productcateg WHERE merchant_categ_id = $1 AND merchant_id = $2`, catID, merchantID).Scan(&gotName, &gotColor); err != nil || gotName != newName || gotColor != onlyColor {
+		t.Fatalf("catégorie après mise à jour de la couleur seule = (%q, %q, %v), want (%q, %q)", gotName, gotColor, err, newName, onlyColor)
 	}
 
 	// --- BulkAssignProductsToCategory (IN dynamique ×2 : racines + sous-produits) ---

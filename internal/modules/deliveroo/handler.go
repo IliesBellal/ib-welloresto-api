@@ -2,6 +2,7 @@ package deliveroo
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -18,6 +19,50 @@ type DeliverooHandler struct {
 
 func NewDeliverooHandler(service *DeliverooService) *DeliverooHandler {
 	return &DeliverooHandler{service: service}
+}
+
+// GetConnectInfo : GET /integrations/deliveroo/connect — identifiant à saisir
+// dans le Partner Hub et sites déjà connus (docs/marketplace-onboarding.md).
+func (h *DeliverooHandler) GetConnectInfo(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+	info, err := h.service.GetConnectInfo(r.Context(), user.MerchantID)
+	if err != nil {
+		models.SendErrorJSON(w, "integrations", "get_deliveroo_connect", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "integrations", "get_deliveroo_connect", info)
+}
+
+// Connect : POST /integrations/deliveroo/connect body {"location_id": "..."} —
+// vérifie chez Deliveroo que le site est relié à Wello Resto et l'active.
+func (h *DeliverooHandler) Connect(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+	var body struct {
+		LocationID string `json:"location_id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
+		models.SendErrorJSON(w, "integrations", "connect_deliveroo", models.ErrInvalidRequestBody)
+		return
+	}
+	res, err := h.service.Connect(r.Context(), user.MerchantID, body.LocationID)
+	if err != nil {
+		status, code := 0, ""
+		switch {
+		case errors.Is(err, ErrLocationNotAllowed):
+			status, code = http.StatusBadRequest, "location_not_allowed"
+		case errors.Is(err, ErrLocationLinkedElsewhere):
+			status, code = http.StatusConflict, "linked_elsewhere"
+		case errors.Is(err, ErrLocationNotLinked):
+			status, code = http.StatusUnprocessableEntity, "not_linked"
+		}
+		if status == 0 {
+			models.SendErrorJSON(w, "integrations", "connect_deliveroo", err)
+			return
+		}
+		models.SendJSON(w, status, "integrations", "connect_deliveroo", map[string]string{"status": "0", "error": code})
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "integrations", "connect_deliveroo", res)
 }
 
 func (h *DeliverooHandler) SyncSiteBrandID(w http.ResponseWriter, r *http.Request) {

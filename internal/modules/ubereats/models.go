@@ -13,6 +13,14 @@ type ConfigUberEats struct {
 	TokenType    string
 	AuthURL      string
 	TokenURL     string
+	// RedirectURI : adresse de retour OAuth enregistrée dans le dashboard
+	// développeur Uber (UBER_EATS_REDIRECT_URI), ex.
+	// https://welloresto-api-prod.onrender.com/integrations/uber-eats/callback.
+	RedirectURI string
+	// ConnectReturnURL : page du back-office où l'API renvoie le restaurateur
+	// après le passage chez Uber (UBER_EATS_CONNECT_RETURN_URL), ex.
+	// https://my-wello-resto-prod.onrender.com/integrations/uber-eats.
+	ConnectReturnURL string
 }
 
 // Store représente les données du magasin (table integration_uber_eats + merchant)
@@ -185,7 +193,10 @@ type AuthURLResponse struct {
 	URL string `json:"url"`
 }
 
-// TokenRequest envoyé à Uber pour échanger le code contre un token
+// TokenExchangeResponse : réponse de POST /oauth/v2/token (grant
+// authorization_code). Le token porte le scope eats.pos_provisioning et ne sert
+// qu'à lister, activer et retirer les restaurants du restaurateur ; tout le
+// reste passe par le token client_credentials (GetValidToken).
 type TokenExchangeResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
@@ -194,10 +205,35 @@ type TokenExchangeResponse struct {
 	Scope        string `json:"scope"`
 }
 
-// MerchantInfoResponse réponse de l'API Uber pour identifier le restaurant connecté
-type MerchantInfoResponse struct {
-	Stores []struct {
-		StoreID string `json:"store_id"`
-		Name    string `json:"name"`
-	} `json:"stores"`
+// UberStoresPage : une page de GET /v1/eats/stores (pagination par next_key).
+type UberStoresPage struct {
+	Stores  []UberStoreInfo `json:"stores"`
+	NextKey *string         `json:"next_key"`
+}
+
+// UberStoreInfo : un restaurant du compte Uber Eats du restaurateur (champs
+// utiles à l'écran de choix ; la réponse en porte d'autres).
+type UberStoreInfo struct {
+	StoreID  string `json:"store_id"`
+	Name     string `json:"name"`
+	Location struct {
+		Address    string `json:"address"`
+		City       string `json:"city"`
+		PostalCode string `json:"postal_code"`
+	} `json:"location"`
+	PosData *struct {
+		IntegrationEnabled   bool   `json:"integration_enabled"`
+		OrderManagerClientID string `json:"order_manager_client_id"`
+		IntegratorStoreID    string `json:"integrator_store_id"`
+	} `json:"pos_data"`
+}
+
+// PosDataRequest : corps de POST /v1/eats/stores/{store_id}/pos_data
+// (activation de l'intégration). pos_integration_enabled n'est pas envoyé :
+// la référence Uber le déclare ignoré et déprécié.
+type PosDataRequest struct {
+	// IsOrderManager : Wello Resto accepte, refuse et suit les commandes.
+	IsOrderManager bool `json:"is_order_manager"`
+	// IntegratorStoreID : identifiant du restaurant chez nous (merchant_id).
+	IntegratorStoreID string `json:"integrator_store_id,omitempty"`
 }

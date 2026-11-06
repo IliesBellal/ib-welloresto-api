@@ -154,7 +154,7 @@ func TestIntegrationsRepository_Postgres(t *testing.T) {
 	}
 
 	// bout en bout : le service assemble access_url à partir de la base URL
-	svc := NewService(db, nil, nil, nil, "", "", "https://sno.itest/")
+	svc := NewService(db, nil, nil, nil, nil, "", "", "https://sno.itest/")
 	snoSvc, err := svc.GetScanNOrder(ctx, merchantID)
 	if err != nil {
 		t.Fatalf("GetScanNOrder (service) failed: %v", err)

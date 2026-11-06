@@ -332,6 +332,18 @@ type UpsertComponentCategoryPayload struct {
 	MerchantID string `json:"-"`    // Sera défini par le service
 }
 
+// UpdateProductCategoryPayload pour la modification d'une catégorie caisse
+// (PATCH /menu/products/categories/{category_id}). Tous les champs sont
+// optionnels : seuls ceux présents sont modifiés, ce qui permet au back-office
+// de changer la couleur sans renvoyer le nom (et inversement).
+type UpdateProductCategoryPayload struct {
+	Name *string `json:"name"` // Nouveau nom (non vide si fourni)
+	// BgColor : couleur de fond de la catégorie sur la caisse, au format
+	// #RRGGBB. Ne peut pas être effacée : la colonne est NOT NULL
+	// avec #ffffff par défaut, que la caisse traite comme « pas de couleur ».
+	BgColor *string `json:"bg_color"`
+}
+
 // UpdateComponentCategoryPayload pour le renommage d'une catégorie de composants
 type UpdateComponentCategoryPayload struct {
 	Name *string `json:"name"` // Pointeur : distingue l'omission d'une valeur vide

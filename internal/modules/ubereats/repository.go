@@ -41,7 +41,9 @@ func (r *UberRepository) GetMerchantIDFromStoreID(ctx context.Context, storeID s
 		SELECT iue.merchant_id
 		FROM integration_uber_eats iue
 		INNER JOIN merchant m on %s = iue.merchant_id
-		WHERE iue.store_id = ?`, ueMerchantJoinCast())
+		WHERE iue.store_id = ?
+		ORDER BY iue.enabled DESC, iue.merchant_id
+		LIMIT 1`, ueMerchantJoinCast())
 
 	var MerchantID string
 	// Gestion des NULLs potentiels avec sql.NullInt64 si nécessaire, ici simplifié
@@ -57,8 +59,9 @@ func (r *UberRepository) GetMerchantIDFromStoreID(ctx context.Context, storeID s
 // GetStoreData récupère les infos du magasin "principal" du marchand.
 //
 // Un marchand peut avoir plusieurs comptes Uber Eats (migration 111, PK
-// composite (merchant_id, store_id)) : ORDER BY store_id rend le choix
-// déterministe plutôt que de dépendre de l'ordre de retour de Postgres. Pour un
+// composite (merchant_id, store_id)) : le compte actif passe en premier (un
+// restaurant déconnecté puis remplacé par un autre ne doit pas rester
+// "principal"), puis ORDER BY store_id rend le choix déterministe. Pour un
 // marchand mono-compte (le cas de tous les marchands aujourd'hui), c'est
 // rigoureusement le même comportement qu'avant. Un appelant qui connaît le
 // compte exact doit utiliser GetStoreDataByStoreID.
@@ -72,7 +75,7 @@ func (r *UberRepository) GetStoreData(ctx context.Context, merchantID string) (*
        FROM integration_uber_eats iue
        INNER JOIN merchant m ON %s = iue.merchant_id
        WHERE iue.merchant_id = ?
-       ORDER BY iue.store_id
+       ORDER BY iue.enabled DESC, iue.store_id
        LIMIT 1`, ueMerchantJoinCast())
 
 	var store Store
@@ -143,7 +146,7 @@ func (r *UberRepository) GetAccountsByMerchant(ctx context.Context, merchantID s
        FROM integration_uber_eats iue
        INNER JOIN merchant m ON %s = iue.merchant_id
        WHERE iue.merchant_id = ?
-       ORDER BY iue.store_id`, ueMerchantJoinCast())
+       ORDER BY iue.enabled DESC, iue.store_id`, ueMerchantJoinCast())
 
 	rows, err := db.QueryContext(ctx, query, merchantID)
 	if err != nil {
@@ -172,8 +175,11 @@ func (r *UberRepository) GetAccountsByMerchant(ctx context.Context, merchantID s
 // GetStoreByStoreIDOnly récupère un compte Uber Eats par store_id seul, sans
 // connaître le merchant_id à l'avance. Utilisé par le chemin webhook : Uber
 // Eats notifie une commande avec le store_id, jamais le merchant_id WelloResto.
-// store_id est unique (index idx_integration_uber_eats_store_id, migration
-// 111), donc sans ambiguïté même pour un marchand multi-comptes.
+// L'index idx_integration_uber_eats_store_id (migration 111) n'est PAS
+// unique : un restaurant déconnecté d'un établissement puis relié à un autre
+// laisse une ligne inactive derrière lui. La ligne active est donc préférée
+// (ORDER BY enabled DESC) ; une seule ligne active par store_id est garantie à
+// la connexion (ActiveStoreOwner).
 func (r *UberRepository) GetStoreByStoreIDOnly(ctx context.Context, storeID string) (*Store, error) {
 	db := dbx.GetDB(ctx, r.database)
 
@@ -183,7 +189,9 @@ func (r *UberRepository) GetStoreByStoreIDOnly(ctx context.Context, storeID stri
 			  iue.auto_accept_orders
        FROM integration_uber_eats iue
        INNER JOIN merchant m ON %s = iue.merchant_id
-       WHERE iue.store_id = ?`, ueMerchantJoinCast())
+       WHERE iue.store_id = ?
+       ORDER BY iue.enabled DESC, iue.merchant_id
+       LIMIT 1`, ueMerchantJoinCast())
 
 	var store Store
 	err := db.QueryRowContext(ctx, query, storeID).Scan(
@@ -237,70 +245,87 @@ func (r *UberRepository) SaveNewToken(ctx context.Context, tokenType, accessToke
 	return err
 }
 
-// EnableIntegration insère (ou met à jour) l'intégration Uber Eats pour le marchand.
-// Colonnes réelles (docs/migration-postgres/04-schema-postgres-target.sql:1863-1885) :
-// pas de access_token/is_active/updated_at — bearer_token/refresh_token/enabled à la
-// place. pos_provisionning_refresh_token/pos_provisionning_token_expiration_date sont
-// NOT NULL sans défaut : renseignés à une valeur neutre uniquement à la création (ce
-// sont des colonnes distinctes, pour un autre flux de provisioning POS), jamais touchés
-// sur les mises à jour suivantes.
-func (r *UberRepository) EnableIntegration(ctx context.Context, merchantID, storeID, accessToken, refreshToken string) error {
+// ActivateStore crée (ou réactive) le compte Uber Eats d'un restaurant que le
+// restaurateur vient de connecter depuis le back-office
+// (docs/marketplace-onboarding.md). Postgres uniquement.
+//
+//   - bearer_token = '' : la colonne ne porte plus de jeton (toutes les
+//     opérations passent par le token client_credentials), mais « bearer_token
+//     IS NOT NULL » est le marqueur « Uber Eats relié » que lit la réponse de
+//     connexion du POS (auth/users repository). '' le pose sans rien stocker de
+//     secret ; une réactivation conserve une valeur historique existante.
+//   - delay_duration / auto_accept_orders / pos_provisionning_* sont NOT NULL
+//     sans défaut : valeurs neutres à la création (acceptation automatique
+//     désactivée, le restaurateur l'active dans ses réglages), jamais touchées
+//     ensuite.
+//   - ON CONFLICT sur la PK (merchant_id, store_id) : reconnecter le même
+//     restaurant réactive la ligne et conserve ses réglages.
+func (r *UberRepository) ActivateStore(ctx context.Context, merchantID, storeID string) error {
 	db := dbx.GetDB(ctx, r.database)
-
-	query := `
+	const q = `
 		INSERT INTO integration_uber_eats (
-			merchant_id, store_id, bearer_token, refresh_token, enabled,
-			pos_provisionning_refresh_token, pos_provisionning_token_expiration_date
+			merchant_id, store_id, bearer_token, enabled, auto_accept_orders, delay_duration,
+			pos_provisionning_refresh_token, pos_provisionning_token_expiration_date, unlink_date
 		)
-		VALUES (?, ?, ?, ?, 1, '', ` + dbx.UTCNow() + `)
-		ON DUPLICATE KEY UPDATE
-			store_id = VALUES(store_id),
-			bearer_token = VALUES(bearer_token),
-			refresh_token = VALUES(refresh_token),
-			enabled = 1`
-	if dbx.ActiveDialect() == dbx.Postgres {
-		query = `
-		INSERT INTO integration_uber_eats (
-			merchant_id, store_id, bearer_token, refresh_token, enabled,
-			pos_provisionning_refresh_token, pos_provisionning_token_expiration_date
-		)
-		VALUES (?, ?, ?, ?, true, '', ` + dbx.UTCNow() + `)
+		VALUES (?, ?, '', true, false, 0, '', now(), NULL)
 		ON CONFLICT (merchant_id, store_id) DO UPDATE SET
-			bearer_token = EXCLUDED.bearer_token,
-			refresh_token = EXCLUDED.refresh_token,
-			enabled = true`
-		// ON CONFLICT cible desormais la PK composite (merchant_id, store_id)
-		// posee par la migration 111 : reconnecter le MEME compte (meme
-		// store_id) le met a jour, connecter un DEUXIEME compte (store_id
-		// different) insere une nouvelle ligne au lieu d'ecraser la premiere.
-		// store_id n'a plus besoin d'etre dans le SET puisqu'il fait partie de
-		// la cle de conflit (donc deja egal a EXCLUDED.store_id).
-	}
-
-	_, err := db.ExecContext(ctx, query, merchantID, storeID, accessToken, refreshToken)
+			enabled = true,
+			bearer_token = COALESCE(integration_uber_eats.bearer_token, ''),
+			unlink_date = NULL`
+	_, err := db.ExecContext(ctx, q, merchantID, storeID)
 	return err
 }
 
-// DisableIntegration désactive l'intégration. storeID vide désactive tous les
-// comptes du marchand (comportement historique, correct pour un marchand
-// mono-compte) ; storeID renseigné ne désactive que ce compte précis.
-func (r *UberRepository) DisableIntegration(ctx context.Context, merchantID, storeID string) error {
+// DeactivateStore désactive un compte Uber Eats précis du marchand (retrait de
+// l'intégration) et lève le marqueur bearer_token lu par le POS.
+func (r *UberRepository) DeactivateStore(ctx context.Context, merchantID, storeID string) error {
 	db := dbx.GetDB(ctx, r.database)
-
-	enabledFalse := "0"
-	if dbx.ActiveDialect() == dbx.Postgres {
-		enabledFalse = "false"
-	}
-
-	query := `UPDATE integration_uber_eats SET enabled = ` + enabledFalse + `, bearer_token = NULL, refresh_token = NULL WHERE merchant_id = ?`
-	args := []interface{}{merchantID}
-	if storeID != "" {
-		query += ` AND store_id = ?`
-		args = append(args, storeID)
-	}
-
-	_, err := db.ExecContext(ctx, query, args...)
+	const q = `
+		UPDATE integration_uber_eats
+		SET enabled = false, bearer_token = NULL, refresh_token = NULL, unlink_date = now()
+		WHERE merchant_id = ? AND store_id = ?`
+	_, err := db.ExecContext(ctx, q, merchantID, storeID)
 	return err
+}
+
+// DeactivateStoreEverywhere désactive toutes les lignes actives d'un store_id
+// (webhook store.deprovisioned : Uber ne dit pas pour quel marchand) et
+// renvoie les marchands concernés.
+func (r *UberRepository) DeactivateStoreEverywhere(ctx context.Context, storeID string) ([]string, error) {
+	db := dbx.GetDB(ctx, r.database)
+	const q = `
+		UPDATE integration_uber_eats
+		SET enabled = false, bearer_token = NULL, refresh_token = NULL, unlink_date = now()
+		WHERE store_id = ? AND enabled = true
+		RETURNING merchant_id`
+	rows, err := db.QueryContext(ctx, q, storeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var merchants []string
+	for rows.Next() {
+		var m string
+		if err := rows.Scan(&m); err != nil {
+			return nil, err
+		}
+		merchants = append(merchants, m)
+	}
+	return merchants, rows.Err()
+}
+
+// ActiveStoreOwner renvoie le marchand dont un compte actif porte ce store_id
+// ("" s'il n'y en a pas). Sert à refuser de relier un même restaurant Uber Eats
+// à deux établissements Wello Resto.
+func (r *UberRepository) ActiveStoreOwner(ctx context.Context, storeID string) (string, error) {
+	db := dbx.GetDB(ctx, r.database)
+	const q = `SELECT merchant_id FROM integration_uber_eats WHERE store_id = ? AND enabled = true ORDER BY merchant_id LIMIT 1`
+	var m string
+	err := db.QueryRowContext(ctx, q, storeID).Scan(&m)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return m, err
 }
 
 // GetOrderMetadata récupère les IDs pour la requête. StoreID identifie le

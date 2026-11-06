@@ -31,7 +31,9 @@ func (r *Repository) GetUberEatsIntegration(ctx context.Context, merchantID, sto
 	db := dbx.GetDB(ctx, r.database)
 
 	storeFilter := ""
-	orderBy := "ORDER BY iue.store_id LIMIT 1"
+	// Compte actif d'abord : un restaurant déconnecté puis remplacé par un
+	// autre ne doit pas rester le compte affiché (docs/marketplace-onboarding.md).
+	orderBy := "ORDER BY iue.enabled DESC, iue.store_id LIMIT 1"
 	if storeID != "" {
 		storeFilter = " AND store_id = ?"
 		orderBy = "AND iue.store_id = ? LIMIT 1"
@@ -152,7 +154,7 @@ func (r *Repository) ListUberEatsAccounts(ctx context.Context, merchantID string
 		SELECT store_id, enabled
 		FROM   integration_uber_eats
 		WHERE  merchant_id = ?
-		ORDER BY store_id`
+		ORDER BY enabled DESC, store_id`
 
 	rows, err := db.QueryContext(ctx, q, merchantID)
 	if err != nil {
@@ -188,7 +190,8 @@ func (r *Repository) GetDeliverooIntegration(ctx context.Context, merchantID, lo
 	db := dbx.GetDB(ctx, r.database)
 
 	locationFilter := ""
-	orderBy := "ORDER BY ind.location_id LIMIT 1"
+	// Compte actif d'abord, voir GetUberEatsIntegration.
+	orderBy := "ORDER BY ind.enabled DESC, ind.location_id LIMIT 1"
 	if locationID != "" {
 		locationFilter = " AND location_id = ?"
 		orderBy = "AND ind.location_id = ? LIMIT 1"
@@ -303,7 +306,7 @@ func (r *Repository) ListDeliverooAccounts(ctx context.Context, merchantID strin
 		SELECT location_id, enabled
 		FROM   integration_deliveroo
 		WHERE  merchant_id = ?
-		ORDER BY location_id`
+		ORDER BY enabled DESC, location_id`
 
 	rows, err := db.QueryContext(ctx, q, merchantID)
 	if err != nil {

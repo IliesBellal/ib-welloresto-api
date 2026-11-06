@@ -216,14 +216,88 @@ func TestUberEatsRepository_Postgres(t *testing.T) {
 		t.Fatalf("UpdateStoreClosure failed against postgres: %v", err)
 	}
 
-	// --- EnableIntegration / DisableIntegration : bug préexistant (colonnes
-	// access_token / is_active / updated_at inexistantes dans les deux
-	// dialectes) — l'erreur SQL est attendue, à parité avec MySQL ---
-	if err := repo.EnableIntegration(ctx, merchantID, storeID, "at", "rt"); err == nil {
-		t.Fatal("expected EnableIntegration to fail (columns missing in both dialects)")
+	// --- connexion depuis le back-office (docs/marketplace-onboarding.md) ---
+	var enabled bool
+	var bearer sql.NullString
+	var unlink sql.NullTime
+	readRow := func(sid string) {
+		t.Helper()
+		if err := db.QueryRowContext(ctx, `SELECT enabled, bearer_token, unlink_date FROM integration_uber_eats WHERE merchant_id = $1 AND store_id = $2`, merchantID, sid).Scan(&enabled, &bearer, &unlink); err != nil {
+			t.Fatalf("read back integration row %s: %v", sid, err)
+		}
 	}
-	if err := repo.DisableIntegration(ctx, merchantID, ""); err == nil {
-		t.Fatal("expected DisableIntegration to fail (columns missing in both dialects)")
+
+	// La ligne d'amorce est inactive (enabled par défaut false).
+	if owner, err := repo.ActiveStoreOwner(ctx, storeID); err != nil || owner != "" {
+		t.Fatalf("ActiveStoreOwner on inactive row = (%q, %v), want empty", owner, err)
+	}
+
+	// Réactivation : réglages et valeur historique de bearer_token conservés.
+	if err := repo.ActivateStore(ctx, merchantID, storeID); err != nil {
+		t.Fatalf("ActivateStore (reactivate): %v", err)
+	}
+	readRow(storeID)
+	if !enabled || bearer.String != "bearer-tok" || unlink.Valid {
+		t.Fatalf("after ActivateStore: enabled=%v bearer=%v unlink=%v", enabled, bearer, unlink)
+	}
+	var autoAccept bool
+	if err := db.QueryRowContext(ctx, `SELECT auto_accept_orders FROM integration_uber_eats WHERE merchant_id = $1 AND store_id = $2`, merchantID, storeID).Scan(&autoAccept); err != nil || !autoAccept {
+		t.Fatalf("auto_accept_orders should be kept on reactivation, got %v (%v)", autoAccept, err)
+	}
+	if owner, err := repo.ActiveStoreOwner(ctx, storeID); err != nil || owner != merchantID {
+		t.Fatalf("ActiveStoreOwner = (%q, %v), want %s", owner, err, merchantID)
+	}
+
+	// Désactivation : marqueur levé, date de retrait posée.
+	if err := repo.DeactivateStore(ctx, merchantID, storeID); err != nil {
+		t.Fatalf("DeactivateStore: %v", err)
+	}
+	readRow(storeID)
+	if enabled || bearer.Valid || !unlink.Valid {
+		t.Fatalf("after DeactivateStore: enabled=%v bearer=%v unlink=%v", enabled, bearer, unlink)
+	}
+	if owner, _ := repo.ActiveStoreOwner(ctx, storeID); owner != "" {
+		t.Fatalf("ActiveStoreOwner after deactivation = %q, want empty", owner)
+	}
+
+	// Réactivation après retrait : le marqueur '' est reposé.
+	if err := repo.ActivateStore(ctx, merchantID, storeID); err != nil {
+		t.Fatalf("ActivateStore (after deactivation): %v", err)
+	}
+	readRow(storeID)
+	if !enabled || !bearer.Valid || bearer.String != "" {
+		t.Fatalf("after re-ActivateStore: enabled=%v bearer=%v", enabled, bearer)
+	}
+
+	// Nouveau restaurant : ligne créée avec les valeurs neutres (colonnes NOT
+	// NULL sans défaut renseignées).
+	const store2 = "itest-ue-store-2"
+	if err := repo.ActivateStore(ctx, merchantID, store2); err != nil {
+		t.Fatalf("ActivateStore (insert): %v", err)
+	}
+	readRow(store2)
+	if !enabled || !bearer.Valid || bearer.String != "" {
+		t.Fatalf("new store row: enabled=%v bearer=%v", enabled, bearer)
+	}
+
+	// Compte principal : l'actif d'abord. On désactive storeID (premier par
+	// ordre alphabétique) : store2 devient principal.
+	if err := repo.DeactivateStore(ctx, merchantID, storeID); err != nil {
+		t.Fatalf("DeactivateStore: %v", err)
+	}
+	principal, err := repo.GetStoreData(ctx, merchantID)
+	if err != nil || principal == nil || principal.StoreID != store2 {
+		t.Fatalf("GetStoreData after deactivation = (%+v, %v), want %s", principal, err, store2)
+	}
+
+	// Webhook store.deprovisioned : toutes les lignes actives du store.
+	merchants, err := repo.DeactivateStoreEverywhere(ctx, store2)
+	if err != nil || len(merchants) != 1 || merchants[0] != merchantID {
+		t.Fatalf("DeactivateStoreEverywhere = (%v, %v)", merchants, err)
+	}
+	readRow(store2)
+	if enabled {
+		t.Fatal("store2 should be disabled after DeactivateStoreEverywhere")
 	}
 }
 
