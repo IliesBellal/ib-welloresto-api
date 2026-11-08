@@ -110,6 +110,25 @@ func (h *UsersHandler) LinkMerchantUser(w http.ResponseWriter, r *http.Request) 
 	models.SendJSON(w, http.StatusCreated, "users", "link_merchant", map[string]interface{}{"status": "success", "rights": rights})
 }
 
+// LinkMerchantUserByEmail répond 202 avec le même message que le compte existe
+// ou non (voir UsersService.LinkMerchantUserByEmail) : ne jamais y ajouter
+// d'information sur le compte.
+func (h *UsersHandler) LinkMerchantUserByEmail(w http.ResponseWriter, r *http.Request) {
+	var req MerchantUserLinkByEmailRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "users", "link_by_email", models.ErrInvalidRequestBody)
+		return
+	}
+	if err := h.svc.LinkMerchantUserByEmail(r.Context(), req); err != nil {
+		models.SendErrorJSON(w, "users", "link_by_email", err)
+		return
+	}
+	models.SendJSON(w, http.StatusAccepted, "users", "link_by_email", map[string]interface{}{
+		"status":  "success",
+		"message": "Si un compte existe avec cette adresse, il sera rattaché à l'établissement et son titulaire en sera informé par e-mail.",
+	})
+}
+
 func (h *UsersHandler) ForceResetPassword(w http.ResponseWriter, r *http.Request) {
 	var req ForceResetPasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

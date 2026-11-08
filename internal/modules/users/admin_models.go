@@ -107,6 +107,22 @@ type MerchantUserLinkRequest struct {
 	Admin  bool                             `json:"admin"`
 }
 
+// MerchantUserLinkByEmailRequest rattache à l'établissement le compte portant
+// cet e-mail, s'il existe (POST /users/link-by-email). Mêmes droits que
+// MerchantUserLinkRequest.
+type MerchantUserLinkByEmailRequest struct {
+	Email  string                           `json:"email"`
+	Rights *MerchantUserRightsUpsertRequest `json:"rights,omitempty"`
+	Admin  bool                             `json:"admin"`
+}
+
+// linkTarget est le strict nécessaire sur le compte retrouvé par e-mail.
+type linkTarget struct {
+	UserID    string
+	FirstName string
+	Email     string
+}
+
 type ForceResetPasswordRequest struct {
 	NewPassword string `json:"new_password"`
 }

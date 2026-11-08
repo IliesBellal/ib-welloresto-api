@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/mail"
 	"strings"
 	"time"
 
@@ -121,22 +122,77 @@ func (s *UsersService) LinkMerchantUser(ctx context.Context, userID string, req 
 	if linked {
 		return nil, models.ErrMerchantUserAlreadyLinked
 	}
-	rights := defaultMerchantUserRights(req.Admin)
-	if req.Rights != nil {
-		rights = req.Rights.Normalize(rights)
+	merchantRights, err := s.insertMerchantLink(ctx, currentUser.MerchantID, userID, req.Admin, req.Rights)
+	if err != nil {
+		return nil, err
+	}
+	s.notifyMerchantLinked(ctx, currentUser.MerchantID, userID)
+	return merchantRights, nil
+}
+
+// LinkMerchantUserByEmail rattache à l'établissement courant le compte portant
+// cet e-mail, et prévient son titulaire par e-mail.
+//
+// La réponse ne dépend jamais de l'existence du compte : un compte inconnu, déjà
+// rattaché, désactivé ou ambigu se termine comme un succès, sans rien faire. Le
+// back-office n'est donc pas un moyen de savoir si une adresse a un compte Wello
+// Resto — seul le titulaire de l'adresse l'apprend, par le mail. Seuls une
+// adresse manquante/invalide ou une erreur technique sont signalées.
+func (s *UsersService) LinkMerchantUserByEmail(ctx context.Context, req MerchantUserLinkByEmailRequest) error {
+	currentUser, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return models.ErrUnauthorized
+	}
+	email := strings.TrimSpace(req.Email)
+	if _, parseErr := mail.ParseAddress(email); parseErr != nil {
+		return models.ErrInvalidInput
+	}
+
+	target, err := s.userRepo.FindLinkTargetByEmail(ctx, email)
+	if err != nil {
+		return err
+	}
+	if target == nil {
+		return nil
+	}
+	linked, err := s.userRepo.MerchantUserLinkExists(ctx, currentUser.MerchantID, target.UserID)
+	if err != nil {
+		return err
+	}
+	if linked {
+		return nil
+	}
+	if _, err := s.insertMerchantLink(ctx, currentUser.MerchantID, target.UserID, req.Admin, req.Rights); err != nil {
+		return err
+	}
+	s.notifyMerchantLinkedTo(ctx, currentUser.MerchantID, *target)
+	if s.audit != nil {
+		_ = s.audit.LogChange(ctx, currentUser.MerchantID, currentUser.UserID, "link_merchant_user", "merchant_user", target.UserID, nil, map[string]any{"enabled": true, "by": "email"})
+	}
+	return nil
+}
+
+// insertMerchantLink crée (ou réactive) le rattachement users_rights, droits
+// minimaux par défaut, dans une transaction. Les vérifications (compte existant,
+// pas déjà rattaché) sont à la charge de l'appelant.
+func (s *UsersService) insertMerchantLink(ctx context.Context, merchantID, userID string, admin bool, requested *MerchantUserRightsUpsertRequest) (*MerchantUserRights, error) {
+	rights := defaultMerchantUserRights(admin)
+	if requested != nil {
+		rights = requested.Normalize(rights)
 	}
 
 	var merchantRights *MerchantUserRights
-	err = dbutils.RunInTx(ctx, s.userRepo.database, func(txCtx context.Context) error {
+	err := dbutils.RunInTx(ctx, s.userRepo.database, func(txCtx context.Context) error {
 		token, tokenErr := helpers.GenerateToken(30)
 		if tokenErr != nil {
 			return tokenErr
 		}
-		if _, upsertErr := s.userRepo.UpsertMerchantUserRights(txCtx, userID, currentUser.MerchantID, token, rights); upsertErr != nil {
+		if _, upsertErr := s.userRepo.UpsertMerchantUserRights(txCtx, userID, merchantID, token, rights); upsertErr != nil {
 			return upsertErr
 		}
-		merchantRights, err = s.userRepo.GetMerchantUserRights(txCtx, currentUser.MerchantID, userID)
-		return err
+		var getErr error
+		merchantRights, getErr = s.userRepo.GetMerchantUserRights(txCtx, merchantID, userID)
+		return getErr
 	})
 	if err != nil {
 		return nil, err

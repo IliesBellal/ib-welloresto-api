@@ -31,6 +31,8 @@ type UsersService struct {
 	notificationService *notification.NotificationService
 	uberSvc             *ubereats.UberEatsService
 	onboarding          *onboarding.Service
+	linkMailer          linkMailer
+	merchantNames       merchantNameResolver
 }
 
 // SetOnboardingService wires LOT A Semaine 3, Chantier 13's automatic

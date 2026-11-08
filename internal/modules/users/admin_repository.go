@@ -417,6 +417,55 @@ func (r *UsersRepository) UserExists(ctx context.Context, userID string) (bool, 
 	return count > 0, nil
 }
 
+// FindLinkTargetByEmail retrouve le compte actif portant cet e-mail (insensible
+// à la casse). Renvoie nil sans erreur quand il n'y en a aucun, ou plus d'un :
+// rattacher l'un des deux au hasard serait pire que ne rien faire.
+func (r *UsersRepository) FindLinkTargetByEmail(ctx context.Context, email string) (*linkTarget, error) {
+	db := dbx.GetDB(ctx, r.database)
+	rows, err := db.QueryContext(ctx, `
+		SELECT user_id, COALESCE(first_name, ''), email
+		FROM users
+		WHERE LOWER(email) = LOWER(?) AND enabled = TRUE
+		LIMIT 2
+	`, strings.TrimSpace(email))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var found []linkTarget
+	for rows.Next() {
+		var t linkTarget
+		if err := rows.Scan(&t.UserID, &t.FirstName, &t.Email); err != nil {
+			return nil, err
+		}
+		found = append(found, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(found) != 1 {
+		return nil, nil
+	}
+	return &found[0], nil
+}
+
+// GetLinkTargetByID lit prénom et e-mail d'un compte (pour le prévenir d'un
+// rattachement). sql.ErrNoRows si le compte n'existe pas ou n'a pas d'e-mail.
+func (r *UsersRepository) GetLinkTargetByID(ctx context.Context, userID string) (*linkTarget, error) {
+	db := dbx.GetDB(ctx, r.database)
+	t := &linkTarget{}
+	err := db.QueryRowContext(ctx, `
+		SELECT user_id, COALESCE(first_name, ''), email
+		FROM users
+		WHERE user_id = ? AND email IS NOT NULL AND email <> ''
+	`, strings.TrimSpace(userID)).Scan(&t.UserID, &t.FirstName, &t.Email)
+	if err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
 func (r *UsersRepository) MerchantUserLinkExists(ctx context.Context, merchantID, userID string) (bool, error) {
 	db := dbx.GetDB(ctx, r.database)
 	var count int

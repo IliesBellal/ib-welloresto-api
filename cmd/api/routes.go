@@ -562,6 +562,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	// ---- Users ----
 	usersRepo := usersModule.NewUserRepository(selectedDB)
 	usersService := usersModule.NewUsersService(usersRepo, auditService, redisClient, notificationService, uberService)
+	usersService.SetLinkNotifier(mailService, merchantBrands)
 
 	// ---- Roles (RBAC lot 6) ---- usersRepo reused for GetUsersRightsToken
 	// (cache invalidation on a user's role change) rather than duplicating it.
@@ -985,6 +986,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		r.With(middleware.RequirePermission(permission.StaffManage)).Post("/create", usersH.CreateUser)
 		r.With(middleware.RequirePermission(permission.StaffManage)).Get("/linkable-search", usersH.SearchLinkableUsers)
 		r.With(middleware.RequirePermission(permission.StaffManage)).Get("/{id}", usersH.GetMerchantUser)
+		r.With(middleware.RequirePermission(permission.StaffManage)).Post("/link-by-email", usersH.LinkMerchantUserByEmail)
 		r.With(middleware.RequirePermission(permission.StaffManage)).Post("/{id}/merchant-link", usersH.LinkMerchantUser)
 		r.With(middleware.RequirePermission(permission.StaffManage)).Get("/{id}/rights", usersH.GetMerchantUserRights)
 		r.With(middleware.RequirePermission(permission.StaffManage)).Put("/{id}/rights", usersH.UpdateMerchantUserRights)
