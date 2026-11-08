@@ -1,0 +1,12 @@
+{{/* Compte rattaché à un établissement depuis le back-office (users.LinkMerchantUserByEmail
+et users.LinkMerchantUser). Mail de sécurité : prévient le titulaire du compte qu'un
+établissement vient d'y avoir accès. Données (map) : BrandName, Year, FirstName,
+MerchantName. */}}
+{{ template "doc_start" (dict "Title" "Votre compte a été rattaché à un établissement" "Pre" (printf "Vous avez désormais accès à %s" .MerchantName)) }}
+{{ template "head_wello" }}
+{{ $sub := printf "Votre compte %s a été rattaché à %s." .BrandName .MerchantName }}{{ if .FirstName }}{{ $sub = printf "Bonjour %s, votre compte %s a été rattaché à %s." .FirstName .BrandName .MerchantName }}{{ end }}
+{{ template "hero" (dict "Tone" "info" "Pill" "Nouvel accès" "Title" "Vous avez été ajouté à un établissement" "Sub" $sub) }}
+{{ template "p_open" }}Vous pouvez désormais vous connecter à {{ .MerchantName }} avec vos identifiants habituels. Les droits qui vous ont été accordés sont définis par l'équipe de l'établissement.{{ template "p_close" }}
+{{ template "note" "Vous ne connaissez pas cet établissement ? Contactez-nous : nous retirerons cet accès." }}
+{{ template "foot_secure" (printf "E-mail de sécurité envoyé par %s · © %d" .BrandName .Year) }}
+{{ template "doc_end" }}

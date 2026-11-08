@@ -73,6 +73,9 @@ func templateFixtures() map[string]interface{} {
 		"demo_request.html":   demoRequestFixture("depliant · print · dpl_sno_brn_2610"),
 		"otp.html":            MFAMailData{EmailBaseData: base, MFACode: "482913", ExpiresIn: 10},
 		"password_reset.html": PasswordResetMailData{EmailBaseData: base, FirstName: "Sarah", ResetURL: "https://backoffice.welloresto.fr/reset-password?token=abc", ExpiresIn: 30},
+		"merchant_user_linked.html": map[string]interface{}{
+			"BrandName": "Wello Resto", "Year": 2026, "FirstName": "Sarah", "MerchantName": est.Name,
+		},
 		"account_confirmation.html": ConfirmationEmailData{
 			EmailBaseData: base, FirstName: "Sarah", ConfirmationURL: "https://backoffice.welloresto.fr/confirm?token=abc",
 		},
