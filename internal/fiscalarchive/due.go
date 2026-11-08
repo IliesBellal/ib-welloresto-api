@@ -24,7 +24,8 @@ func PendingMonths(ctx context.Context, db *dbx.DB, merchantID string, limit int
 		FROM fiscal_closures c
 		WHERE c.period_type = 'MONTH' AND (?::text = '' OR c.merchant_id = ?::text)
 		  AND NOT EXISTS (SELECT 1 FROM fiscal_archives a
-		                  WHERE a.merchant_id = c.merchant_id AND a.kind = 'MONTH' AND a.period_start = c.period_start)
+		                  WHERE a.merchant_id = c.merchant_id AND a.kind = 'MONTH'
+		                    AND a.period_start BETWEEN c.period_start AND c.period_end)
 		ORDER BY c.period_start, c.merchant_id
 		LIMIT ?`, merchantID, merchantID, limit)
 	if err != nil {

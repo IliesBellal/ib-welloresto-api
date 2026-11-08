@@ -154,6 +154,28 @@ type HeartbeatResponse struct {
 	DisplayStatus string `json:"display_status"`
 }
 
+// ---- Device : mise à jour automatique ----
+
+// AppVersionCheckRequest — POST /cds/app/version-check. Le merchant est connu
+// par le token de l'écran : seul le build installé (versionCode Android,
+// suffixe `+N` de pubspec.yaml) est transmis.
+type AppVersionCheckRequest struct {
+	VersionCode int `json:"version_code"`
+}
+
+// AppVersionCheckResponse — même forme que la borne
+// (kiosk.AppVersionCheckResponse) et le POS (POST /app/version/check),
+// dupliquée plutôt que partagée : l'écran s'authentifie par token device,
+// jamais par token utilisateur, et ce module ne dépend ni de `auth` ni de
+// `kiosk` (CDS_DECISIONS.md D10).
+type AppVersionCheckResponse struct {
+	// "update_available" | "no_update".
+	Status         string  `json:"status"`
+	DownloadURL    *string `json:"download_url,omitempty"`
+	VersionCode    *int    `json:"version_code,omitempty"`
+	ChecksumSHA256 *string `json:"checksum_sha256,omitempty"`
+}
+
 // ---- Device : projection du plateau de commandes ----
 
 // BoardOrder est la projection légère d'une commande pour l'affichage.

@@ -41,6 +41,13 @@ type Manifest struct {
 	Fichiers      []ManifestFile `json:"fichiers"`
 }
 
+// Rubriques optionnelles de Manifest.Periode : jour de la première clôture
+// journalière de l'établissement, et période antérieure à ce jour.
+const (
+	ManifestFirstClosure       = "premiere_cloture"
+	ManifestBeforeFirstClosure = "anterieure_premiere_cloture"
+)
+
 // ManifestFile décrit un fichier de l'archive.
 type ManifestFile struct {
 	Nom    string `json:"nom"`
@@ -92,13 +99,25 @@ func Build(ctx context.Context, database *sql.DB, merchantID string, start, end 
 		filename = fmt.Sprintf("%s_archive_%s_%s_%s_%s.zip", version.Product, safeFilePart(siret.String),
 			b.startDay, b.endDay, generatedAt.UTC().Format("20060102T150405Z"))
 	}
+	periode := map[string]any{"debut": b.startDay, "fin": b.endDay, "fuseau": tz.String}
+	if first, ok, err := chainStart(ctx, db, merchantID); err != nil {
+		return nil, err
+	} else if ok {
+		switch {
+		case end.Before(first):
+			periode[ManifestBeforeFirstClosure] = true
+			periode[ManifestFirstClosure] = first.Format("2006-01-02")
+		case kind == KindMonth && start.Equal(first) && start.Day() != 1:
+			periode[ManifestFirstClosure] = first.Format("2006-01-02")
+		}
+	}
 	manifest := Manifest{
 		Logiciel: version.Product,
 		Version:  version.Version,
 		Etablissement: map[string]any{
 			"id": merchantID, "nom": name.String, "siret": siret.String,
 		},
-		Periode:  map[string]any{"debut": b.startDay, "fin": b.endDay, "fuseau": tz.String},
+		Periode:  periode,
 		Type:     kind,
 		GenereLe: fiscal.FormatTime(generatedAt),
 		Fichiers: b.manifest,

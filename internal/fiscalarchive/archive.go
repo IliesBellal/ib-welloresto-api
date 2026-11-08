@@ -125,15 +125,25 @@ func Generate(ctx context.Context, database *sql.DB, store Store, req Request) (
 	if end.Before(start) {
 		return nil, fmt.Errorf("fiscalarchive: period end before start")
 	}
+	first, hasChain, err := chainStart(ctx, dbx.GetDB(ctx, database), req.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+	monthStart := start
 	if req.Kind == KindMonth {
 		if start.Day() != 1 || !end.Equal(start.AddDate(0, 1, -1)) {
 			return nil, fmt.Errorf("fiscalarchive: a MONTH archive covers a whole calendar month")
 		}
-		if existing, err := findMonth(ctx, dbx.GetDB(ctx, database), req.MerchantID, start); err != nil || existing != nil {
+		if existing, err := findMonth(ctx, dbx.GetDB(ctx, database), req.MerchantID, monthStart, end); err != nil || existing != nil {
 			return existing, err
 		}
+		// Premier mois de la chaîne, commencée en cours de mois : l'archive
+		// couvre les jours clos, à partir de la première clôture.
+		if hasChain && first.After(start) && !first.After(end) {
+			start = first
+		}
 	}
-	if err := checkClosed(ctx, dbx.GetDB(ctx, database), req.MerchantID, req.Kind, start, end); err != nil {
+	if err := checkClosed(ctx, dbx.GetDB(ctx, database), req.MerchantID, req.Kind, start, end, first, hasChain); err != nil {
 		return nil, err
 	}
 
@@ -176,7 +186,7 @@ func Generate(ctx context.Context, database *sql.DB, store Store, req Request) (
 		if req.Kind == KindMonth {
 			// Une autre instance l'a écrite pendant la génération : on garde
 			// la sienne (le fichier envoyé ici reste orphelin, sans effet).
-			existing, err := findMonth(txCtx, db, req.MerchantID, start)
+			existing, err := findMonth(txCtx, db, req.MerchantID, monthStart, end)
 			if err != nil || existing != nil {
 				out = existing
 				return err
@@ -223,11 +233,13 @@ func scanArchive(scan func(dest ...any) error) (Archive, error) {
 	return a, err
 }
 
-func findMonth(ctx context.Context, db *dbx.DB, merchantID string, start time.Time) (*Archive, error) {
+// findMonth renvoie l'archive mensuelle d'un mois (de monthStart à monthEnd) ;
+// son début peut être postérieur au 1er du mois (premier mois de la chaîne).
+func findMonth(ctx context.Context, db *dbx.DB, merchantID string, monthStart, monthEnd time.Time) (*Archive, error) {
 	a, err := scanArchive(db.QueryRowContext(ctx, `
 		SELECT `+archiveColumns+` FROM fiscal_archives
-		WHERE merchant_id = ? AND kind = 'MONTH' AND period_start = ?::date`,
-		merchantID, start.Format("2006-01-02")).Scan)
+		WHERE merchant_id = ? AND kind = 'MONTH' AND period_start BETWEEN ?::date AND ?::date`,
+		merchantID, monthStart.Format("2006-01-02"), monthEnd.Format("2006-01-02")).Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -257,9 +269,30 @@ func List(ctx context.Context, db *dbx.DB, merchantID string) ([]Archive, error)
 	return out, rows.Err()
 }
 
+// chainStart renvoie le premier jour clos d'un établissement (sa première
+// clôture journalière) ; ok vaut false s'il n'en a aucune.
+func chainStart(ctx context.Context, db *dbx.DB, merchantID string) (first time.Time, ok bool, err error) {
+	var s sql.NullString
+	if err := db.QueryRowContext(ctx, `
+		SELECT min(period_start)::text FROM fiscal_closures
+		WHERE merchant_id = ? AND period_type = 'DAY'`, merchantID).Scan(&s); err != nil {
+		return first, false, fmt.Errorf("fiscalarchive: first closure: %w", err)
+	}
+	if !s.Valid {
+		return first, false, nil
+	}
+	first, err = time.Parse("2006-01-02", s.String)
+	return first, err == nil, err
+}
+
 // checkClosed : chaque jour de la période a sa clôture journalière ; pour un
-// mois, sa clôture mensuelle est écrite.
-func checkClosed(ctx context.Context, db *dbx.DB, merchantID, kind string, start, end time.Time) error {
+// mois, sa clôture mensuelle est écrite. Une archive à la demande dont la
+// période précède entièrement la première clôture de l'établissement (mise en
+// service du logiciel en cours de mois) n'a pas de clôture à attendre.
+func checkClosed(ctx context.Context, db *dbx.DB, merchantID, kind string, start, end, first time.Time, hasChain bool) error {
+	if kind == KindPeriod && hasChain && end.Before(first) {
+		return nil
+	}
 	days := int(end.Sub(start).Hours()/24) + 1
 	var closedDays int
 	var month bool

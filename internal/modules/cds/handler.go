@@ -96,6 +96,35 @@ func (h *Handler) DeviceHeartbeat(w http.ResponseWriter, r *http.Request) {
 	models.SendJSON(w, http.StatusOK, "cds", "heartbeat", resp)
 }
 
+// CheckAppVersion — POST /cds/app/version-check (CDSAuth). Mise à jour
+// automatique de l'écran, sur le modèle de POST /kiosk/app/version-check :
+// lecture seule, aucune écriture métier (D10).
+func (h *Handler) CheckAppVersion(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	cds := middleware.GetCDS(r)
+	if cds == nil {
+		models.SendErrorJSON(w, "cds", "check_app_version", models.ErrCDSDeviceTokenInvalid)
+		return
+	}
+
+	var req AppVersionCheckRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		models.SendErrorJSON(w, "cds", "check_app_version", models.ErrInvalidRequestBody)
+		return
+	}
+
+	resp, err := h.service.CheckAppVersion(ctx, cds, req)
+	if err != nil {
+		log.Warn("cds check_app_version failed", zap.Error(err))
+		models.SendErrorJSON(w, "cds", "check_app_version", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "cds", "check_app_version", resp)
+}
+
 // GetBoard — GET /cds/orders (CDSAuth).
 //
 // Point d'entrée unique du temps réel côté écran : l'événement WebSocket

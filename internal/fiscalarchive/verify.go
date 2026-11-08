@@ -226,8 +226,9 @@ func Verify(zipBytes []byte) (*VerifyReport, error) {
 			m.days++
 		}
 	}
+	beforeFirstClosure, _ := manifest.Periode[ManifestBeforeFirstClosure].(bool)
 	for day := range days {
-		if !closedDays[day] {
+		if !closedDays[day] && !beforeFirstClosure {
 			r.add("tickets du %s sans clôture journalière dans l'archive", day)
 		}
 	}

@@ -58,6 +58,7 @@ import (
 	deliverooModule "welloresto-api/internal/modules/deliveroo"
 	deliverysessionsModule "welloresto-api/internal/modules/delivery_sessions"
 	demorequestModule "welloresto-api/internal/modules/demorequest"
+	appreleasesModule "welloresto-api/internal/modules/appreleases"
 	discountsModule "welloresto-api/internal/modules/discounts"
 	dunningModule "welloresto-api/internal/modules/dunning"
 	haccpModule "welloresto-api/internal/modules/haccp"
@@ -628,6 +629,11 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	demorequestService := demorequestModule.NewService(demorequestRepo, mailService, redisClient, cfg.App.DemoRequestNotificationEmail)
 	demorequestH := demorequestModule.NewHandler(demorequestService)
 
+	// ---- App releases : téléchargement de la dernière version de la caisse,
+	// de la borne et de l'affichage client (table app_version), pour la page
+	// Téléchargements du site vitrine. Voir docs/telechargements-apps.md.
+	appreleasesH := appreleasesModule.NewHandler(appreleasesModule.NewService(appreleasesModule.NewRepository(selectedDB)))
+
 	// ---- Services ----
 	servicesRepo := servicesModule.NewServicesRepository(selectedDB)
 	servicesService := servicesModule.NewServicesService(servicesRepo)
@@ -923,6 +929,11 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			// aucun compte n'existe à ce stade, comme le reste de ce groupe.
 			r.Get("/demo-request/slots", demorequestH.Slots)
 			r.Post("/demo-request", demorequestH.Create)
+
+			// Site vitrine, page Téléchargements : redirection vers l'APK de
+			// la dernière version publique de chaque application (caisse,
+			// borne, cds) — remplace les pages PHP de storage.welloresto.fr.
+			r.Get("/apps/{app}/download", appreleasesH.Download)
 		})
 
 		r.Route("/auth", func(r chi.Router) {
@@ -2333,6 +2344,9 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			r.Post("/auth/heartbeat", cdsHandler.DeviceHeartbeat)
 			r.Get("/orders", cdsHandler.GetBoard)
 			r.Get("/settings", cdsHandler.GetDeviceSettings)
+			// Mise à jour automatique de l'écran (même règle que la borne) —
+			// voir docs/telechargements-apps.md.
+			r.Post("/app/version-check", cdsHandler.CheckAppVersion)
 		})
 	})
 

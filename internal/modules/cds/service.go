@@ -447,6 +447,23 @@ func (s *Service) RecordHeartbeat(ctx context.Context, cds *AuthenticatedCDS, re
 	return &HeartbeatResponse{Status: "ok", DisplayStatus: display.Status}, nil
 }
 
+// CheckAppVersion indique à l'écran si une mise à jour applicative existe
+// pour son build. Même garde que RecordHeartbeat : un écran révoqué dont le
+// token n'a pas encore expiré ne reçoit plus d'information de mise à jour.
+func (s *Service) CheckAppVersion(ctx context.Context, cds *AuthenticatedCDS, req AppVersionCheckRequest) (*AppVersionCheckResponse, error) {
+	display, err := s.repo.GetDisplayForMerchant(ctx, cds.MerchantID, cds.DisplayID)
+	if err != nil {
+		return nil, err
+	}
+	if display == nil {
+		return nil, models.ErrCDSNotFound
+	}
+	if display.Status == "revoked" {
+		return nil, models.ErrCDSRevoked
+	}
+	return s.repo.CheckAppVersion(ctx, req.VersionCode, cds.MerchantID)
+}
+
 // ---- Plateau de commandes ----
 
 // GetBoard construit la projection affichée par un écran.

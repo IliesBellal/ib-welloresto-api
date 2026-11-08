@@ -255,6 +255,66 @@ func (r *Repository) RevokeDisplay(ctx context.Context, merchantID, displayID st
 	return affected > 0, nil
 }
 
+// CheckAppVersion cherche, pour ce merchant, la plus haute version de l'app
+// `cds` publiée au-delà de currentVersionCode. Même règle que la borne
+// (kiosk.Repository.CheckAppVersion) et le POS : release_date non atteinte =
+// version pas encore publiée ; si cette version a des lignes dans
+// app_version_merchant (pilote), seuls les merchants listés la reçoivent.
+// app_id filtré explicitement, version_code étant un compteur propre à
+// chaque app (migration 156).
+func (r *Repository) CheckAppVersion(ctx context.Context, currentVersionCode int, merchantID string) (*AppVersionCheckResponse, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	query := fmt.Sprintf(`
+	SELECT version_code, download_url, checksum_sha256
+	FROM app_version
+	WHERE app_id = 'cds'
+	  AND version_code > ?
+	  AND release_date < %s
+	ORDER BY version_code DESC
+	LIMIT 1`, dbx.UTCNow())
+
+	var versionCode int
+	var downloadURL string
+	var checksum *string
+	err := db.QueryRowContext(ctx, query, currentVersionCode).Scan(&versionCode, &downloadURL, &checksum)
+	if err == sql.ErrNoRows {
+		return &AppVersionCheckResponse{Status: "no_update"}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var restricted int
+	err = db.QueryRowContext(ctx,
+		`SELECT 1 FROM app_version_merchant WHERE version_code = ? AND app_id = 'cds' LIMIT 1`,
+		versionCode,
+	).Scan(&restricted)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	if err == nil {
+		var allowed int
+		err = db.QueryRowContext(ctx,
+			`SELECT 1 FROM app_version_merchant WHERE version_code = ? AND app_id = 'cds' AND merchant_id = ? LIMIT 1`,
+			versionCode, merchantID,
+		).Scan(&allowed)
+		if err == sql.ErrNoRows {
+			return &AppVersionCheckResponse{Status: "no_update"}, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &AppVersionCheckResponse{
+		Status:         "update_available",
+		DownloadURL:    &downloadURL,
+		VersionCode:    &versionCode,
+		ChecksumSHA256: checksum,
+	}, nil
+}
+
 func (r *Repository) UpdateDisplayHeartbeat(ctx context.Context, displayID, appVersion, ip string) error {
 	db := dbx.GetDB(ctx, r.database)
 

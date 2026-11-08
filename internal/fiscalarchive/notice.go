@@ -91,4 +91,16 @@ d'empreintes signée tenue par le logiciel.
 - « version_empreinte » : 2 pour les enregistrements écrits avec la méthode
   actuelle (données complètes, signées) ; 1 pour les enregistrements plus
   anciens, dont l'empreinte suit l'ancienne méthode.
+
+4. PREMIER MOIS D'UTILISATION
+- Quand le logiciel est mis en service en cours de mois, les clôtures
+  journalières commencent à la première clôture de l'établissement
+  (« premiere_cloture » dans la rubrique « periode » de MANIFEST.json). Avant ce
+  jour, les totaux sont repris dans la valeur d'ouverture de cette première
+  clôture (colonne « ouverture_json » de clotures.csv).
+- L'archive mensuelle de ce premier mois commence à ce jour.
+- Les jours qui précèdent font l'objet d'une archive distincte, marquée
+  « anterieure_premiere_cloture » : elle contient les tickets, commandes,
+  paiements, journal et registres de ces jours tels qu'enregistrés, sans
+  clôture journalière (clotures.csv ne contient alors aucune ligne).
 `
