@@ -82,6 +82,7 @@ reste à concevoir.
 | GET | `/users/` | authMiddleware | `staff.manage` |
 | POST | `/users/` | authMiddleware | `staff.manage` |
 | POST | `/users/create` | authMiddleware | `staff.manage` |
+| POST | `/users/link-by-email` | authMiddleware | `staff.manage` |
 | GET | `/users/linkable-search` | authMiddleware | `staff.manage` |
 | GET | `/users/{id}` | authMiddleware | `staff.manage` |
 | POST | `/users/{id}/merchant-link` | authMiddleware | `staff.manage` |
