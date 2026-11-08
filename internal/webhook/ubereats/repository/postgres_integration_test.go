@@ -131,6 +131,11 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 		t.Fatalf("seed order 2: %v", err)
 	}
 	t.Cleanup(func() { _, _ = db.ExecContext(ctx, `DELETE FROM orders WHERE order_id = $1`, orderID2) })
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO payments (merchant_id, user_id, order_id, amount, mop, enabled)
+		VALUES ($1, 'WEBHOOK_UBER_EATS', $2, 1000, 'UBER_EATS', true)`, merchantID, orderID2); err != nil {
+		t.Fatalf("seed payment 2: %v", err)
+	}
 
 	if err := repo.MarkFailed(ctx, brandOrderID2); err != nil {
 		t.Fatalf("MarkFailed failed against postgres: %v", err)
@@ -145,6 +150,19 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 	}
 	if !failedClosedAt.Valid {
 		t.Fatal("expected MarkFailed closure dated (delivered_on)")
+	}
+	// Lot 6 (docs/marketplace-fiabilite-import.md) : Uber ne paie pas une
+	// livraison échouée, le paiement est annulé avec sa trace.
+	var payment2Enabled bool
+	if err := db.QueryRowContext(ctx, `SELECT enabled FROM payments WHERE order_id = $1`, orderID2).Scan(&payment2Enabled); err != nil || payment2Enabled {
+		t.Fatalf("expected payment disabled after MarkFailed (enabled=%v, err=%v)", payment2Enabled, err)
+	}
+	var failedReason string
+	if err := db.QueryRowContext(ctx, `
+		SELECT new_values->>'reason' FROM audit_logs
+		WHERE merchant_id = $1 AND action = 'PAYMENT_CANCELLED' AND old_values->>'order_id' = $2 AND new_values->>'source' = 'UBER_EATS'`,
+		merchantID, strconv.FormatInt(orderID2, 10)).Scan(&failedReason); err != nil || failedReason != "Livraison Uber Eats échouée" {
+		t.Fatalf("expected a PAYMENT_CANCELLED audit entry for the failed delivery, got %q (%v)", failedReason, err)
 	}
 
 	// CancelOrder must not touch an order already finalized (audit item #6 —

@@ -165,3 +165,21 @@ GROUP BY 1, 2, 3 ORDER BY 4 DESC;
 
 Une cause fréquente avant la migration 197 : `invalid input syntax for type integer`
 (mapping d'un groupe d'options Uber Eats avec identifiant texte).
+
+## Commande plateforme non payée clôturée sans annuler ses paiements : `payment_cancel_skipped`
+
+Écrit par `fiscal.CloseVoidPlatformOrder` quand une commande Uber Eats annulée, refusée
+ou dont la livraison a échoué a dû être clôturée sans annuler ses paiements
+(docs/marketplace-fiabilite-import.md, lot 6). La commande est close, mais son paiement
+reste compté comme encaissé alors qu'aucune vente n'a eu lieu : c'est un écart à régulariser.
+
+- `subject_type` : `order` ; `subject_id` : `order_id`.
+- `data` : `source` (`UBER_EATS`), `reason` (`register_closed` : paiement encaissé sur
+  un registre déjà fermé ; `error` : autre échec) et `error`.
+
+```sql
+SELECT merchant_id, subject_id AS order_id, data->>'reason' AS raison, left(data->>'error', 90) AS cause, created_at
+FROM diagnostic_events
+WHERE kind = 'payment_cancel_skipped'
+ORDER BY created_at DESC LIMIT 50;
+```

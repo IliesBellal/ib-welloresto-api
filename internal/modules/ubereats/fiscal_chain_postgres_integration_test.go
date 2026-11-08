@@ -28,6 +28,7 @@ func TestUberReconciliation_FiscalChain_Postgres(t *testing.T) {
 			return
 		}
 		for _, q := range []string{
+			`DELETE FROM audit_logs WHERE merchant_id = $1`,
 			`DELETE FROM payments WHERE merchant_id = $1`,
 			`DELETE FROM orders WHERE merchant_id = $1`,
 			`DELETE FROM merchant WHERE id::text = $1`,
@@ -137,6 +138,61 @@ func TestUberReconciliation_FiscalChain_Postgres(t *testing.T) {
 	if len(issued) != 1 {
 		t.Fatalf("cancel: no receipt expected, got %v", issued)
 	}
+	// Lot 6 (docs/marketplace-fiabilite-import.md) : Uber ne paie pas une
+	// commande annulée, refusée ou dont la livraison a échoué ; ses paiements
+	// sont annulés avec la clôture, trace d'audit à l'appui (source UBER_EATS).
+	paymentCancelled := func(t *testing.T, orderID, wantReason string) {
+		t.Helper()
+		var enabled bool
+		if err := db.QueryRowContext(ctx, `SELECT enabled FROM payments WHERE order_id = $1`, orderID).Scan(&enabled); err != nil || enabled {
+			t.Fatalf("order %s: payment should be cancelled (enabled=%v, err=%v)", orderID, enabled, err)
+		}
+		var source, reason string
+		if err := db.QueryRowContext(ctx, `
+			SELECT new_values->>'source', new_values->>'reason' FROM audit_logs
+			WHERE merchant_id = $1 AND action = 'PAYMENT_CANCELLED' AND old_values->>'order_id' = $2`, merchantID, orderID).
+			Scan(&source, &reason); err != nil || source != "UBER_EATS" || reason != wantReason {
+			t.Fatalf("order %s: audit source=%q reason=%q (%v), want UBER_EATS %q", orderID, source, reason, err, wantReason)
+		}
+	}
+	paymentCancelled(t, canceled, "Annulation Uber Eats")
+
+	// Livraison échouée (cas de la commande 981BE du 2 novembre : restaurant
+	// fermé, livreur reparti, rien payé) : clôturée sans ticket, paiement annulé.
+	failed := seed(t, "itest-c10-failed", true)
+	if err := repo.SyncOrderState(ctx, "itest-c10-failed", StatusDeliveryFailed, StateClosed, "ACCEPTED", sql.NullInt64{Int64: 39, Valid: true}, issuer); err != nil {
+		t.Fatalf("SyncOrderState (delivery failed): %v", err)
+	}
+	if r := read(t, failed); r.state != "CLOSED" || r.brandStatus != StatusDeliveryFailed || !r.deliveredOn.Valid || len(issued) != 1 {
+		t.Fatalf("delivery failed: expected CLOSED/DELIVERY_FAILED dated, no receipt; got %+v, receipts %v", r, issued)
+	}
+	paymentCancelled(t, failed, "Livraison Uber Eats échouée")
+
+	// Refus (délai d'acceptation dépassé) : idem.
+	denied := seed(t, "itest-c10-denied", true)
+	if err := repo.SyncOrderState(ctx, "itest-c10-denied", StatusDenied, StateClosed, "DENIED", sql.NullInt64{Int64: 41, Valid: true}, issuer); err != nil {
+		t.Fatalf("SyncOrderState (denied): %v", err)
+	}
+	if r := read(t, denied); r.state != "CLOSED" || r.brandStatus != StatusDenied || r.cancelledBy.String != "PLATFORM" {
+		t.Fatalf("denied: expected CLOSED/DENIED/PLATFORM, got %+v", r)
+	}
+	paymentCancelled(t, denied, "Refus Uber Eats")
+
+	// Commande ouverte introuvable chez Uber (404) : annulation, paiement annulé.
+	notFound := seed(t, "itest-c10-404", true)
+	if err := repo.HandleOrderNotFound(ctx, "itest-c10-404", issuer); err != nil {
+		t.Fatalf("HandleOrderNotFound (open): %v", err)
+	}
+	if r := read(t, notFound); r.state != "CLOSED" || r.brandStatus != "CANCELED" || len(issued) != 1 {
+		t.Fatalf("not found: expected CLOSED/CANCELED, no receipt; got %+v, receipts %v", r, issued)
+	}
+	paymentCancelled(t, notFound, "Commande introuvable chez Uber Eats")
+
+	// Une vente garde ses paiements.
+	var saleEnabled bool
+	if err := db.QueryRowContext(ctx, `SELECT enabled FROM payments WHERE order_id = $1`, sale).Scan(&saleEnabled); err != nil || !saleEnabled {
+		t.Fatalf("sale: payment must stay active (enabled=%v, err=%v)", saleEnabled, err)
+	}
 
 	// Commande déjà close (la vente) : statut seulement, date de clôture
 	// inchangée (elle rattache la commande à sa clôture journalière).
@@ -147,6 +203,10 @@ func TestUberReconciliation_FiscalChain_Postgres(t *testing.T) {
 	after := read(t, sale)
 	if after.brandStatus != "CANCELED" || after.deliveredOn != saleRow.deliveredOn || len(issued) != 1 {
 		t.Fatalf("closed order: expected status-only update (CANCELED), closing date unchanged, no receipt; got %+v", after)
+	}
+	// Ni ses paiements : la vente reste à son Z (lot C, R7).
+	if err := db.QueryRowContext(ctx, `SELECT enabled FROM payments WHERE order_id = $1`, sale).Scan(&saleEnabled); err != nil || !saleEnabled {
+		t.Fatalf("closed order: payment must stay active (enabled=%v, err=%v)", saleEnabled, err)
 	}
 
 	// Uber repasse la commande close à ACCEPTED : statut seulement, elle

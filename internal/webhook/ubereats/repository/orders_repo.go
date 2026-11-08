@@ -158,6 +158,13 @@ func (r *OrdersRepository) MarkEnRouteToDropoff(ctx context.Context, brandOrderI
 // signale l'échec de livraison. Conformité caisse (C10) : les commandes encore
 // ouvertes sont clôturées (date de clôture) ; une commande déjà close ne
 // reçoit que le statut, sans nouvelle date de clôture.
+//
+// Uber ne paie pas une livraison échouée : les paiements actifs d'une
+// commande encore ouverte sont annulés dans la même transaction
+// (fiscal.CloseVoidPlatformOrder, source UBER_EATS), comme pour CancelOrder ;
+// une commande rouverte après une vente reçoit l'avoir de cette vente. Une
+// commande déjà close garde ses paiements (lot C, R7). Avant le lot 6
+// (docs/marketplace-fiabilite-import.md), ils restaient actifs.
 func (r *OrdersRepository) MarkFailed(ctx context.Context, brandOrderID string) error {
 	log := logger.FromContext(ctx)
 
@@ -174,13 +181,26 @@ func (r *OrdersRepository) MarkFailed(ctx context.Context, brandOrderID string) 
 		if err != nil {
 			return err
 		}
+		receipts := receipt.NewReceiptService(receipt.NewReceiptRepository(r.database))
 		for _, o := range open {
-			if _, err := db.ExecContext(txCtx, `
-				UPDATE orders
-				SET brand_status = 'FAILED',
-				    `+fiscal.ClosureColumns+`
-				WHERE order_id = ?
-			`, append(fiscal.ClosureArgs(), o.OrderID)...); err != nil {
+			if err := fiscal.CloseVoidPlatformOrder(txCtx, r.database, fiscal.PaymentCancellation{
+				MerchantID: o.MerchantID, OrderID: o.OrderID,
+				Source: fiscal.CancelSourceUberEats, UserID: models.UberEatsWebhookUserID,
+				Reason: "Livraison Uber Eats échouée",
+			}, func(txCtx context.Context, hasSaleReceipt bool) error {
+				if hasSaleReceipt {
+					if err := receipts.CancelSaleReceipt(txCtx, o.MerchantID, o.OrderID); err != nil {
+						return err
+					}
+				}
+				_, err := dbx.GetDB(txCtx, r.database).ExecContext(txCtx, `
+					UPDATE orders
+					SET brand_status = 'FAILED',
+					    `+fiscal.ClosureColumns+`
+					WHERE order_id = ?
+				`, append(fiscal.ClosureArgs(), o.OrderID)...)
+				return err
+			}); err != nil {
 				return err
 			}
 		}

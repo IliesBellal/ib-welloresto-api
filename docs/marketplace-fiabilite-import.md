@@ -183,7 +183,68 @@ remplace celui que j'avais annoncé.
 - **Un client reste créé par commande** (l'identifiant de plateforme n'est pas stocké :
   il faudrait une colonne, donc une migration). À traiter à part si besoin.
 
-## 7. Ce qui reste
+## 7. Lot 6 — commande Uber Eats non payée : paiement annulé (fait, 2026-11-07)
+
+**Constat.** Le 2 novembre, l'établissement 212 avait un écart de −51,58 € entre
+ventes et encaissements. La cause est la commande Uber Eats 981BE (n° 42077), passée
+pendant la fermeture du restaurant. Les livreurs ont annulé la livraison et Uber n'a
+rien payé.
+
+Elle a été clôturée en `DELIVERY_FAILED`, sans ticket (ce n'est pas une vente). Son
+paiement UBER_EATS est pourtant resté actif : la clôture journalière a compté un
+encaissement sans vente.
+
+Trois chemins clôturaient ainsi une commande qu'Uber ne paie pas, sans toucher à ses
+paiements :
+- la réconciliation `SyncOrderState`, pour `CANCELED`, `DENIED` et `DELIVERY_FAILED` ;
+- `HandleOrderNotFound` (404 Uber), qui classe la commande `CANCELED` ;
+- le webhook de livraison `FAILED` (`MarkFailed`).
+
+Le webhook d'annulation (`CancelOrder`) et les annulations depuis la caisse annulaient
+déjà les paiements.
+
+**Correctif.** `fiscal.CloseVoidPlatformOrder` est utilisé par ces trois chemins pour une
+commande encore ouverte :
+- il annule les paiements actifs avec `fiscal.CancelOrderPayments` (source `UBER_EATS`,
+  utilisateur `WEBHOOK_UBER_EATS`, motif au journal d'audit : « Livraison Uber Eats
+  échouée », « Refus Uber Eats », « Annulation Uber Eats » ou « Commande introuvable
+  chez Uber Eats ») ;
+- l'annulation et la clôture se font dans la même transaction ;
+- une commande rouverte après une vente reçoit l'avoir de cette vente, comme avec
+  `CancelOrder`.
+
+Ces statuts étaient déjà traités comme des annulations ailleurs : liste
+`models.VoidOrderBrandStatusesSQL`, rapports, attestation lot A (« `DENIED`,
+`CANCELED` et `DELIVERY_FAILED` sont des annulations »). Seul le paiement contredisait
+ce classement.
+
+**Zéro régression sur la clôture.** Avant ce lot, ces commandes étaient toujours
+clôturées. Une annulation refusée ou en échec ne l'empêche donc jamais. C'est le cas
+par exemple d'un paiement encaissé sur un registre déjà fermé, que le lot C interdit
+d'annuler. Dans ce cas :
+- tout ce que l'essai a écrit est défait (point de sauvegarde) ;
+- la commande est clôturée comme avant, paiements intacts ;
+- l'événement de diagnostic `payment_cancel_skipped` est écrit.
+
+**Inchangé** :
+- les ventes (`COMPLETED`, `EN_ROUTE_TO_DROPOFF`, `READY_FOR_HANDOFF` → `CLOSED`) ;
+- les commandes déjà closes, qui ne reçoivent que le statut et gardent leurs paiements
+  (lot C, R7 : la clôture journalière qui les contient est scellée) ;
+- Deliveroo, dont les annulations passent déjà par `order_life_cycle.DeleteOrder`.
+
+**Commandes passées.** Une commande déjà close n'est jamais modifiée, et 42077 ne
+l'est pas non plus. Sa clôture du 2 novembre est scellée, et désactiver son paiement
+maintenant rendrait la clôture différente de ses données (`cmd/verify_fiscal`).
+L'écart de 51,58 € de ce jour-là se règle en comptabilité, par une écriture de
+régularisation dans Pennylane.
+
+**Limite assumée.** Uber peut payer le restaurant quand l'échec de la livraison ne vient
+pas de lui. La réponse de l'API lue ici (`failure_info.reason`) ne le dit pas : le
+champ indiquant si le restaurant sera payé n'a pas été trouvé dans la documentation
+publique. Une livraison échouée reste donc une annulation, comme dans le reste du
+logiciel. Si Uber l'a payée, le versement apparaît dans le relevé Uber.
+
+## 8. Ce qui reste
 
 | sujet | note |
 |---|---|
@@ -192,7 +253,18 @@ remplace celui que j'avais annoncé.
 | Doublons de clients | un client par commande de plateforme, sans identifiant de plateforme stocké |
 | Options payantes Deliveroo | absentes des lignes (voir `marketplace-commentaires.md`) |
 
-## 8. Tests
+## 9. Tests
+
+- Lot 6, intégration Postgres (staging) :
+  - `fiscal.CloseVoidPlatformOrder` : refusé hors transaction ; paiement annulé avec sa
+    trace et la clôture ; registre fermé : clôture sans annulation ; clôture en échec
+    au premier essai : tout est défait puis la clôture est refaite sans annulation ;
+    clôture de repli en échec : rien n'est écrit ;
+  - réconciliation Uber Eats : `CANCELED`, `DELIVERY_FAILED`, `DENIED` et 404 sur une
+    commande ouverte annulent le paiement, avec le bon motif ; une vente et une commande
+    déjà close gardent leurs paiements ;
+  - webhook `MarkFailed` : paiement annulé, trace `UBER_EATS` ;
+  - mutation vérifiée : sans l'annulation, les trois tests échouent.
 
 - Lots 3 et 5 : repli Uber Eats et Deliveroo avec de faux dépôts (option, groupe, article
   non créables, lecture en échec, article de repli en échec, chemin courant sans
@@ -215,7 +287,7 @@ remplace celui que j'avais annoncé.
   ne change ; le test existant de la caisse (produit bloqué → `unavailable_products`)
   passe toujours.
 
-## 9. Journal des décisions
+## 10. Journal des décisions
 
 | date | décision | raison |
 |---|---|---|
@@ -234,3 +306,7 @@ remplace celui que j'avais annoncé.
 | 2026-10-30 | Client facultatif pour Uber Eats et Deliveroo, nom dans le commentaire | le client d'une plateforme n'est qu'un libellé ; le personnel reconnaît la commande à son nom |
 | 2026-10-30 | Numéro anonymisé en colonnes temporaires, pas dans `customer_tel` | `customer_tel` sert aux SMS et à l'identité du client ; un numéro intermédiaire à code n'y a pas sa place |
 | 2026-10-30 | Migration 197 sans ordre imposé | avant : le groupe inconnu passe en texte ; après : créé et mappé |
+| 2026-11-07 | Paiements annulés à la clôture d'une commande Uber annulée, refusée ou en échec de livraison | Uber ne la paie pas (981BE : restaurant fermé, livraison annulée) ; ces statuts étaient déjà des annulations partout ailleurs |
+| 2026-11-07 | Annulation refusée ou en échec : clôture comme avant, diagnostic `payment_cancel_skipped` | la clôture ne doit jamais régresser ; un paiement sur registre fermé ne peut pas être annulé (lot C) |
+| 2026-11-07 | Commandes déjà closes non corrigées (dont 42077) | leur clôture journalière est scellée ; l'écart se régularise en comptabilité |
+| 2026-11-07 | Livraison échouée = annulation, même si Uber paie parfois | la réponse lue ne dit pas si le restaurant est payé ; cohérent avec le classement existant |

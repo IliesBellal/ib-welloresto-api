@@ -10,7 +10,9 @@ import (
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/fiscal"
 	"welloresto-api/internal/logger"
+	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/distributiontime"
+	"welloresto-api/internal/modules/receipt"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -467,9 +469,10 @@ type SaleReceiptFunc func(ctx context.Context, merchantID, orderID string) error
 // Clôture (state CLOSED, conformité caisse, C10) : les commandes encore
 // ouvertes sont clôturées (date de clôture, qui les rattache à leur clôture
 // journalière scellée) et, pour une vente (COMPLETED, EN_ROUTE_TO_DROPOFF),
-// reçoivent leur ticket ; une vente pas entièrement payée reste ouverte. Les
-// commandes déjà closes ne reçoivent que la mise à jour de statut, sans
-// nouvelle date de clôture.
+// reçoivent leur ticket ; une vente pas entièrement payée reste ouverte ; une
+// annulation (DENIED, CANCELED, DELIVERY_FAILED) voit ses paiements annulés
+// (closePlatformOrder, lot 6). Les commandes déjà closes ne reçoivent que la
+// mise à jour de statut, sans nouvelle date de clôture.
 func (r *UberRepository) SyncOrderState(ctx context.Context, uberOrderID, status, state, approval string, reasonID sql.NullInt64, issueSaleReceipt SaleReceiptFunc) error {
 	// deletion_reason_id is varchar, not integer: pgx's stdlib driver can't
 	// encode a sql.NullInt64 directly into a text-typed column ("cannot find
@@ -516,7 +519,7 @@ func (r *UberRepository) SyncOrderState(ctx context.Context, uberOrderID, status
 			return err
 		}
 		for _, o := range open {
-			if err := closePlatformOrder(txCtx, db, o, sale, businessSet, businessArgs, issueSaleReceipt); err != nil {
+			if err := r.closePlatformOrder(txCtx, db, o, sale, businessSet, businessArgs, issueSaleReceipt, voidPaymentReason(status)); err != nil {
 				return err
 			}
 		}
@@ -558,7 +561,7 @@ func (r *UberRepository) HandleOrderNotFound(ctx context.Context, uberOrderID st
 		}
 		for _, o := range open {
 			sale := o.BrandStatus == "READY_FOR_HANDOFF"
-			if err := closePlatformOrder(txCtx, db, o, sale, businessSet, nil, issueSaleReceipt); err != nil {
+			if err := r.closePlatformOrder(txCtx, db, o, sale, businessSet, nil, issueSaleReceipt, "Commande introuvable chez Uber Eats"); err != nil {
 				return err
 			}
 		}
@@ -571,28 +574,61 @@ func (r *UberRepository) HandleOrderNotFound(ctx context.Context, uberOrderID st
 // chemin appelant (businessSet/businessArgs), plus état et date de clôture.
 // Une vente doit être entièrement payée (sinon la commande reste ouverte,
 // l'erreur est journalisée) et reçoit son ticket.
-func closePlatformOrder(ctx context.Context, db *dbx.DB, o fiscal.OpenPlatformOrder, sale bool, businessSet string, businessArgs []any, issueSaleReceipt SaleReceiptFunc) error {
-	if sale {
-		paid, err := fiscal.OrderFullyPaid(ctx, db, o.OrderID)
-		if err != nil {
+//
+// Une commande qui n'est pas une vente (annulée, refusée, livraison échouée)
+// n'est pas payée par Uber : ses paiements actifs sont annulés dans la même
+// transaction (fiscal.CloseVoidPlatformOrder, source UBER_EATS, motif
+// voidReason) et une commande rouverte après une vente reçoit l'avoir de
+// cette vente, comme l'annulation par webhook (webhook/ubereats CancelOrder).
+// Avant le lot 6 (docs/marketplace-fiabilite-import.md), ses paiements
+// restaient actifs : encaissement sans vente dans la clôture journalière.
+func (r *UberRepository) closePlatformOrder(ctx context.Context, db *dbx.DB, o fiscal.OpenPlatformOrder, sale bool, businessSet string, businessArgs []any, issueSaleReceipt SaleReceiptFunc, voidReason string) error {
+	if !sale {
+		receipts := receipt.NewReceiptService(receipt.NewReceiptRepository(r.database))
+		return fiscal.CloseVoidPlatformOrder(ctx, r.database, fiscal.PaymentCancellation{
+			MerchantID: o.MerchantID, OrderID: o.OrderID,
+			Source: fiscal.CancelSourceUberEats, UserID: models.UberEatsWebhookUserID,
+			Reason: voidReason,
+		}, func(ctx context.Context, hasSaleReceipt bool) error {
+			if hasSaleReceipt {
+				if err := receipts.CancelSaleReceipt(ctx, o.MerchantID, o.OrderID); err != nil {
+					return err
+				}
+			}
+			args := append(append(append([]any{}, businessArgs...), fiscal.ClosureArgs()...), o.OrderID)
+			_, err := dbx.GetDB(ctx, r.database).ExecContext(ctx, `UPDATE orders SET `+businessSet+`, `+fiscal.ClosureColumns+` WHERE order_id = ?`, args...)
 			return err
-		}
-		if !paid {
-			logger.FromContext(ctx).Error(fmt.Sprintf("ubereats: platform sale %s not fully paid, left open", o.OrderID))
-			return nil
-		}
-		if issueSaleReceipt == nil {
-			return errors.New("ubereats: sale receipt issuer not configured")
-		}
+		})
+	}
+	paid, err := fiscal.OrderFullyPaid(ctx, db, o.OrderID)
+	if err != nil {
+		return err
+	}
+	if !paid {
+		logger.FromContext(ctx).Error(fmt.Sprintf("ubereats: platform sale %s not fully paid, left open", o.OrderID))
+		return nil
+	}
+	if issueSaleReceipt == nil {
+		return errors.New("ubereats: sale receipt issuer not configured")
 	}
 	args := append(append(append([]any{}, businessArgs...), fiscal.ClosureArgs()...), o.OrderID)
 	if _, err := db.ExecContext(ctx, `UPDATE orders SET `+businessSet+`, `+fiscal.ClosureColumns+` WHERE order_id = ?`, args...); err != nil {
 		return err
 	}
-	if sale {
-		return issueSaleReceipt(ctx, o.MerchantID, o.OrderID)
+	return issueSaleReceipt(ctx, o.MerchantID, o.OrderID)
+}
+
+// voidPaymentReason est le motif, inscrit au journal d'audit, de l'annulation
+// des paiements d'une commande qu'Uber ne paie pas.
+func voidPaymentReason(status string) string {
+	switch status {
+	case StatusDeliveryFailed:
+		return "Livraison Uber Eats échouée"
+	case StatusDenied:
+		return "Refus Uber Eats"
+	default:
+		return "Annulation Uber Eats"
 	}
-	return nil
 }
 
 // UpdateBusyModeData met à jour les données de "Busy Mode"
