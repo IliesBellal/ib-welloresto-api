@@ -17,6 +17,7 @@ import (
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/customers"
 	"welloresto-api/internal/modules/deliverytime"
+	"welloresto-api/internal/modules/deliveryzone"
 	"welloresto-api/internal/modules/distributiontime"
 	"welloresto-api/internal/userids"
 	"welloresto-api/internal/utils/dbutils"
@@ -1734,7 +1735,37 @@ func (r *OrdersLifeCycleRepository) upsertCustomer(ctx context.Context, req *mod
 	if newIDStr == nil {
 		return nil, nil
 	}
+	r.refreshCustomerZone(ctx, req, *newIDStr)
 	return newIDStr, nil
+}
+
+// refreshCustomerZone recalcule la zone de livraison du client (customer_zone_code)
+// depuis ses coordonnées enregistrées, que UpdateOrCreateCustomer vient de mettre
+// à jour : à chaque commande en livraison à son adresse habituelle, et à toute
+// commande qui modifie ces coordonnées (sinon la zone ne correspondrait plus à la
+// position enregistrée). Création comme modification, tous flux confondus
+// (caisse, ScanNOrder, borne, plateformes) : la zone suit un changement d'adresse
+// ou de découpe. Une adresse ponctuelle (use_customer_temporary_address) ne touche
+// ni les coordonnées ni la zone habituelles : la relecture de la commande calcule
+// la zone de l'adresse ponctuelle (orders_fetcher_builder). Jamais bloquant : un
+// échec est journalisé, la commande continue (point de sauvegarde pour que la
+// transaction reste utilisable). Voir docs/zones-livraison.md.
+func (r *OrdersLifeCycleRepository) refreshCustomerZone(ctx context.Context, req *models.RequestObject, customerID string) {
+	if req.Order.UseCustomerTemporaryAddress || customerID == "" || req.Order.Customer == nil {
+		return
+	}
+	writesCoordinates := req.Order.Customer.Lat != nil || req.Order.Customer.Lng != nil
+	if req.Order.OrderType != models.OrderTypeDelivery && !writesCoordinates {
+		return
+	}
+	err := dbutils.Isolated(dbutils.WithSavepoints(ctx), func() error {
+		_, err := deliveryzone.RefreshCustomerZone(ctx, r.database, req.MerchantID, customerID)
+		return err
+	})
+	if err != nil {
+		logger.FromContext(ctx).Warn("delivery zone not refreshed",
+			zap.String("merchant_id", req.MerchantID), zap.String("customer_id", customerID), zap.Error(err))
+	}
 }
 
 func (r *OrdersLifeCycleRepository) validateProductAvailability(ctx context.Context, req *models.RequestObject) ([]string, error) {

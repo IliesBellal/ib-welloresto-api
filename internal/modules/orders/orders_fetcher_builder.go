@@ -9,7 +9,11 @@ import (
 	"strings"
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/deliveryzone"
+
+	"go.uber.org/zap"
 )
 
 type OrdersFetcher struct {
@@ -713,6 +717,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 	// HEADER ORDERS
 	// =====================================================
 	var orders []models.Order
+	var temporaryAddressZones []temporaryAddressZone
 	{
 		step := "header"
 		// o.use_customer_temporary_address est boolean en Postgres mais scanné
@@ -874,6 +879,17 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				cust.CustomerBirthdate = helpers.NullStringToPtr(cBirth)
 
 				if useCustomerTemporaryAddress.Int64 == 1 {
+					// customer_zone_code est la zone de l'adresse habituelle : pour une
+					// adresse ponctuelle, la zone est calculée après la lecture (voir
+					// temporaryAddressZones plus bas).
+					cust.CustomerZoneCode = nil
+					if orderType.String == models.OrderTypeDelivery {
+						temporaryAddressZones = append(temporaryAddressZones, temporaryAddressZone{
+							index: len(orders),
+							lat:   helpers.NullFloat64Ptr(customerTemporaryLat),
+							lng:   helpers.NullFloat64Ptr(customerTemporaryLng),
+						})
+					}
 					cust.CustomerAddress = helpers.NullStringToPtr(cTempAddr)
 					cust.CustomerLat = helpers.NullFloat64Ptr(customerTemporaryLat)
 					cust.CustomerLng = helpers.NullFloat64Ptr(customerTemporaryLng)
@@ -925,7 +941,34 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		}
 	}
 
+	// Zone des livraisons à adresse ponctuelle : calculée ici (lignes déjà
+	// lues, la connexion est libre), la découpe n'étant lue que s'il y en a.
+	// Jamais bloquant : sans découpe lisible, la zone reste vide.
+	if len(temporaryAddressZones) > 0 {
+		settings, err := deliveryzone.LoadSettings(ctx, r.database, merchantID)
+		if err != nil {
+			logger.FromContext(ctx).Warn("delivery zone settings not loaded", zap.String("merchant_id", merchantID), zap.Error(err))
+		} else {
+			for _, t := range temporaryAddressZones {
+				p, ok := deliveryzone.ValidPoint(t.lat, t.lng)
+				if !ok || orders[t.index].Customer == nil {
+					continue
+				}
+				if code := settings.Code(p); code != "" {
+					orders[t.index].Customer.CustomerZoneCode = &code
+				}
+			}
+		}
+	}
+
 	return orders, nil
+}
+
+// temporaryAddressZone repère une livraison à adresse ponctuelle dont la zone
+// reste à calculer (index dans la liste des commandes lues).
+type temporaryAddressZone struct {
+	index    int
+	lat, lng *float64
 }
 
 // trimmedNullString retourne nil pour un NULL ou une chaîne vide après trim.
