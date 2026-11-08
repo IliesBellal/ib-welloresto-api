@@ -1134,8 +1134,13 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		r.Get("/tva_rates", posH.GetTVARates)
 
 		r.Route("/settings", func(r chi.Router) {
-			r.Get("/", posH.GetSettings)              // used by: back-office
-			r.Patch("/", posH.UpdateMerchantSettings) // used by: back-office
+			r.Get("/", posH.GetSettings) // used by: back-office
+			// Réglages de tout l'établissement (back-office Paramètres et popup
+			// « Formulaire client » du POS, tous deux réservés à settings.manage
+			// côté client) : sans ce garde, n'importe quel compte connecté
+			// pouvait les modifier via l'API.
+			r.With(middleware.RequirePermission(permission.SettingsManage)).
+				Patch("/", posH.UpdateMerchantSettings) // used by: back-office, POS
 			r.Post("/logo", posH.UploadMerchantLogo)  // used by: back-office
 			r.Get("/holidays", posH.ListPlanningHolidays)
 			r.Patch("/holidays/{date}", posH.PatchPlanningHolidayOverride)

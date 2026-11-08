@@ -152,6 +152,10 @@ var guardedRoutePatterns = []guardedRoutePattern{
 		`RequirePermission\(permission\.ReportsFinancialRead\)\)\.\s*Get\(\s*"/performance"\s*,\s*planningH\.GetPlanningPerformance\)`),
 	guard("POST", "/cash_drawer/open", "permission.POSCashDrawerOpen",
 		`RequirePermission\(permission\.POSCashDrawerOpen\)\)\.\s*Post\(\s*"/open"\s*,\s*cashRegisterH\.OpenCashDrawer\)`),
+
+	// --- 2026-11-08 : réglages d'établissement, aussi modifiables depuis le POS ---
+	guard("PATCH", "/pos/settings/", "permission.SettingsManage",
+		`RequirePermission\(permission\.SettingsManage\)\)\.\s*Patch\(\s*"/"\s*,\s*posH\.UpdateMerchantSettings\)`),
 }
 
 // mutativeRouteRe matches a bare (no .With(...) prefix) r.Post/Put/Patch/Delete

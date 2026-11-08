@@ -120,7 +120,8 @@ doit masquer la tuile sur ce 403, pas casser la page d'accueil.
 | GET | `/pos/delivery_men` | authMiddleware | aucun |
 | GET | `/pos/users` | authMiddleware | aucun |
 | GET | `/pos/tva_rates` | authMiddleware | aucun |
-| GET, PATCH | `/pos/settings/` | authMiddleware | aucun |
+| GET | `/pos/settings/` | authMiddleware | aucun |
+| PATCH | `/pos/settings/` | authMiddleware | `settings.manage` (2026-11-08 — appelé par le back-office et le popup « Formulaire client » du POS) |
 | POST | `/pos/settings/logo` | authMiddleware | aucun |
 | GET | `/pos/settings/holidays` | authMiddleware | aucun |
 | PATCH, DELETE | `/pos/settings/holidays/{date}` | authMiddleware | aucun |
