@@ -58,6 +58,33 @@ func menuNumericID(id string) bool {
 	return err == nil
 }
 
+// listProductIntegrations construit le bloc `integrations` d'un produit de
+// GET /menu/products à partir des colonnes plates sync_* / price_* déjà lues.
+// Sans lui, la liste sérialisait la valeur zéro de ProductIntegrations
+// ({"enabled": false} partout) : la grille de prix du back-office affichait
+// « Non active » pour chaque produit, même publié sur Deliveroo / Uber Eats.
+// Un prix plateforme nul ou à 0 n'est pas un prix spécifique (même règle que
+// marketplacecatalog.price) : price_override reste alors absent.
+func listProductIntegrations(p models.ProductEntry) models.ProductIntegrations {
+	override := func(v *int64) *int {
+		if v == nil || *v <= 0 {
+			return nil
+		}
+		n := int(*v)
+		return &n
+	}
+	return models.ProductIntegrations{
+		UberEats: models.ProductIntegrationItem{
+			Enabled:       p.SyncUberEats != nil && *p.SyncUberEats,
+			PriceOverride: override(p.PriceUberEats),
+		},
+		Deliveroo: models.ProductIntegrationItem{
+			Enabled:       p.SyncDeliveroo != nil && *p.SyncDeliveroo,
+			PriceOverride: override(p.PriceDeliveroo),
+		},
+	}
+}
+
 // sortSubProducts ordonne les sous-produits de chaque groupe par display_order
 // (absent = 0), puis par nom pour départager. Sans ça, leur ordre suivait le
 // parcours de la map subProducts, que Go rend volontairement aléatoire : il
@@ -1774,6 +1801,7 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			if syncUberEats.Valid {
 				p.SyncUberEats = &syncUberEats.Bool
 			}
+			p.Integrations = listProductIntegrations(p)
 
 			products[p.ProductID] = &p
 			productOrder = append(productOrder, p.ProductID)
@@ -1788,7 +1816,8 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
             SELECT p.product_id, p.by_product_of, p.name, p.category, pc.categ_name, p.price, p.price_take_away, p.price_delivery, p.image_url, p.price_uber_eats, p.price_deliveroo, p.product_desc,
                    p.available_in, p.available_take_away, p.available_delivery,
                    tva_in.tva_rate as tva_rate_in, tva_delivery.tva_rate as tva_rate_delivery, tva_take_away.tva_rate as tva_rate_take_away,
-				   p.bg_color, p.is_product_group, p.is_available_on_sno, p.is_available_on_kiosk, p.status, p.display_order
+				   p.bg_color, p.is_product_group, p.is_available_on_sno, p.is_available_on_kiosk, p.status, p.display_order,
+				   p.sync_uber_eats, p.sync_deliveroo
             FROM products p
 			INNER JOIN productcateg pc on pc.merchant_categ_id = p.category and pc.merchant_id = p.merchant_id
             INNER JOIN tva_categories tva_in on tva_in.tva_id = p.tva_in_id
@@ -1809,11 +1838,23 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			var bg sql.NullString
 			var desc, imageURL sql.NullString
 			var availIn, availTake, availDel sql.NullBool
+			// sync_uber_eats / sync_deliveroo : un sous-produit est publié sur
+			// les plateformes à la place de son groupe (marketplacecatalog.flatten),
+			// selon ses propres cases. Sans elles, le back-office les voyait
+			// tous « non publiés ».
+			var syncUberEats, syncDeliveroo sql.NullBool
 			if err := rows.Scan(&p.ProductID, &by, &p.Name, &p.CategoryID, &p.CategoryName, &p.Price, &p.PriceTakeAway, &p.PriceDelivery, &imageURL, &p.PriceUberEats, &p.PriceDeliveroo,
 				&desc, &availIn, &availTake, &availDel, &tvaIn, &tvaDel, &tvaTake, &bg, &p.IsProductGroup, &p.IsAvailableOnSNO,
-				&p.IsAvailableOnKiosk, &p.Status, &p.DisplayOrder); err != nil {
+				&p.IsAvailableOnKiosk, &p.Status, &p.DisplayOrder, &syncUberEats, &syncDeliveroo); err != nil {
 				return nil, err
 			}
+			if syncUberEats.Valid {
+				p.SyncUberEats = &syncUberEats.Bool
+			}
+			if syncDeliveroo.Valid {
+				p.SyncDeliveroo = &syncDeliveroo.Bool
+			}
+			p.Integrations = listProductIntegrations(p)
 			if by.Valid {
 				p.ByProductOf = &by.String
 			}
