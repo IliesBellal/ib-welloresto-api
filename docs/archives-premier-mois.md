@@ -15,7 +15,7 @@ Les clôtures journalières ont été mises en production le 9 octobre 2026 (le 
 
 ## Mise en œuvre
 
-- [internal/fiscalarchive/archive.go](../internal/fiscalarchive/archive.go) : `chainStart`, `Generate`, `checkClosed`, `findMonth`.
+- [internal/fiscalarchive/archive.go](../internal/fiscalarchive/archive.go) : `chainStart`, `Generate`, `checkClosed`, `findMonth`. `checkClosed` cherche la clôture mensuelle au 1er du mois (`date_trunc('month', début)`) : la première version la cherchait au début de l'archive (le 9), d'où en prod le 2026-11-09 « 23 jour(s) clos sur 23 » sur tous les établissements, corrigé le jour même.
 - [internal/fiscalarchive/due.go](../internal/fiscalarchive/due.go) : `PendingMonths`.
 - [internal/fiscalarchive/build.go](../internal/fiscalarchive/build.go), [verify.go](../internal/fiscalarchive/verify.go), [notice.go](../internal/fiscalarchive/notice.go) : rubriques du manifeste, contrôle croisé, notice.
 - [internal/fiscalarchive/prechain.go](../internal/fiscalarchive/prechain.go) et [cmd/generate_prechain_archives](../cmd/generate_prechain_archives/main.go) : génération en lot des archives antérieures à la première clôture.

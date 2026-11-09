@@ -301,7 +301,7 @@ func checkClosed(ctx context.Context, db *dbx.DB, merchantID, kind string, start
 		  (SELECT count(*) FROM fiscal_closures
 		   WHERE merchant_id = ? AND period_type = 'DAY' AND period_start BETWEEN ?::date AND ?::date),
 		  EXISTS (SELECT 1 FROM fiscal_closures
-		          WHERE merchant_id = ? AND period_type = 'MONTH' AND period_start = ?::date)`,
+		          WHERE merchant_id = ? AND period_type = 'MONTH' AND period_start = date_trunc('month', ?::date)::date)`,
 		merchantID, start.Format("2006-01-02"), end.Format("2006-01-02"), merchantID, start.Format("2006-01-02")).
 		Scan(&closedDays, &month); err != nil {
 		return fmt.Errorf("fiscalarchive: check closures: %w", err)
