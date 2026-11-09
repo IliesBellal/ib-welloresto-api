@@ -96,9 +96,9 @@ Sans aucune ligne pour ce numéro, la version est ouverte à tous. Les tablettes
 dans l'heure et l'installent à 04:00, si l'écran n'a pas été touché depuis 5 minutes et qu'aucun
 paiement n'est en attente.
 
-C'est aussi à ce moment que la page Téléchargements du site vitrine propose la nouvelle version
-(dans les 5 minutes) : tant qu'elle est en pilote, la page garde la précédente. Voir
-`docs/telechargements-apps.md`.
+C'est aussi à ce moment que la page Téléchargements du site vitrine propose la nouvelle version :
+tant qu'elle est en pilote, la page garde la précédente. Voir `docs/telechargements-apps.md`
+(même document pour publier une version de l'affichage client).
 
 ## Si une version pose problème
 
