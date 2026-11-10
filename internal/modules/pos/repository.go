@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -1549,6 +1550,7 @@ func (r *POSRepository) GetMerchantSettings(ctx context.Context, merchantID stri
 		&params.CardinalZoneRanges,
 	)
 	if err != nil {
+		log.Error(fmt.Sprintf("Error fetching merchant parameters for ID %s: %v", merchantID, err))
 		return &m, nil, nil, nil, err
 	}
 	if len(customerFormRequirementsRaw) > 0 {
@@ -1586,7 +1588,12 @@ func (r *POSRepository) GetMerchantSettings(ctx context.Context, merchantID stri
 		&marketing.CreatedAt,
 		&marketing.UpdatedAt,
 	)
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
+		// Réglages marketing optionnels : un marchand sans ligne n'est pas une erreur
+		// (le POS ne les lit pas) — valeurs vides plutôt qu'un 500 sur tout /pos/settings.
+		log.Warn(fmt.Sprintf("No merchant marketing settings row for ID %s", merchantID))
+		marketing = models.MerchantMarketingSettings{}
+	} else if err != nil {
 		log.Error(fmt.Sprintf("Error fetching merchant marketing settings for ID %s: %v", merchantID, err))
 		return &m, &params, nil, nil, err
 	}
@@ -1652,7 +1659,10 @@ func (r *POSRepository) GetMerchantSettings(ctx context.Context, merchantID stri
 		&scann.SEOKeywords,
 		&scann.SEOCuisineType,
 	)
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
+		log.Warn(fmt.Sprintf("No scannorder settings row for ID %s", merchantID))
+		scann = models.ScannorderSettings{}
+	} else if err != nil {
 		log.Error(fmt.Sprintf("Error fetching scannorder settings for ID %s: %v", merchantID, err))
 		return &m, &params, &marketing, nil, err
 	}
