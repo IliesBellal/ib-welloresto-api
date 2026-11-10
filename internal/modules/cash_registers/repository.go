@@ -147,7 +147,7 @@ func (r *CashRegisterRepository) OpenCashRegister(ctx context.Context, req *mode
 // sait pas scanner dans un int Go.
 // Filtre brand_status volontairement inchangé (pas de DENIED) : cette requête
 // produit l'instantané figé cash_registers_items, comparé ensuite au recalcul
-// live de pos/accounting.GetTrustedEnclosedRegisterIDs ; changer le filtre
+// live de pos/accounting.GetEnclosedRegisterIDs (contrôle de dérive) ; changer le filtre
 // d'un seul côté ferait dériver les registres déjà enclosed. Les paiements
 // d'une commande DENIED sont désactivés au refus (DisablePayments) et donc
 // déjà exclus par p.enabled.

@@ -477,7 +477,7 @@ type customItemSeed struct {
 }
 
 // TestGetRealPaymentsData_Postgres vérifie le "réel" du rapport comptable
-// (GetTrustedEnclosedRegisterIDs + GetRealPaymentsData) : aucun registre
+// (GetEnclosedRegisterIDs + GetRealPaymentsData) : aucun registre
 // enclosed -> vide (comportement identique à l'ancien GetPaymentsData non
 // touché, cf. TestPOSAccountingReports_Postgres ci-dessus qui continue de le
 // couvrir séparément) ; registre enclosed sans dérive -> réel utilisé,
@@ -488,9 +488,10 @@ type customItemSeed struct {
 // redondant pour ce rapport) ; custom item non libellé affiché sous son code
 // brut ; custom item à libellé libre -> ligne à part ; canaux hors périmètre
 // (UBER_EATS/STRIPE/DELIVEROO) exclus ; registre en dérive (paiement corrigé
-// après enclose) -> écarté entièrement, pas de repli partiel ; isolation
+// après enclose) -> repris tel que déclaré, jamais écarté (le rapport reprend le
+// réel du restaurateur, erreurs comprises) ; isolation
 // stricte entre marchands. Les mopPayment ci-dessous restent seedés pour
-// exercer GetTrustedEnclosedRegisterIDs (comparaison frozen/live) ; seuls les
+// exercer GetEnclosedRegisterIDs (comparaison frozen/live) ; seuls les
 // customItemSeed correspondants alimentent désormais GetRealPaymentsData.
 func TestGetRealPaymentsData_Postgres(t *testing.T) {
 	db := pgtest.Open(t)
@@ -634,9 +635,9 @@ func TestGetRealPaymentsData_Postgres(t *testing.T) {
 	t.Cleanup(func() { cleanup(fA) })
 
 	// (a) Aucun registre enclosed encore créé -> vide des deux côtés.
-	trustedNone, err := acctRepo.GetTrustedEnclosedRegisterIDs(ctx, fA.merchantID, periodStart, periodEnd)
+	trustedNone, err := acctRepo.GetEnclosedRegisterIDs(ctx, fA.merchantID, periodStart, periodEnd)
 	if err != nil || len(trustedNone) != 0 {
-		t.Fatalf("GetTrustedEnclosedRegisterIDs (aucun registre) = (%+v, %v), want vide", trustedNone, err)
+		t.Fatalf("GetEnclosedRegisterIDs (aucun registre) = (%+v, %v), want vide", trustedNone, err)
 	}
 	realNone, err := acctRepo.GetRealPaymentsData(ctx, trustedNone)
 	if err != nil || len(realNone) != 0 {
@@ -701,11 +702,13 @@ func TestGetRealPaymentsData_Postgres(t *testing.T) {
 
 	// (d) Un troisième registre, enclosed correctement, puis corrigé après
 	// coup (paiement ajouté directement en base sur le même cash_register_id,
-	// exactement le scénario qui a motivé ce chantier) -> doit être écarté
-	// en bloc de GetTrustedEnclosedRegisterIDs.
+	// exactement le scénario qui a motivé ce chantier) -> repris quand même par
+	// GetEnclosedRegisterIDs : le réel déclaré (ITESTCB=400) fait foi.
 	regD, orderD := openCloseRegister(fA, insidePeriod, []mopPayment{
 		{mop: "ITESTCB", amount: 400},
-	}, nil)
+	}, []customItemSeed{
+		{label: "ITESTCB", value: 400},
+	})
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO payments (merchant_id, user_id, order_id, amount, mop, cash_register_id, enabled)
 		VALUES ($1, $2, $3, $4, 'ITESTCB', $5, true)`,
@@ -713,15 +716,15 @@ func TestGetRealPaymentsData_Postgres(t *testing.T) {
 		t.Fatalf("seed drift payment: %v", err)
 	}
 
-	trustedA, err := acctRepo.GetTrustedEnclosedRegisterIDs(ctx, fA.merchantID, periodStart, periodEnd)
+	trustedA, err := acctRepo.GetEnclosedRegisterIDs(ctx, fA.merchantID, periodStart, periodEnd)
 	if err != nil {
-		t.Fatalf("GetTrustedEnclosedRegisterIDs (merchant A): %v", err)
+		t.Fatalf("GetEnclosedRegisterIDs (merchant A): %v", err)
 	}
 	if !containsID(trustedA, regB) || !containsID(trustedA, regC) {
-		t.Fatalf("GetTrustedEnclosedRegisterIDs (merchant A) = %v, want regB=%d et regC=%d présents", trustedA, regB, regC)
+		t.Fatalf("GetEnclosedRegisterIDs (merchant A) = %v, want regB=%d et regC=%d présents", trustedA, regB, regC)
 	}
-	if containsID(trustedA, regD) {
-		t.Fatalf("GetTrustedEnclosedRegisterIDs (merchant A) = %v, want regD=%d absent (dérive post-enclose)", trustedA, regD)
+	if !containsID(trustedA, regD) {
+		t.Fatalf("GetEnclosedRegisterIDs (merchant A) = %v, want regD=%d présent malgré sa dérive post-enclose (réel déclaré repris tel quel)", trustedA, regD)
 	}
 
 	realA, err := acctRepo.GetRealPaymentsData(ctx, trustedA)
@@ -731,8 +734,8 @@ func TestGetRealPaymentsData_Postgres(t *testing.T) {
 	if amount, ok := amountFor(realA, "ITESTES"); !ok || amount != 700 {
 		t.Fatalf("GetRealPaymentsData (merchant A) ITESTES = (%d, %v), want 700 (500 regB + 200 regC)", amount, ok)
 	}
-	if amount, ok := amountFor(realA, "ITESTCB"); !ok || amount != 300 {
-		t.Fatalf("GetRealPaymentsData (merchant A) ITESTCB = (%d, %v), want 300 (regB seul — regD écarté en entier malgré son ITESTCB=400)", amount, ok)
+	if amount, ok := amountFor(realA, "ITESTCB"); !ok || amount != 700 {
+		t.Fatalf("GetRealPaymentsData (merchant A) ITESTCB = (%d, %v), want 700 (300 regB + 400 regD : registre en dérive repris tel que déclaré)", amount, ok)
 	}
 	if amount, ok := amountFor(realA, "Pourboire"); !ok || amount != 150 {
 		t.Fatalf("GetRealPaymentsData (merchant A) Pourboire = (%d, %v), want 150", amount, ok)
@@ -772,12 +775,12 @@ func TestGetRealPaymentsData_Postgres(t *testing.T) {
 		{label: "ITESTCB", value: 777},
 	})
 
-	trustedB, err := acctRepo.GetTrustedEnclosedRegisterIDs(ctx, fB.merchantID, periodStart, periodEnd)
+	trustedB, err := acctRepo.GetEnclosedRegisterIDs(ctx, fB.merchantID, periodStart, periodEnd)
 	if err != nil || !containsID(trustedB, regE) {
-		t.Fatalf("GetTrustedEnclosedRegisterIDs (merchant B) = (%+v, %v), want regE=%d présent", trustedB, err, regE)
+		t.Fatalf("GetEnclosedRegisterIDs (merchant B) = (%+v, %v), want regE=%d présent", trustedB, err, regE)
 	}
 	if containsID(trustedB, regB) || containsID(trustedB, regC) {
-		t.Fatalf("GetTrustedEnclosedRegisterIDs (merchant B) = %v, want aucun registre du merchant A", trustedB)
+		t.Fatalf("GetEnclosedRegisterIDs (merchant B) = %v, want aucun registre du merchant A", trustedB)
 	}
 
 	realB, err := acctRepo.GetRealPaymentsData(ctx, trustedB)
@@ -785,7 +788,7 @@ func TestGetRealPaymentsData_Postgres(t *testing.T) {
 		t.Fatalf("GetRealPaymentsData (merchant B): %v", err)
 	}
 	if amount, ok := amountFor(realB, "ITESTCB"); !ok || amount != 777 {
-		t.Fatalf("GetRealPaymentsData (merchant B) ITESTCB = (%d, %v), want 777 (pas mélangé avec les 300 du merchant A)", amount, ok)
+		t.Fatalf("GetRealPaymentsData (merchant B) ITESTCB = (%d, %v), want 777 (pas mélangé avec les 700 du merchant A)", amount, ok)
 	}
 
 	// Re-vérification merchant A : l'activité de B ne doit rien avoir changé.
@@ -793,15 +796,15 @@ func TestGetRealPaymentsData_Postgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetRealPaymentsData (merchant A, après B): %v", err)
 	}
-	if amount, ok := amountFor(realAAfterB, "ITESTCB"); !ok || amount != 300 {
-		t.Fatalf("GetRealPaymentsData (merchant A, après B) ITESTCB = (%d, %v), want toujours 300", amount, ok)
+	if amount, ok := amountFor(realAAfterB, "ITESTCB"); !ok || amount != 700 {
+		t.Fatalf("GetRealPaymentsData (merchant A, après B) ITESTCB = (%d, %v), want toujours 700", amount, ok)
 	}
 }
 
 // TestExportAccountingReport_Postgres est le seul test qui appelle réellement
 // AccountingService.ExportAccountingReport de bout en bout (pas seulement les
 // méthodes du repository) : c'est la garantie que service.go appelle bien
-// GetTrustedEnclosedRegisterIDs+GetRealPaymentsData et non plus l'ancien
+// GetEnclosedRegisterIDs+GetRealPaymentsData et non plus l'ancien
 // GetPaymentsData si quelqu'un revert le branchement par erreur. L'upload R2
 // est intercepté par un faux serveur S3 (httptest) qui capture le PDF
 // uploadé, décompressé ensuite avec extractPDFText pour vérifier que le
@@ -959,7 +962,7 @@ func TestExportAccountingReport_Postgres(t *testing.T) {
 		t.Fatalf("PDF généré par ExportAccountingReport : le placeholder ne devrait pas apparaître, il y a un registre de confiance avec du réel")
 	}
 	if !bytes.Contains([]byte(text), []byte("ITESTE2E")) || !bytes.Contains([]byte(text), []byte("6.50")) {
-		t.Fatalf("PDF généré par ExportAccountingReport : libellé/montant ITESTE2E=650 absents du rendu (%d octets de texte extrait) — le call site service.go semble ne pas utiliser GetTrustedEnclosedRegisterIDs/GetRealPaymentsData", len(text))
+		t.Fatalf("PDF généré par ExportAccountingReport : libellé/montant ITESTE2E=650 absents du rendu (%d octets de texte extrait) — le call site service.go semble ne pas utiliser GetEnclosedRegisterIDs/GetRealPaymentsData", len(text))
 	}
 
 	// Archivage (migration 166) : export référencé, nom unique horodaté,

@@ -264,7 +264,7 @@ temps (wello_resto_flutter, `docs/decisions.md`, addendum 2026-10-05).
   les moyens de paiement.
 - **Instantané figé inchangé** : `cash_registers_items` garde les remises,
   parce que le contrôle de dérive de l'export comptable
-  (`GetTrustedEnclosedRegisterIDs`) le compare à un recalcul en direct qui les
+  (`GetEnclosedRegisterIDs`, ex-`GetTrustedEnclosedRegisterIDs`) le compare à un recalcul en direct qui les
   compte aussi. Les remises sont écartées **à la présentation** :
   - résumé : hors `items` (théorique), hors `custom_items` (une remise recopiée
     dans un relevé avant la phase 4 n'est pas de l'argent compté — l'écart
@@ -368,3 +368,89 @@ de registre écrit `closing_mode`).
   montants.
 - Phase 4 (registre de caisse) non commencée, en attente d'accord. Non
   commité, non déployé.
+
+## Génération automatique à la clôture fiscale du mois (2026-11-10)
+
+**Besoin** : le popup « Export comptable » du back-office liste `accounting_exports`,
+remplie uniquement quand quelqu'un clique sur « Générer l'export ». Octobre 2026
+n'y figurait pas tant que personne ne l'avait généré.
+
+**Décision** : dès qu'un établissement a sa clôture fiscale MENSUELLE
+(`fiscal_closures`, `period_type = 'MONTH'`), le rapport du mois entier — du
+premier au dernier jour, tous canaux — est produit automatiquement et apparaît
+dans la liste (`generated_by = SYSTEM`).
+
+**Mise en œuvre**
+
+- `RunAccountingExports` (`internal/tasks/accounting_exports.go`), horaire, une
+  seule instance à la fois (verrou `accounting-exports:task`), budget 10 minutes
+  par passage, enregistrée après `RunFiscalClosures` dans `cmd/api/tasks.go`.
+  Elle a besoin du stockage R2 privé (comme `RunFiscalArchives`) : sans lui elle
+  journalise une erreur à chaque passage.
+- `AccountingService.GenerateDueMonthlyExports` (`pos/accounting/auto_exports.go`)
+  choisit les mois clos sans export. Un export manuel du mois entier, tous canaux
+  (`channels = ''`, `period_from/to` = le mois), compte : rien n'est refait. Un export
+  filtré par canal ou d'une autre période ne bloque pas la génération.
+- Le calcul est le même que pour l'export du back-office : `ExportAccountingReport`
+  a été scindé, son cœur `generateAccountingExport` ne dépend plus de
+  l'utilisateur HTTP. Mêmes règles (mois clôturé, mode de clôture, périmètre), même
+  archivage ; seul le lien signé reste à la charge de l'appelant HTTP.
+- Idempotent : un mois exporté n'est jamais régénéré. L'export est immuable ; pour
+  une version corrigée, générer à nouveau depuis le popup.
+
+**Clôture manuelle, registres non validés.** Dans ce mode le rapport lit le réel des
+registres VALIDÉS. Un export automatique produit pendant qu'un registre du mois
+n'est pas validé serait figé incomplet. La tâche attend donc la validation, pendant
+3 jours après la fin du mois (`autoExportRegisterGraceDays`) ; passé ce délai elle
+génère malgré un registre resté ouvert. Aucun effet en clôture automatique.
+
+**Refus, retentés chaque heure** (journal WARN `export mensuel non généré`, avec la
+raison) : une commande du mois pas à l'état CLOSED (« Le mois n'est pas encore
+clôturé »), un changement de mode de clôture à l'intérieur du mois. Ces cas se
+corrigent côté données ; l'export part au passage suivant.
+
+**À la première mise en production** : tous les établissements ayant une clôture
+mensuelle (octobre 2026, première clôture mensuelle) reçoivent leur export
+d'octobre, test compris, au premier passage horaire.
+
+**Non fait** : pas de test d'intégration dédié à la tâche, et
+`TestExportAccountingReport_Postgres` (qui passe par `generateAccountingExport`)
+n'a PAS été relancé après la scission : il écrit en base, à lancer sur la base de
+test avant déploiement. Compilation, `go vet` et tests unitaires du module et
+des tâches verts ; requête de sélection des mois vérifiée en lecture seule sur
+staging (31 mois d'octobre sans export, 0 registre non validé pour le 212).
+
+## Registre en dérive : repris tel que déclaré (2026-11-10)
+
+**Constat** (Croq'Ô'Pizzas, octobre 2026, mode MANUAL) : le PDF affichait 9 585,92 €
+d'encaissements pour 9 819,22 € de TVA. Les 233,30 € manquants étaient ceux du
+registre 934 (5 octobre), écarté EN ENTIER du « réel » parce que son instantané
+figé (CB 236,40 €) ne correspondait plus au recalcul en base (224,40 €) : le
+paiement 38199 (12,00 €) avait été désactivé après la clôture du registre. Le réel
+déclaré par le restaurateur (CB 224,40 €, borne 8,90 €) était pourtant juste.
+
+**Décision (Ilies)** : le rapport reprend toujours le réel déclaré en validant la
+caisse, tel quel, erreurs du restaurateur comprises. Plus aucun registre n'est
+écarté pour cause de dérive : on ne peut pas se fier au système pour juger une
+caisse validée, et retirer un registre du PDF masque des encaissements déclarés.
+
+**Mise en œuvre**
+
+- `GetTrustedEnclosedRegisterIDs` devient `GetEnclosedRegisterIDs`
+  (`pos/accounting/repository.go`) : tous les registres `enclosed` dont
+  `start_date` tombe dans la période. Seul appelant de production :
+  `buildManualSections` (export du back-office ET génération automatique).
+- La dérive (figé ≠ live) reste détectée et journalisée en WARN (`in drift`) par
+  `filterTrustedRegisterIDs` pour qu'on puisse la retrouver ; elle n'exclut plus rien.
+- Inchangé : le PDF d'un REGISTRE seul (`IsRegisterTrusted`) garde sa mention en cas
+  de dérive ; les canaux hors périmètre (STRIPE, UBER_EATS, DELIVEROO) restent exclus
+  du réel ; aucune donnée figée ni scellée (`cash_registers_items`, hash des
+  commandes) n'est modifiée.
+- Test d'intégration `TestGetRealPaymentsData_Postgres` mis à jour : le registre en
+  dérive est présent et son réel déclaré (ITESTCB = 400) compte. Non relancé (il écrit
+  en base) : à lancer sur la base de test avant déploiement.
+
+**Conséquence sur l'export d'octobre du 212** : régénérer l'export depuis le popup
+après déploiement ; il doit afficher 9 819,22 € d'encaissements (borne 1 251,37,
+carte 8 520,45, espèces 47,40), égal à la TVA. Si un écart subsiste, il vient alors
+d'une erreur réellement déclarée par le restaurateur, ce qui est voulu.
