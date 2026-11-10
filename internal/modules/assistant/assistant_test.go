@@ -118,6 +118,10 @@ func TestCleanLearnedText(t *testing.T) {
 		{"mets", "", "", false},
 		{"un deux trois quatre cinq", "", "", false},
 		{"", "", "", false},
+		{"janvier", "", "", false},
+		{"samedi soir", "", "", false},
+		{"le 12", "", "", false},
+		{"caisse janvier", "caisse janvier", "phrase", true},
 	}
 	for _, c := range cases {
 		got, kind, ok := cleanLearnedText(c.in, lex, maxLearnedTermTokens)

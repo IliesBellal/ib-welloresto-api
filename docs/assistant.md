@@ -40,7 +40,11 @@ npm run assistant:seed-sql -- ../ib-welloresto-api/migrations/todo 207_assistant
 Rejouable : les intentions sont mises à jour, un terme déjà présent n'est
 jamais modifié (un rejet ou un poids changé par l'administration est conservé).
 
-**Ordre de déploiement** : 206 puis 207, puis le code. Sans les tables, l'API
+`208_assistant_seed_channels` (2026-11-10) : même pré-remplissage régénéré
+(canal de vente facultatif sur le CA et les meilleures ventes) et suppression
+des termes appris qui n'étaient qu'une période (« janvier »). Rejouable.
+
+**Ordre de déploiement** : 206, 207, 208, puis le code. Sans les tables, l'API
 sert un modèle vide (le back-office garde son modèle embarqué) et ignore les
 événements avec un avertissement.
 
@@ -85,7 +89,8 @@ servi avec un poids × 0,8.
   - `cancelled` / `rephrased` (mêmes champs) donnent des signaux `negative`.
 
   Le texte est re-normalisé (`normalize.go`, identique au client) et refusé
-  s'il est vide, trop long ou fait seulement de mots vides / liste noire.
+  s'il est vide, trop long, fait seulement de mots vides / liste noire, ou
+  seulement d'une période (« janvier », « samedi soir », « 2025 »).
 
 ### Plateforme admin (`RequirePlatformAdmin`, staff WelloResto)
 

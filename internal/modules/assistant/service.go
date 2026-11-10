@@ -443,13 +443,18 @@ func cleanLearnedText(text string, lex *Lexicon, maxTokens int) (string, string,
 	for _, w := range lex.Stopwords {
 		stop[w] = true
 	}
-	significant := 0
+	significant, dated := 0, 0
 	for _, t := range tokens {
 		if !stop[t] && !lex.Blacklist[t] {
 			significant++
+			if isDateWord(t) {
+				dated++
+			}
 		}
 	}
-	if significant == 0 || significant > maxTokens || len(tokens) > maxTokens+3 {
+	// Une période (« janvier », « samedi soir », « 2025 ») est une précision,
+	// jamais un autre nom d'une intention.
+	if significant == 0 || dated == significant || significant > maxTokens || len(tokens) > maxTokens+3 {
 		return "", "", false
 	}
 	kind := "keyword"
@@ -527,4 +532,27 @@ func (s *Service) RunLearningNow(ctx context.Context) (*LearningReport, error) {
 		logger.FromContext(ctx).Info("assistant: apprentissage manuel", zap.Any("report", report))
 	}
 	return report, err
+}
+
+// dateWords : mots de période, jamais appris comme synonymes.
+var dateWords = map[string]bool{
+	"janvier": true, "fevrier": true, "mars": true, "avril": true, "mai": true, "juin": true, "juillet": true,
+	"aout": true, "septembre": true, "octobre": true, "novembre": true, "decembre": true,
+	"lundi": true, "mardi": true, "mercredi": true, "jeudi": true, "vendredi": true, "samedi": true, "dimanche": true,
+	"aujourd": true, "hui": true, "aujourdhui": true, "hier": true, "demain": true, "avant": true, "apres": true,
+	"semaine": true, "mois": true, "annee": true, "an": true, "jour": true, "jours": true,
+	"matin": true, "midi": true, "soir": true, "soiree": true, "nuit": true, "aprem": true,
+	"dernier": true, "derniere": true, "derniers": true, "prochain": true, "prochaine": true, "passe": true, "passee": true,
+}
+
+func isDateWord(t string) bool {
+	if dateWords[t] {
+		return true
+	}
+	for _, r := range t {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true // nombre (jour, année)
 }
