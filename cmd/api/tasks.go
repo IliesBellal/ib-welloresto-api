@@ -131,6 +131,11 @@ func SetupTasks(
 	// de fond de ce poids.
 	add("@hourly", taskManager.ReconcileSystemRolePermissions)
 
+	// ── Assistant ────────────────────────────────────────────────────────────
+	// Apprentissage autonome des synonymes (docs/assistant.md) : promotion,
+	// rétrogradation et passage en global, à partir des signaux de l'heure.
+	add("@hourly", taskManager.RunAssistantLearning)
+
 	// ── Sécurité ─────────────────────────────────────────────────────────────
 	// Chaque nuit à 4h30 : purge des demandes de réinitialisation de mot de passe.
 	// 4h30 et non 4h pour ne pas tomber en même temps que la purge upsell le 1er
@@ -153,6 +158,8 @@ func SetupTasks(
 	// purge mensuelle laissait la table monter jusqu'à rétention + 30 jours.
 	add("0 5 * * *", taskManager.CleanupOldRequestLogs)
 	add("30 5 * * *", taskManager.CleanupOldDiagnosticEvents)
+	// Assistant : texte libre retiré après 90 jours, purge après 400 jours (RGPD).
+	add("40 5 * * *", taskManager.CleanupAssistantData)
 	// Mesure d'audience ScanNOrder : conservation 25 mois (CNIL, exemption de consentement).
 	add("45 5 * * *", taskManager.CleanupOldAudienceEvents)
 

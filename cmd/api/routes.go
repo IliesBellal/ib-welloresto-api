@@ -93,6 +93,7 @@ import (
 	stocksModule "welloresto-api/internal/modules/stocks"
 	subscriptionsModule "welloresto-api/internal/modules/subscriptions"
 	tagsModule "welloresto-api/internal/modules/tags"
+	assistantModule "welloresto-api/internal/modules/assistant"
 	uberModule "welloresto-api/internal/modules/ubereats"
 	servicesModule "welloresto-api/internal/modules/user_services"
 	usersModule "welloresto-api/internal/modules/users"
@@ -749,6 +750,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	))
 	allergensH := allergensModule.NewHandler(allergensService)
 	tagsH := tagsModule.NewHandler(tagsService)
+
+	// ---- Assistant conversationnel (docs/assistant.md) ----
+	assistantRepo := assistantModule.NewRepository(selectedDB)
+	assistantH := assistantModule.NewHandler(assistantModule.NewService(assistantRepo), assistantRepo)
 	printersH := printersModule.NewHandler(printersService)
 	productionProfilesH := productionprofilesModule.NewHandler(productionProfilesService)
 	discountsH := discountsModule.NewHandler(discountsService)
@@ -1861,6 +1866,19 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		r.Post("/recompute-patterns", adminUpsellH.RecomputePatterns)
 	})
 
+	// --- ASSISTANT --- modèle d'intentions et mesure d'usage du bouton
+	// flottant (back-office ; POS et borne plus tard). Toute personne connectée :
+	// les intentions sont filtrées par droits côté client, et chaque action
+	// déclenchée reste protégée par sa propre route.
+	r.Route("/assistant", func(r chi.Router) {
+		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
+		r.Get("/model", assistantH.GetModel)
+		// Envois par lots toutes les 4 s au plus : 120/min laisse de la marge
+		// (vidage de la file hors ligne au retour du réseau).
+		r.With(httprate.LimitByIP(120, 1*time.Minute)).Post("/events", assistantH.RecordEvents)
+	})
+
 	// --- ADMIN — COMMERCIAL OVERRIDES (LOT B B1d) ---
 	// Internal only, never exposed to the client — gated by
 	// middleware.RequirePlatformAdmin (users.is_platform_staff, migration
@@ -1892,6 +1910,21 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		r.Get("/merchants/{id}/cash-register-closing-modes", cashRegisterH.GetClosingModes)
 		r.Post("/merchants/{id}/cash-register-closing-modes", cashRegisterH.ScheduleClosingMode)
 		r.Delete("/merchants/{id}/cash-register-closing-modes/{effective_from}", cashRegisterH.CancelClosingMode)
+
+		// Assistant : revue de l'apprentissage et analyse d'usage, pour la
+		// future plateforme admin (docs/assistant.md).
+		r.Route("/assistant", func(r chi.Router) {
+			r.Get("/stats", assistantH.AdminStats)
+			r.Get("/fallbacks", assistantH.AdminFallbacks)
+			r.Get("/intents", assistantH.AdminIntents)
+			r.Get("/terms", assistantH.AdminListTerms)
+			r.Post("/terms", assistantH.AdminCreateTerm)
+			r.Patch("/terms/{id}", assistantH.AdminUpdateTerm)
+			r.Get("/aliases", assistantH.AdminListAliases)
+			r.Patch("/aliases/{id}", assistantH.AdminUpdateAlias)
+			r.Get("/sessions/{id}/events", assistantH.AdminSessionEvents)
+			r.Post("/learning/run", assistantH.AdminRunLearning)
+		})
 	})
 
 	// --- SUBSCRIPTIONS (LOT B B1e) --- client-facing preview/apply.
