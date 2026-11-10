@@ -44,7 +44,12 @@ jamais modifié (un rejet ou un poids changé par l'administration est conservé
 (canal de vente facultatif sur le CA et les meilleures ventes) et suppression
 des termes appris qui n'étaient qu'une période (« janvier »). Rejouable.
 
-**Ordre de déploiement** : 206, 207, 208, puis le code. Sans les tables, l'API
+`209_assistant_seed_documents` (2026-11-10) : demande « documents à
+télécharger » (factures, virements, rapports comptables, archive fiscale),
+synonymes de l'historique des commandes. Rejouable ; son down retire seulement
+la demande « documents ».
+
+**Ordre de déploiement** : 206, 207, 208, 209, puis le code. Sans les tables, l'API
 sert un modèle vide (le back-office garde son modèle embarqué) et ignore les
 événements avec un avertissement.
 

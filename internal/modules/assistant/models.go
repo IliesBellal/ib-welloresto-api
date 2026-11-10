@@ -106,7 +106,7 @@ var allowedEventTypes = map[string]bool{
 	"confirmation_shown": true, "confirmed": true, "cancelled": true,
 	"action_succeeded": true, "action_failed": true, "navigated": true,
 	"info_shown": true, "rephrased": true, "multi_request": true,
-	"feedback": true, "learning_info_opened": true,
+	"feedback": true, "learning_info_opened": true, "download_clicked": true,
 }
 
 var allowedSurfaces = map[string]bool{"backoffice": true, "pos": true, "kiosk": true}
