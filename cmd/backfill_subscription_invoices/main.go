@@ -9,6 +9,10 @@
 // RunSubscriptionInvoiceDocuments ; idempotente : une facture déjà envoyée ne
 // l'est jamais deux fois.
 //
+// Avec --apply --no-mail, la commande n'envoie AUCUN mail : elle archive le PDF
+// Stripe dans R2 (obligatoire) et crée la ligne directement 'done', sans passer
+// par la file, pour que les factures soient consultables dans le back-office.
+//
 // ATTENTION : hors phase de test (docsmode.TestMode = false dans
 // internal/docsmode), les mails partent chez les restaurateurs. Lancer d'abord
 // sans --apply : la commande liste ce qu'elle traiterait.
@@ -41,6 +45,7 @@ import (
 func main() {
 	sinceDays := flag.Int("since-days", 0, "toutes les factures d'abonnement payées depuis N jours")
 	apply := flag.Bool("apply", false, "envoyer (défaut : liste seulement)")
+	noMail := flag.Bool("no-mail", false, "avec --apply : enregistrer et archiver les factures SANS envoyer aucun mail (R2 privé obligatoire)")
 	flag.Parse()
 
 	if *sinceDays <= 0 {
@@ -68,7 +73,22 @@ func main() {
 		return
 	}
 
-	// Archivage R2 optionnel : sans lui, les factures partent quand même par mail.
+	// Sans --no-mail, l'archivage R2 est optionnel (les factures partent quand même
+	// par mail). Avec --no-mail il est tout l'intérêt de la commande : on vérifie
+	// les variables avant de télécharger quoi que ce soit (le client R2 se crée
+	// sans erreur avec des identifiants vides, et chaque envoi échouerait ensuite).
+	if *noMail {
+		var missing []string
+		for _, name := range []string{"R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_ENDPOINT", "R2_PRIVATE_BUCKET"} {
+			if os.Getenv(name) == "" {
+				missing = append(missing, name)
+			}
+		}
+		if len(missing) > 0 {
+			log.Fatalf("--no-mail a besoin du bucket R2 privé : variables absentes ou vides : %v", missing)
+		}
+	}
+
 	var store subscriptioninvoices.Store
 	if r2Client, err := r2.NewClient(r2.UploadConfig{
 		AccessKeyID:     os.Getenv("R2_ACCESS_KEY_ID"),
@@ -84,6 +104,21 @@ func main() {
 
 	mail := brevo_mailer.NewBrevoMailer(brevo_mailer.Config{APIKey: os.Getenv("BREVO_API_KEY")})
 	svc := subscriptioninvoices.NewService(repo, stripeMgr, store, mail, zap.NewExample())
+
+	if *noMail {
+		// Aucun mail, et rien dans la file : les lignes sont créées directement
+		// 'done', la tâche horaire de l'API n'a donc rien à envoyer.
+		res, err := svc.ArchiveSince(ctx, since)
+		if err != nil {
+			log.Fatalf("archivage : %v", err)
+		}
+		fmt.Printf("archivées : %d — déjà connues : %d — abonnement inconnu : %d — en échec : %d\n",
+			res.Archived, res.Existing, res.Unknown, res.Failed)
+		if res.Failed > 0 {
+			fmt.Println("des factures sont en échec (voir les logs ci-dessus) : relancer la commande, les factures déjà archivées sont ignorées")
+		}
+		return
+	}
 
 	n, err := svc.EnqueueSince(ctx, since)
 	if err != nil {
@@ -116,6 +151,14 @@ func dryRun(ctx context.Context, repo subscriptioninvoices.Repository, stripeMgr
 	found := 0
 	for _, inv := range invoices {
 		if inv.SubscriptionID == "" || inv.AmountPaid <= 0 {
+			continue
+		}
+		exists, err := repo.Exists(ctx, inv.ID)
+		if err != nil {
+			log.Fatalf("lecture de la facture %s : %v", inv.ID, err)
+		}
+		if exists {
+			fmt.Printf("%s  %s  %.2f %s  déjà enregistrée : laissée telle quelle\n", inv.ID, inv.Number, float64(inv.AmountPaid)/100, inv.Currency)
 			continue
 		}
 		merchantID, err := repo.MerchantBySubscription(ctx, inv.SubscriptionID)

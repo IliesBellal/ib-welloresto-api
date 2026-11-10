@@ -89,3 +89,71 @@ func TestSubscriptionInvoiceDocuments_Postgres(t *testing.T) {
 		t.Errorf("GetForMerchant = %+v, %v", mine, err)
 	}
 }
+
+// Archivage sans mail : la ligne naît 'done' (jamais 'pending', que la tâche
+// horaire enverrait), sans destinataire, et le back-office la liste avec son PDF.
+func TestInsertArchived_Postgres(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+	repo := NewRepository(db)
+
+	cleanup := func() {
+		if _, err := db.ExecContext(ctx, `DELETE FROM subscription_invoice_documents WHERE stripe_invoice_id LIKE 'in_itest_%'`); err != nil {
+			t.Fatalf("cleanup: %v", err)
+		}
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	paid := time.Date(2026, 10, 3, 9, 0, 0, 0, time.UTC)
+	withDate := Ref{InvoiceID: "in_itest_arch_1", MerchantID: "2", AmountPaid: 6000, Currency: "eur",
+		PeriodStart: time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC), PeriodEnd: time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC), PaidAt: paid}
+	noDate := Ref{InvoiceID: "in_itest_arch_2", MerchantID: "2", AmountPaid: 6500, Currency: "eur"} // dates inconnues
+
+	if ok, err := repo.Exists(ctx, withDate.InvoiceID); err != nil || ok {
+		t.Fatalf("Exists avant insertion = %v, %v", ok, err)
+	}
+	for i := 0; i < 2; i++ { // rejouable sans doublon
+		for _, ref := range []Ref{withDate, noDate} {
+			if err := repo.InsertArchived(ctx, ref, Done{Number: "ITEST-" + ref.InvoiceID, PDFKey: "k/" + ref.InvoiceID}); err != nil {
+				t.Fatalf("InsertArchived: %v", err)
+			}
+		}
+	}
+	if ok, err := repo.Exists(ctx, withDate.InvoiceID); err != nil || !ok {
+		t.Fatalf("Exists après insertion = %v, %v", ok, err)
+	}
+
+	pending, err := repo.ListPending(ctx, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range pending {
+		if p.InvoiceID == withDate.InvoiceID || p.InvoiceID == noDate.InvoiceID {
+			t.Fatalf("%s est en file : la tâche horaire l'enverrait", p.InvoiceID)
+		}
+	}
+
+	var recipient *string
+	if err := db.QueryRowContext(ctx, `SELECT recipient FROM subscription_invoice_documents WHERE stripe_invoice_id = $1`, withDate.InvoiceID).Scan(&recipient); err != nil || recipient != nil {
+		t.Errorf("destinataire = %v, %v : une facture non envoyée n'en a pas", recipient, err)
+	}
+
+	listed, err := repo.ListForMerchant(ctx, "2", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]Listed{}
+	for _, l := range listed {
+		seen[l.InvoiceID] = l
+	}
+	for _, ref := range []Ref{withDate, noDate} {
+		l, ok := seen[ref.InvoiceID]
+		if !ok || !l.HasPDF || l.AmountPaid != ref.AmountPaid || l.SentAt.IsZero() {
+			t.Errorf("%s listée = %+v (présente : %v)", ref.InvoiceID, l, ok)
+		}
+	}
+	if got := seen[withDate.InvoiceID].SentAt; !got.Equal(paid) {
+		t.Errorf("sent_at = %v, want la date de paiement %v", got, paid)
+	}
+}

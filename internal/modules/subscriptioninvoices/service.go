@@ -238,6 +238,83 @@ func (s *Service) EnqueueSince(ctx context.Context, since time.Time) (int, error
 	return count, nil
 }
 
+// ArchiveResult résume un passage de ArchiveSince.
+type ArchiveResult struct {
+	Archived int // enregistrées et archivées
+	Existing int // déjà connues : laissées telles quelles
+	Unknown  int // abonnement lié à aucun établissement : ignorées
+	Failed   int // PDF ou archivage en erreur : rien n'est enregistré, à relancer
+}
+
+// ArchiveSince enregistre, SANS envoyer aucun mail, les factures d'abonnement
+// payées depuis `since` : le PDF Stripe est archivé dans R2 et la ligne est
+// créée directement au statut 'done', pour que la facture soit consultable dans
+// le back-office. Passer par la file 'pending' est exclu : la tâche horaire
+// enverrait les mails. Une facture déjà connue (envoyée, en attente ou en échec)
+// n'est pas touchée. Sans archive R2, rien n'est enregistré : une ligne sans PDF
+// n'apporterait rien au back-office.
+func (s *Service) ArchiveSince(ctx context.Context, since time.Time) (ArchiveResult, error) {
+	var res ArchiveResult
+	if s.store == nil {
+		return res, errors.New("archivage impossible : le bucket R2 privé n'est pas configuré")
+	}
+	invoices, err := s.stripe.ListPaidInvoices(ctx, since)
+	if err != nil {
+		return res, err
+	}
+
+	for _, inv := range invoices {
+		if inv.SubscriptionID == "" || inv.AmountPaid <= 0 {
+			continue
+		}
+		// D'abord l'existence : une facture déjà enregistrée dont l'abonnement n'est
+		// plus lié (abonnement annulé puis recréé) n'est pas « inconnue ».
+		exists, err := s.repo.Exists(ctx, inv.ID)
+		if err != nil {
+			return res, err
+		}
+		if exists {
+			res.Existing++
+			continue
+		}
+		merchantID, err := s.repo.MerchantBySubscription(ctx, inv.SubscriptionID)
+		if err != nil {
+			return res, err
+		}
+		if merchantID == "" {
+			res.Unknown++
+			s.log.Warn("[subscription-invoices] abonnement inconnu, facture ignorée",
+				zap.String("invoice_id", inv.ID), zap.String("subscription_id", inv.SubscriptionID))
+			continue
+		}
+
+		pdf, err := s.stripe.FetchInvoicePDF(ctx, inv.PDFURL)
+		if err != nil {
+			res.Failed++
+			s.log.Error("[subscription-invoices] PDF indisponible, facture non enregistrée",
+				zap.String("invoice_id", inv.ID), zap.Error(err))
+			continue
+		}
+		number := firstNonEmpty(inv.Number, inv.ID)
+		filename := "facture-abonnement-" + strings.NewReplacer("/", "-", " ", "-").Replace(number) + ".pdf"
+		key := s.archive(ctx, merchantID, inv.ID, filename, pdf)
+		if key == "" {
+			res.Failed++
+			continue
+		}
+
+		ref := Ref{
+			InvoiceID: inv.ID, MerchantID: merchantID, Number: inv.Number, AmountPaid: inv.AmountPaid,
+			Currency: inv.Currency, PeriodStart: inv.PeriodStart, PeriodEnd: inv.PeriodEnd, PaidAt: inv.PaidAt,
+		}
+		if err := s.repo.InsertArchived(ctx, ref, Done{Number: number, PDFKey: key}); err != nil {
+			return res, err
+		}
+		res.Archived++
+	}
+	return res, nil
+}
+
 // recipientFor renvoie l'adresse qui reçoit la facture d'un marchand (son
 // responsable, voir docsmode.Recipient), et une note à afficher dans le mail
 // quand ce n'est pas lui qui la reçoit.

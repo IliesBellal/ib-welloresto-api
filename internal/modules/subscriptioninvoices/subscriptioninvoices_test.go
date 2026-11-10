@@ -23,6 +23,10 @@ type fakeRepo struct {
 	failures map[string]string
 	listed   map[string][]Listed
 	subs     map[string]string
+
+	existing     map[string]bool
+	archived     map[string]Done
+	archivedRefs []Ref
 }
 
 func (r *fakeRepo) InsertPending(_ context.Context, ref Ref) error {
@@ -35,6 +39,18 @@ func (r *fakeRepo) RecordFailure(_ context.Context, id, reason string, _ bool) e
 	return nil
 }
 func (r *fakeRepo) MarkDone(_ context.Context, id string, d Done) error { r.done[id] = d; return nil }
+func (r *fakeRepo) Exists(_ context.Context, id string) (bool, error) {
+	_, ok := r.archived[id]
+	return ok || r.existing[id], nil
+}
+func (r *fakeRepo) InsertArchived(_ context.Context, ref Ref, d Done) error {
+	if r.archived == nil {
+		r.archived = map[string]Done{}
+	}
+	r.archived[ref.InvoiceID] = d
+	r.archivedRefs = append(r.archivedRefs, ref)
+	return nil
+}
 func (r *fakeRepo) Merchant(context.Context, string) (*Merchant, error) { return r.merchant, nil }
 func (r *fakeRepo) MerchantBySubscription(_ context.Context, sub string) (string, error) {
 	return r.subs[sub], nil
@@ -195,6 +211,64 @@ func TestEnqueueSince(t *testing.T) {
 	n, err := svc.EnqueueSince(context.Background(), paidAt)
 	if err != nil || n != 1 || len(repo.inserted) != 1 || repo.inserted[0].InvoiceID != "in_ok" || repo.inserted[0].MerchantID != "212" {
 		t.Errorf("n = %d, err = %v, insérées = %+v", n, err, repo.inserted)
+	}
+}
+
+func TestArchiveSince_RecordsWithoutSendingAnyMail(t *testing.T) {
+	svc, repo, mail, store, _ := fixture()
+	repo.existing = map[string]bool{"in_exists": true, "in_exists_unlinked": true}
+	svc.stripe = fakeStripe{pdf: []byte("%PDF-1.7 facture"), invoices: []stripeclient.InvoiceInfo{
+		{ID: "in_ok", Number: "E4CB-0019", SubscriptionID: "sub_1", AmountPaid: 7900, Currency: "eur", PDFURL: "https://pay.stripe.com/pdf", PaidAt: paidAt},
+		{ID: "in_exists", SubscriptionID: "sub_1", AmountPaid: 7900},
+		// Déjà enregistrée, abonnement plus lié (annulé puis recréé) : pas « inconnue ».
+		{ID: "in_exists_unlinked", SubscriptionID: "sub_ancien", AmountPaid: 7900},
+		{ID: "in_zero", SubscriptionID: "sub_1", AmountPaid: 0},
+		{ID: "in_nosub", SubscriptionID: "", AmountPaid: 7900},
+		{ID: "in_unknown", SubscriptionID: "sub_inconnu", AmountPaid: 7900},
+	}}
+
+	res, err := svc.ArchiveSince(context.Background(), paidAt)
+	if err != nil || res != (ArchiveResult{Archived: 1, Existing: 2, Unknown: 1}) {
+		t.Fatalf("res = %+v, err = %v", res, err)
+	}
+	if mail.calls != 0 {
+		t.Errorf("%d mail(s) envoyé(s) : l'archivage ne doit en envoyer aucun", mail.calls)
+	}
+	if len(repo.inserted) != 0 {
+		t.Errorf("%d ligne(s) mise(s) en file : la tâche horaire les enverrait", len(repo.inserted))
+	}
+	d := repo.archived["in_ok"]
+	if d.Recipient != "" || d.PDFKey == "" || d.Number != "E4CB-0019" {
+		t.Errorf("done = %+v : pas de destinataire, mais le PDF archivé", d)
+	}
+	if len(store.uploaded) != 1 || !strings.HasPrefix(store.uploaded[0], "subscription-invoices/212/in_ok/") {
+		t.Errorf("archivage = %v", store.uploaded)
+	}
+}
+
+func TestArchiveSince_NothingRecordedWithoutPDF(t *testing.T) {
+	invoice := stripeclient.InvoiceInfo{ID: "in_ok", SubscriptionID: "sub_1", AmountPaid: 7900, PDFURL: "u"}
+
+	// PDF indisponible.
+	svc, repo, _, _, _ := fixture()
+	svc.stripe = fakeStripe{invoices: []stripeclient.InvoiceInfo{invoice}, pdfErr: errors.New("pas de PDF")}
+	if res, _ := svc.ArchiveSince(context.Background(), paidAt); res.Failed != 1 || len(repo.archived) != 0 {
+		t.Errorf("PDF absent : res = %+v, enregistrées = %v", res, repo.archived)
+	}
+
+	// Archive R2 en échec : une ligne sans PDF n'apporterait rien.
+	svc, repo, _, store, _ := fixture()
+	store.err = errors.New("R2 indisponible")
+	svc.stripe = fakeStripe{invoices: []stripeclient.InvoiceInfo{invoice}, pdf: []byte("%PDF-1.7")}
+	if res, _ := svc.ArchiveSince(context.Background(), paidAt); res.Failed != 1 || len(repo.archived) != 0 {
+		t.Errorf("R2 en échec : res = %+v, enregistrées = %v", res, repo.archived)
+	}
+
+	// Sans R2 du tout : refus net.
+	svc, _, _, _, _ = fixture()
+	svc.store = nil
+	if _, err := svc.ArchiveSince(context.Background(), paidAt); err == nil {
+		t.Error("sans bucket R2, ArchiveSince doit refuser")
 	}
 }
 

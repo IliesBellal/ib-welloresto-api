@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 )
 
 // Repository est l'accès SQL du module (Postgres uniquement).
@@ -16,6 +17,11 @@ type Repository interface {
 	RecordFailure(ctx context.Context, invoiceID, reason string, failed bool) error
 	// MarkDone clôt la facture une fois envoyée.
 	MarkDone(ctx context.Context, invoiceID string, done Done) error
+	// Exists dit si la facture a déjà une ligne, quel que soit son statut.
+	Exists(ctx context.Context, invoiceID string) (bool, error)
+	// InsertArchived enregistre une facture directement au statut 'done', sans
+	// passer par la file d'envoi (archivage sans mail) ; sans effet si elle existe.
+	InsertArchived(ctx context.Context, ref Ref, done Done) error
 
 	// Merchant renvoie le restaurateur d'un établissement (nil si inconnu).
 	Merchant(ctx context.Context, merchantID string) (*Merchant, error)
@@ -104,6 +110,41 @@ func (r *sqlRepository) MarkDone(ctx context.Context, invoiceID string, done Don
 	return err
 }
 
+func (r *sqlRepository) Exists(ctx context.Context, invoiceID string) (bool, error) {
+	var one int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT 1 FROM subscription_invoice_documents WHERE stripe_invoice_id = $1`, invoiceID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (r *sqlRepository) InsertArchived(ctx context.Context, ref Ref, done Done) error {
+	var pdfKey any
+	if done.PDFKey != "" {
+		pdfKey = done.PDFKey
+	}
+	// recipient reste NULL : la facture n'a pas été envoyée. sent_at est lu comme
+	// une date par le back-office : la date de paiement tient lieu de repère.
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO subscription_invoice_documents
+			(stripe_invoice_id, merchant_id, number, amount_paid, currency, period_start, period_end, paid_at,
+			 status, pdf_key, sent_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'done', $9, COALESCE($8, now()))
+		ON CONFLICT (stripe_invoice_id) DO NOTHING`,
+		ref.InvoiceID, ref.MerchantID, done.Number, ref.AmountPaid, ref.Currency, ref.PeriodStart, ref.PeriodEnd, nullTime(ref.PaidAt), pdfKey)
+	return err
+}
+
+// nullTime : NULL pour une date inconnue (zéro).
+func nullTime(t time.Time) any {
+	if t.IsZero() || t.Unix() <= 0 {
+		return nil
+	}
+	return t
+}
+
 func (r *sqlRepository) Merchant(ctx context.Context, merchantID string) (*Merchant, error) {
 	var m Merchant
 	// Adresse du responsable : le premier admin actif, comme
@@ -139,7 +180,7 @@ func (r *sqlRepository) MerchantBySubscription(ctx context.Context, subscription
 
 const listedSelect = `
 	SELECT stripe_invoice_id, COALESCE(number, ''), amount_paid, currency,
-	       period_start, period_end, paid_at, sent_at, COALESCE(pdf_key, '')
+	       period_start, period_end, COALESCE(paid_at, created_at), COALESCE(sent_at, paid_at, created_at), COALESCE(pdf_key, '')
 	FROM subscription_invoice_documents
 	WHERE merchant_id = $1 AND status = 'done'`
 
@@ -154,7 +195,7 @@ func scanListed(row interface{ Scan(...any) error }) (*Listed, error) {
 }
 
 func (r *sqlRepository) ListForMerchant(ctx context.Context, merchantID string, limit int) ([]Listed, error) {
-	rows, err := r.db.QueryContext(ctx, listedSelect+` ORDER BY paid_at DESC, id DESC LIMIT $2`, merchantID, limit)
+	rows, err := r.db.QueryContext(ctx, listedSelect+` ORDER BY COALESCE(paid_at, created_at) DESC, id DESC LIMIT $2`, merchantID, limit)
 	if err != nil {
 		return nil, err
 	}

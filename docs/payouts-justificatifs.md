@@ -127,6 +127,22 @@ Stripe ── invoice.paid ──► webhook ──► subscription_invoice_docu
 - Code : [internal/modules/subscriptioninvoices/](../internal/modules/subscriptioninvoices/),
   table `subscription_invoice_documents` (migration 179).
 - Rattrapage : `cmd/backfill_subscription_invoices --since-days=N [--apply]`.
+- **Rattrapage sans mail** (`--apply --no-mail`, 2026-11-10) : pour rendre des
+  factures passées consultables dans le back-office **sans rien envoyer**. La
+  commande télécharge le PDF Stripe, l'archive dans R2 (obligatoire : sans R2,
+  elle refuse) et crée la ligne **directement au statut `done`**, sans destinataire
+  (`recipient` NULL = jamais envoyée) et avec `sent_at` = date de paiement. Elle
+  ne passe volontairement pas par `pending` : la tâche horaire de l'API y
+  enverrait les mails. Une facture déjà connue (envoyée, en attente, en échec)
+  n'est jamais touchée ; un PDF ou un archivage en échec n'enregistre rien (relancer
+  la commande). Code : `Service.ArchiveSince`. Une facture archivée sans mail
+  n'est pas renvoyée ensuite : pour l'envoyer, remettre sa ligne en `pending`.
+- Le rattachement d'une facture à un établissement passe par
+  `subscriptions.stripe_subscription_id` : un abonnement Stripe non lié est
+  ignoré (compté « abonnement inconnu » par la commande). Attention : lier un
+  abonnement active aussi la synchronisation de ses lignes avec la composition de
+  l'établissement (`billing.SyncSubscriptionItems`), et l'identifiant doit être
+  celui d'un abonnement (`sub_…`), pas d'un calendrier (`sub_sched_…`).
 
 Vérifié en mode test sur une vraie facture d'abonnement (79 €) : lecture de la
 facture, période, téléchargement du PDF (39 Ko) et rattachement à l'établissement.
