@@ -215,10 +215,22 @@ func buildHistoryFilter(merchantID string, req models.OrderHistoryRequest) histo
 		}
 	}
 
+	if req.OrderNum != nil {
+		where += " AND o.order_num = ? "
+		args = append(args, *req.OrderNum)
+	}
+
 	if req.Search != nil {
 		searchTerm := strings.TrimSpace(*req.Search)
 		if searchTerm != "" {
 			likeTerm := "%" + searchTerm + "%"
+			// o.order_num : le numéro affiché (« #42 », de 0 à 99 puis il
+			// repart à zéro). Comparé exactement : en partiel, « 4 » ramènerait
+			// aussi 14, 24, 40 à 49… Un « # » saisi est ignoré. -1 : jamais trouvé.
+			orderNum := -1
+			if n, err := strconv.Atoi(strings.TrimPrefix(searchTerm, "#")); err == nil {
+				orderNum = n
+			}
 			// c.customer_id et o.order_id sont des colonnes integer : le
 			// COALESCE(x, '') MySQL les coerçait en texte, Postgres exige un
 			// cast explicite (castChar, dialecte-dépendant).
@@ -231,13 +243,10 @@ func buildHistoryFilter(merchantID string, req models.OrderHistoryRequest) histo
 					OR LOWER(COALESCE(c.customer_code, '')) LIKE LOWER(?)
 					OR LOWER(COALESCE(o.brand_order_num, '')) LIKE LOWER(?)
 					OR LOWER(COALESCE(` + castChar("o.order_id") + `, '')) LIKE LOWER(?)
-					OR ` + castChar("o.order_num") + ` LIKE ?
+					OR o.order_num = ?
 				)
 			`
-			// o.order_num : le numéro affiché au restaurateur (« #42098 ») ; un
-			// « # » saisi est ignoré pour cette colonne.
-			args = append(args, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm,
-				"%"+strings.TrimPrefix(searchTerm, "#")+"%")
+			args = append(args, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, orderNum)
 		}
 	}
 

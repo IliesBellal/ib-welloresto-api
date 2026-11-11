@@ -203,6 +203,7 @@ type OrderHistoryRequest struct {
 	DateFrom   *string  `json:"date_from"`
 	DateTo     *string  `json:"date_to"`
 	Search     *string  `json:"search"`
+	OrderNum   *int     `json:"order_num"` // numéro affiché exact (#0 à #99, repart à zéro) ; avec la période : « la 42 d'hier »
 	CustomerID *string  `json:"customer_id"`
 	Channel    []string `json:"channel"`
 	OrderType  []string `json:"order_type"`

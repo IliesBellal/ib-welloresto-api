@@ -380,6 +380,18 @@ func TestOrdersRepository_Postgres(t *testing.T) {
 	if err != nil || total != 1 {
 		t.Fatalf("GetHistory (search by id) = total=%d err=%v, want 1", total, err)
 	}
+	// numéro affiché exact (order_num, de 0 à 99) : les deux commandes CLOSED
+	// portent le n° 1 ; « #1 » en recherche et le filtre order_num les trouvent.
+	num1, num2, hashOne := 1, 2, "#1"
+	if _, total, _, _, _, err = repo.GetHistory(ctx, merchantID, models.OrderHistoryRequest{OrderNum: &num1}); err != nil || total != 2 {
+		t.Fatalf("GetHistory (order_num=1) = total=%d err=%v, want 2", total, err)
+	}
+	if _, total, _, _, _, err = repo.GetHistory(ctx, merchantID, models.OrderHistoryRequest{OrderNum: &num2}); err != nil || total != 0 {
+		t.Fatalf("GetHistory (order_num=2) = total=%d err=%v, want 0", total, err)
+	}
+	if _, total, _, _, _, err = repo.GetHistory(ctx, merchantID, models.OrderHistoryRequest{Search: &hashOne}); err != nil || total != 2 {
+		t.Fatalf("GetHistory (search #1) = total=%d err=%v, want 2", total, err)
+	}
 
 	// ============ GetHistorySummary ============
 	// Le jeu de données est semé ici, et non en tête de test, pour ne pas

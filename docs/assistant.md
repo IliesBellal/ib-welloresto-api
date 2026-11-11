@@ -59,7 +59,15 @@ Rejouable ; son down retire seulement les quatre nouvelles demandes. La
 recherche de l'historique des commandes trouve aussi le numéro affiché
 (`order_num`, avec ou sans « # »).
 
-**Ordre de déploiement** : 206, 207, 208, 209, 210, puis le code. Sans les tables, l'API
+`211_assistant_seed_order_date` (2026-11-11) : « ouvrir une commande » accepte
+une date (« la 42 d'hier », « la 64 du 22 juin »). Le numéro affiché va de 0 à
+99 puis repart à zéro : sans date, le back-office ouvre la plus récente et
+propose les 4 précédentes ; avec une date, seules celles de ce jour comptent.
+L'historique (`POST /orders/history`) accepte pour cela `order_num` (numéro
+exact) ; dans la recherche libre, le numéro est désormais comparé exactement
+(« 4 » ne ramène plus 14, 24, 40 à 49). Rejouable ; son down retire la date.
+
+**Ordre de déploiement** : 206, 207, 208, 209, 210, 211, puis le code. Sans les tables, l'API
 sert un modèle vide (le back-office garde son modèle embarqué) et ignore les
 événements avec un avertissement.
 
