@@ -44,7 +44,7 @@ ALTER TABLE orderitems
 COMMENT ON COLUMN orderitems.course IS 'Numéro de la suite de la ligne dans sa commande (1, 2, 3…). NULL = hors suite, part tout de suite. État de la suite : order_courses.';
 
 CREATE TABLE IF NOT EXISTS order_courses (
-    order_id      varchar(64)  NOT NULL,
+    order_id      integer      NOT NULL,
     merchant_id   varchar(64)  NOT NULL,
     course        smallint     NOT NULL CHECK (course > 0),
     delay_minutes integer      NULL CHECK (delay_minutes IS NULL OR delay_minutes > 0),
