@@ -801,6 +801,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	}
 	payoutService := payoutsModule.NewService(payoutsModule.NewRepository(selectedDB), stripeManager, payoutStore, mailService, log)
 	taskManager.PayoutService = payoutService
+	taskManager.AccountingExportService = posAccountingService
 	stripeWebhookService.SetPayoutDocuments(payoutService)
 	payoutsH := payoutsModule.NewHandler(payoutService)
 

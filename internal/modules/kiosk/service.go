@@ -1108,6 +1108,7 @@ func (s *Service) settingsResponse(ctx context.Context, merchantID string, row *
 			Media:                  []MarketingMediaResponse{},
 		},
 		BusinessName:       row.BusinessName,
+		Currency:           row.Currency,
 		Slug:               row.Slug,
 		TerminalLocationID: terminalLocationID,
 	}, nil

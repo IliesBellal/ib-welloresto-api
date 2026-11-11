@@ -144,7 +144,7 @@ func normalizeOrderSources(channels []string) ([]string, error) {
 
 // buildManualSections calcule le rapport du mode de clôture manuel : TVA sur
 // les lignes (périmètre historique), remises de caisse déduites ; encaissements
-// = réel des registres validés et de confiance (cf. GetTrustedEnclosedRegisterIDs),
+// = réel déclaré des registres validés, repris tel quel (cf. GetEnclosedRegisterIDs),
 // remises et canaux hors périmètre exclus.
 func (s *AccountingService) buildManualSections(ctx context.Context, merchantID string, fromLocal, toExclusive time.Time) ([]TVARow, []PaymentRow, DiscountSummary, error) {
 	lines, err := s.repo.GetOrderVATLines(ctx, merchantID, fromLocal, toExclusive, manualOrderScope())
@@ -161,11 +161,11 @@ func (s *AccountingService) buildManualSections(ctx context.Context, merchantID 
 	// uniquement (cf. docs/decisions.md) — pas de repli sur le théorique
 	// (payments) dans ce mode. Un merchant sans registre correctement
 	// clôturé sur la période affiche une table vide, voir buildPDFReport.
-	trustedRegisterIDs, err := s.repo.GetTrustedEnclosedRegisterIDs(ctx, merchantID, fromLocal, toExclusive)
+	registerIDs, err := s.repo.GetEnclosedRegisterIDs(ctx, merchantID, fromLocal, toExclusive)
 	if err != nil {
 		return nil, nil, DiscountSummary{}, err
 	}
-	payments, err := s.repo.GetRealPaymentsData(ctx, trustedRegisterIDs)
+	payments, err := s.repo.GetRealPaymentsData(ctx, registerIDs)
 	if err != nil {
 		return nil, nil, DiscountSummary{}, err
 	}

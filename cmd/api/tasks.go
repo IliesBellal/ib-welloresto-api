@@ -94,6 +94,10 @@ func SetupTasks(
 	// instance à la fois, rattrapage des mois passés compris
 	// (docs/attestation-conformite-05-lot-D-brief.md).
 	add("@hourly", taskManager.RunFiscalArchives)
+	// Export comptable (PDF) du mois entier, généré à la clôture fiscale
+	// mensuelle de chaque établissement et listé dans le popup « Export
+	// comptable » du back-office (docs/EXPORT_COMPTABLE_MODES_CLOTURE.md).
+	add("@hourly", taskManager.RunAccountingExports)
 	// Synchronisation comptable : envoie au logiciel de comptabilité de chaque
 	// établissement connecté (Pennylane…) l'écriture de ventes de chaque
 	// clôture fiscale journalière (docs/accounting-sync.md). Placée après

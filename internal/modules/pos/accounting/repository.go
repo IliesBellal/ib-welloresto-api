@@ -483,15 +483,18 @@ func (r *AccountingRepository) GetPaymentsData(ctx context.Context, merchantID s
 // "réel".
 var accountingExcludedChannelMOPs = []string{"STRIPE", "UBER_EATS", "DELIVEROO"}
 
-// GetTrustedEnclosedRegisterIDs retourne les cash_register_id "de confiance"
-// pour le réel du rapport comptable : registres enclosed du merchant dont
-// start_date tombe dans [from, toExclusive), et dont l'instantané figé à la
-// clôture (cash_registers_items) correspond toujours à un recalcul live des
-// mêmes paiements. Un écart signale une correction faite après la clôture
-// définitive du registre (ex. paiement ajouté a posteriori sur une commande
-// dont le registre est déjà enclosed) : le registre entier est alors écarté
-// du réel pour ce rapport — pas de repli partiel mélangé, cf. plan.
-func (r *AccountingRepository) GetTrustedEnclosedRegisterIDs(ctx context.Context, merchantID string, from, toExclusive time.Time) ([]int64, error) {
+// GetEnclosedRegisterIDs retourne les cash_register_id du réel du rapport
+// comptable : TOUS les registres enclosed du merchant dont start_date tombe dans
+// [from, toExclusive). Le réel est ce que le restaurateur a déclaré en validant
+// sa caisse (cash_registers_custom_items) ; le rapport le reprend tel quel, y
+// compris ses erreurs : aucun registre n'est écarté.
+//
+// Un écart entre l'instantané figé à la clôture (cash_registers_items) et un
+// recalcul live des paiements (correction faite après la clôture) n'exclut plus le
+// registre — avant le 2026-11-10 il l'écartait en entier, ce qui retirait du PDF
+// des encaissements pourtant déclarés (cf. docs/EXPORT_COMPTABLE_MODES_CLOTURE.md).
+// Il reste journalisé (WARN) pour qu'on puisse le retrouver.
+func (r *AccountingRepository) GetEnclosedRegisterIDs(ctx context.Context, merchantID string, from, toExclusive time.Time) ([]int64, error) {
 	db := dbx.GetDB(ctx, r.database)
 	log := logger.FromContext(ctx)
 
@@ -522,14 +525,19 @@ func (r *AccountingRepository) GetTrustedEnclosedRegisterIDs(ctx context.Context
 		log.Error(fmt.Sprintf("Error iterating candidate registers: %v", err))
 		return nil, err
 	}
-	return r.filterTrustedRegisterIDs(ctx, merchantID, candidateIDs)
+	// Dérive : signalée au journal seulement. Une erreur de ce contrôle ne doit pas
+	// empêcher le rapport, qui reprend de toute façon tous les registres.
+	if _, err := r.filterTrustedRegisterIDs(ctx, merchantID, candidateIDs); err != nil {
+		log.Warn(fmt.Sprintf("accounting: contrôle de dérive des registres impossible (merchant %s): %v", merchantID, err))
+	}
+	return candidateIDs, nil
 }
 
 // IsRegisterTrusted indique si l'instantané figé d'un registre enclosed
 // correspond toujours au recalcul live de ses paiements (même contrôle que
-// GetTrustedEnclosedRegisterIDs, pour un seul registre). Faux = dérive : le
-// rapport mensuel écarte ce registre, le PDF du registre le produit avec une
-// mention. Les paiements d'un registre fermé étant immuables depuis le lot C
+// le contrôle de dérive de GetEnclosedRegisterIDs, pour un seul registre). Faux =
+// dérive : le rapport mensuel reprend quand même le registre, le PDF du registre
+// le produit avec une mention. Les paiements d'un registre fermé étant immuables depuis le lot C
 // de conformité caisse, une dérive ne peut venir que de données antérieures.
 func (r *AccountingRepository) IsRegisterTrusted(ctx context.Context, merchantID string, registerID int64) (bool, error) {
 	trusted, err := r.filterTrustedRegisterIDs(ctx, merchantID, []int64{registerID})
@@ -665,7 +673,7 @@ func (r *AccountingRepository) filterTrustedRegisterIDs(ctx context.Context, mer
 			for _, d := range details {
 				parts = append(parts, fmt.Sprintf("mop=%s frozen=%d live=%d", d.mop, d.frozen, d.live))
 			}
-			log.Warn(fmt.Sprintf("cash register %d (merchant %s) excluded from 'réel' accounting: frozen cash_registers_items no longer matches live payments [%s] — likely a payment corrected after enclose", id, merchantID, strings.Join(parts, ", ")))
+			log.Warn(fmt.Sprintf("cash register %d (merchant %s) in drift: frozen cash_registers_items no longer matches live payments [%s] — likely a payment corrected after enclose", id, merchantID, strings.Join(parts, ", ")))
 			continue
 		}
 		trusted = append(trusted, id)
@@ -675,7 +683,7 @@ func (r *AccountingRepository) filterTrustedRegisterIDs(ctx context.Context, mer
 }
 
 // GetRealPaymentsData somme le "réel" des registres de caisse passés en
-// paramètre (déjà filtrés par GetTrustedEnclosedRegisterIDs) : uniquement les
+// paramètre (ceux de GetEnclosedRegisterIDs) : uniquement les
 // ajustements manuels actifs (cash_registers_custom_items). cash_registers_items
 // (snapshot MOP automatique à la clôture) est délibérément ignoré — le
 // restaurateur ne peut enclose sa caisse qu'après avoir ressaisi lui-même le

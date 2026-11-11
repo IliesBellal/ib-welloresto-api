@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"sort"
 	"strconv"
@@ -41,14 +42,42 @@ func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, d
 	if err != nil {
 		return nil, models.ErrUnauthorized
 	}
+	resp, key, err := s.generateAccountingExport(ctx, user.MerchantID, user.UserID, dateFrom, dateTo, channels, r2Client)
+	if err != nil || resp.Status != "1" {
+		return resp, err
+	}
+	downloadURL, err := r2Client.GenerateSignedURL(ctx, key, accountingExportLinkTTL)
+	if err != nil {
+		return &ExportAccountingResponse{
+			Status: "0",
+			Error:  "Erreur lors de la création du lien de téléchargement",
+		}, nil
+	}
+	resp.DownloadURL = downloadURL
+	return resp, nil
+}
 
+// accountingExportUploader est la partie du stockage privé utilisée pour
+// archiver le PDF (le client R2 privé, ou le même que celui des archives
+// fiscales).
+type accountingExportUploader interface {
+	UploadPrivateFile(ctx context.Context, key string, file io.Reader, contentType string) (string, error)
+}
+
+// generateAccountingExport produit, archive (R2 privé + accounting_exports) le
+// rapport comptable d'un établissement sur [dateFrom, dateTo]. Commun à l'export
+// demandé depuis le back-office (generatedBy = identifiant de l'utilisateur) et à
+// la génération automatique à la clôture du mois (generatedBy = SYSTEM). Renvoie
+// aussi la clé R2 du fichier, pour que l'appelant signe un lien s'il en a besoin.
+// Un refus métier est une réponse Status "0" (erreur nil), comme avant.
+func (s *AccountingService) generateAccountingExport(ctx context.Context, merchantID, generatedBy, dateFrom, dateTo string, channels []string, store accountingExportUploader) (*ExportAccountingResponse, string, error) {
 	// Récupérer les infos merchant (dont timezone) pour traiter la période en heure locale établissement.
-	header, err := s.repo.GetMerchantHeader(ctx, user.MerchantID)
+	header, err := s.repo.GetMerchantHeader(ctx, merchantID)
 	if err != nil {
 		return &ExportAccountingResponse{
 			Status: "0",
 			Error:  "Erreur lors de la récupération des infos du merchant",
-		}, nil
+		}, "", nil
 	}
 
 	tzName := strings.TrimSpace(header.Timezone)
@@ -72,21 +101,21 @@ func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, d
 		return &ExportAccountingResponse{
 			Status: "0",
 			Error:  "Format date_from invalide. Attendu: YYYY-MM-DD",
-		}, nil
+		}, "", nil
 	}
 	lastDayLocal, err := parseLocalDate(dateTo, merchantLoc)
 	if err != nil {
 		return &ExportAccountingResponse{
 			Status: "0",
 			Error:  "Format date_to invalide. Attendu: YYYY-MM-DD",
-		}, nil
+		}, "", nil
 	}
 
 	if lastDayLocal.Before(fromLocal) {
 		return &ExportAccountingResponse{
 			Status: "0",
 			Error:  "La date de fin doit être postérieure ou égale à la date de début.",
-		}, nil
+		}, "", nil
 	}
 
 	// Borne haute exclusive (lendemain 00:00:00 local) : couvre 23:59:59 et ses
@@ -100,17 +129,17 @@ func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, d
 	month := int(fromLocal.Month())
 
 	// Vérifier que le mois est clôturé
-	monthClosed, err := s.repo.IsMonthClosed(ctx, user.MerchantID, year, month, merchantLoc)
+	monthClosed, err := s.repo.IsMonthClosed(ctx, merchantID, year, month, merchantLoc)
 	if err != nil || !monthClosed {
 		return &ExportAccountingResponse{
 			Status: "0",
 			Error:  "Le mois n'est pas encore clôturé. Impossible de générer un rapport officiel.",
-		}, nil
+		}, "", nil
 	}
 
 	// Mode de clôture de la période : celui en vigueur au premier jour, sans
 	// changement de mode à l'intérieur de la période.
-	closingMode, err := s.periodClosingMode(ctx, user.MerchantID, fromLocal, lastDayLocal)
+	closingMode, err := s.periodClosingMode(ctx, merchantID, fromLocal, lastDayLocal)
 	if err != nil {
 		var straddle *closingModeStraddleError
 		if errors.As(err, &straddle) {
@@ -118,23 +147,23 @@ func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, d
 				Status: "0",
 				Error: fmt.Sprintf("La période chevauche un changement de mode de clôture le %s : générez un export avant et un export à partir de cette date.",
 					straddle.effectiveFrom.Format("02/01/2006")),
-			}, nil
+			}, "", nil
 		}
 		return &ExportAccountingResponse{
 			Status: "0",
 			Error:  "Erreur lors de la récupération du mode de clôture",
-		}, nil
+		}, "", nil
 	}
 
 	sources, err := normalizeOrderSources(channels)
 	if err != nil {
-		return &ExportAccountingResponse{Status: "0", Error: err.Error()}, nil
+		return &ExportAccountingResponse{Status: "0", Error: err.Error()}, "", nil
 	}
 	if closingMode == cashregisters.ClosingModeManual && len(channels) > 0 {
 		return &ExportAccountingResponse{
 			Status: "0",
 			Error:  "Le filtre par canal de commande n'est disponible qu'en clôture automatique.",
-		}, nil
+		}, "", nil
 	}
 
 	var (
@@ -144,17 +173,17 @@ func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, d
 		emptyMessage string
 	)
 	if closingMode == cashregisters.ClosingModeAuto {
-		tvaRows, payments, discounts, err = s.buildAutoSections(ctx, user.MerchantID, fromLocal, toExclusive, orderScope{sources: sources})
+		tvaRows, payments, discounts, err = s.buildAutoSections(ctx, merchantID, fromLocal, toExclusive, orderScope{sources: sources})
 		emptyMessage = "Aucun encaissement sur cette période."
 	} else {
-		tvaRows, payments, discounts, err = s.buildManualSections(ctx, user.MerchantID, fromLocal, toExclusive)
+		tvaRows, payments, discounts, err = s.buildManualSections(ctx, merchantID, fromLocal, toExclusive)
 		emptyMessage = "Aucune clôture de caisse validée sur cette période."
 	}
 	if err != nil {
 		return &ExportAccountingResponse{
 			Status: "0",
 			Error:  "Erreur lors de la récupération des données comptables",
-		}, nil
+		}, "", nil
 	}
 
 	// Construire le PDF
@@ -163,7 +192,7 @@ func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, d
 		return &ExportAccountingResponse{
 			Status: "0",
 			Error:  "Erreur lors de la génération du PDF",
-		}, nil
+		}, "", nil
 	}
 
 	// Archivage (migration 166) : bucket R2 privé, nom unique horodaté — un
@@ -171,16 +200,16 @@ func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, d
 	// avec l'empreinte du fichier, téléchargement par lien signé.
 	generatedAt := time.Now().UTC()
 	filename := accountingExportFilename(fromLocal, lastDayLocal, sources, generatedAt)
-	key := fmt.Sprintf("wello_resto_accounting/merchants/%s/reports/%s", user.MerchantID, filename)
-	if _, err := r2Client.UploadPrivateFile(ctx, key, bytes.NewReader(pdfBytes), "application/pdf"); err != nil {
+	key := fmt.Sprintf("wello_resto_accounting/merchants/%s/reports/%s", merchantID, filename)
+	if _, err := store.UploadPrivateFile(ctx, key, bytes.NewReader(pdfBytes), "application/pdf"); err != nil {
 		return &ExportAccountingResponse{
 			Status: "0",
 			Error:  "Erreur lors de l'upload du PDF vers R2",
-		}, nil
+		}, "", nil
 	}
 
 	digest := sha256.Sum256(pdfBytes)
-	exportID, err := s.repo.InsertAccountingExport(ctx, user.MerchantID, AccountingExport{
+	exportID, err := s.repo.InsertAccountingExport(ctx, merchantID, AccountingExport{
 		PeriodFrom:  fromLocal.Format("2006-01-02"),
 		PeriodTo:    lastDayLocal.Format("2006-01-02"),
 		ClosingMode: closingMode,
@@ -188,7 +217,7 @@ func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, d
 		Filename:    filename,
 		SHA256:      hex.EncodeToString(digest[:]),
 		SizeBytes:   len(pdfBytes),
-		GeneratedBy: user.UserID,
+		GeneratedBy: generatedBy,
 		GeneratedAt: generatedAt,
 		r2Key:       key,
 	})
@@ -196,23 +225,14 @@ func (s *AccountingService) ExportAccountingReport(ctx context.Context, token, d
 		return &ExportAccountingResponse{
 			Status: "0",
 			Error:  "Erreur lors de l'enregistrement de l'export",
-		}, nil
-	}
-
-	downloadURL, err := r2Client.GenerateSignedURL(ctx, key, accountingExportLinkTTL)
-	if err != nil {
-		return &ExportAccountingResponse{
-			Status: "0",
-			Error:  "Erreur lors de la création du lien de téléchargement",
-		}, nil
+		}, "", nil
 	}
 
 	return &ExportAccountingResponse{
-		Status:      "1",
-		ExportID:    exportID,
-		Filename:    filename,
-		DownloadURL: downloadURL,
-	}, nil
+		Status:   "1",
+		ExportID: exportID,
+		Filename: filename,
+	}, key, nil
 }
 
 // accountingExcludedPaymentLabels liste les libellés d'encaissement à exclure

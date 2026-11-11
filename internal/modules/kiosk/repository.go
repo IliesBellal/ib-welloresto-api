@@ -692,6 +692,12 @@ func (r *Repository) GetKioskSettings(ctx context.Context, merchantID string) (*
 	}
 	row.BusinessName = businessName
 
+	currency, err := r.getMerchantCurrency(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	row.Currency = currency
+
 	slug, err := r.getMerchantSlug(ctx, merchantID)
 	if err != nil {
 		return nil, err
@@ -820,6 +826,23 @@ func (r *Repository) getMerchantBusinessName(ctx context.Context, merchantID str
 		return nil, err
 	}
 	return fullName, nil
+}
+
+// getMerchantCurrency récupère merchant_parameters.currency (code ISO 4217,
+// ex. "EUR") : la borne en déduit le symbole des prix affichés et imprimés.
+// Nil si le merchant n'a pas encore de paramètres.
+func (r *Repository) getMerchantCurrency(ctx context.Context, merchantID string) (*string, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	var currency *string
+	err := db.QueryRowContext(ctx, `SELECT currency FROM merchant_parameters WHERE merchant_id = ?`, merchantID).Scan(&currency)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return currency, nil
 }
 
 // getMerchantSlug récupère le code QR principal du merchant (sans location_id
