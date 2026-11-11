@@ -651,6 +651,7 @@ type MerchantParametersSettings struct {
 	AutoCompleteOrdersDelay           *int    `json:"auto_complete_orders_delay,omitempty"`
 	AutoAcceptSnoDeliveryOrders       *bool   `json:"auto_accept_sno_delivery_orders,omitempty"`
 	AutoAcceptSnoTakeAwayOrders       *bool   `json:"auto_accept_sno_take_away_orders,omitempty"`
+	SnoCourseDelayMinutes             *int    `json:"sno_course_delay_minutes,omitempty"` // suites Scan&Order sur place, 0 = manuel
 	AutomaticallyAddCustomerRewards   *bool   `json:"automatically_add_customer_rewards,omitempty"`
 	WarningNewOrderNotPaid            *bool   `json:"warning_new_order_not_paid,omitempty"`
 	EnableAdvanceOrders               *bool   `json:"enable_advance_orders,omitempty"`
@@ -842,6 +843,9 @@ type POSSettingsScanOrder struct {
 	AllowScheduled     bool `json:"allow_scheduled"`
 	MaxScheduleDays    int  `json:"max_schedule_days"`
 	EnableRating       bool `json:"enable_rating"`
+	// CourseDelayMinutes : suites des commandes sur place, délai d'envoi
+	// automatique des suites suivantes (0 = réclamées depuis la caisse).
+	CourseDelayMinutes int `json:"course_delay_minutes"`
 }
 
 type POSSettingsScanOrderPatch struct {
@@ -853,6 +857,7 @@ type POSSettingsScanOrderPatch struct {
 	AllowScheduled     *bool `json:"allow_scheduled,omitempty"`
 	MaxScheduleDays    *int  `json:"max_schedule_days,omitempty"`
 	EnableRating       *bool `json:"enable_rating,omitempty"`
+	CourseDelayMinutes *int  `json:"course_delay_minutes,omitempty"`
 }
 
 type POSSettingsSecurity struct {

@@ -743,7 +743,7 @@ func TestMenuRepository_Postgres(t *testing.T) {
 		t.Fatalf("SetProductCategoryAvailability = (%d, %v)", n, err)
 	}
 	newName, newColor := "entrees itest v2", "#ff8800"
-	if err := repo.UpdateProductCategory(ctx, merchantID, catID, &newName, &newColor); err != nil {
+	if err := repo.UpdateProductCategory(ctx, merchantID, catID, productCategoryUpdate{Name: &newName, BgColor: &newColor}); err != nil {
 		t.Fatalf("UpdateProductCategory: %v", err)
 	}
 	var gotName, gotColor string
@@ -752,11 +752,26 @@ func TestMenuRepository_Postgres(t *testing.T) {
 	}
 	// Couleur seule : le nom ne doit pas bouger.
 	onlyColor := "#112233"
-	if err := repo.UpdateProductCategory(ctx, merchantID, catID, nil, &onlyColor); err != nil {
+	if err := repo.UpdateProductCategory(ctx, merchantID, catID, productCategoryUpdate{BgColor: &onlyColor}); err != nil {
 		t.Fatalf("UpdateProductCategory (couleur seule): %v", err)
 	}
 	if err := db.QueryRowContext(ctx, `SELECT categ_name, bg_color FROM productcateg WHERE merchant_categ_id = $1 AND merchant_id = $2`, catID, merchantID).Scan(&gotName, &gotColor); err != nil || gotName != newName || gotColor != onlyColor {
 		t.Fatalf("catégorie après mise à jour de la couleur seule = (%q, %q, %v), want (%q, %q)", gotName, gotColor, err, newName, onlyColor)
+	}
+	// Étape de service (suites, migration 212) : posée puis retirée (0 → NULL).
+	step, noStep := 2, 0
+	var gotStep sql.NullInt64
+	if err := repo.UpdateProductCategory(ctx, merchantID, catID, productCategoryUpdate{CourseStep: &step}); err != nil {
+		t.Fatalf("UpdateProductCategory (étape): %v", err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT course_step FROM productcateg WHERE merchant_categ_id = $1 AND merchant_id = $2`, catID, merchantID).Scan(&gotStep); err != nil || !gotStep.Valid || gotStep.Int64 != 2 {
+		t.Fatalf("course_step après UpdateProductCategory = (%v, %v), want 2", gotStep, err)
+	}
+	if err := repo.UpdateProductCategory(ctx, merchantID, catID, productCategoryUpdate{CourseStep: &noStep}); err != nil {
+		t.Fatalf("UpdateProductCategory (retrait étape): %v", err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT course_step FROM productcateg WHERE merchant_categ_id = $1 AND merchant_id = $2`, catID, merchantID).Scan(&gotStep); err != nil || gotStep.Valid {
+		t.Fatalf("course_step après retrait = (%v, %v), want NULL", gotStep, err)
 	}
 
 	// --- BulkAssignProductsToCategory (IN dynamique ×2 : racines + sous-produits) ---

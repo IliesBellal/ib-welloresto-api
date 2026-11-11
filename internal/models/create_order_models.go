@@ -59,6 +59,12 @@ type OrderRequest struct {
 	Currency                    *string               `json:"currency"`
 	UsedRewards                 []*UsedReward         `json:"used_rewards,omitempty"`
 
+	// Courses : réglages des suites (voir OrderCoursePayload). nil = champ
+	// absent du JSON (caisse qui ne connaît pas les suites) : les suites
+	// existantes et orderitems.course ne sont alors jamais touchés. Une liste
+	// vide = la caisse gère les suites et la commande n'en a pas.
+	Courses *[]OrderCoursePayload `json:"courses,omitempty"`
+
 	// Code promo panier (discount_scope = ORDER_TOTAL), affecté par applyCartDiscount.
 	CartDiscountID     *string `json:"cart_discount_id,omitempty"`
 	CartDiscountCode   string  `json:"cart_discount_code,omitempty"`
@@ -132,6 +138,20 @@ type OrderProductPayload struct {
 	Comment         *OrderItemCommentPayload `json:"comment"`
 	OrderItemID     *string                  `json:"order_item_id"`
 	IsUpsell        bool                     `json:"is_upsell"`
+	// Course : numéro de suite de la ligne (orderitems.course), nil = hors
+	// suite. Ignoré hors commande sur place (IN) et quand OrderRequest.Courses
+	// est absent (caisse qui ne connaît pas les suites).
+	Course *int `json:"course,omitempty"`
+}
+
+// OrderCoursePayload : réglage d'une suite envoyé avec la commande.
+// DelayMinutes nil = envoi manuel ; FireNow = envoyer cette suite (et les
+// précédentes encore en attente) dès l'enregistrement. Une suite déjà
+// envoyée ignore ce réglage.
+type OrderCoursePayload struct {
+	Course       int  `json:"course"`
+	DelayMinutes *int `json:"delay_minutes"`
+	FireNow      bool `json:"fire_now,omitempty"`
 }
 
 type OrderExtraPayload struct {

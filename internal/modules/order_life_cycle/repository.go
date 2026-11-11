@@ -1517,6 +1517,18 @@ func (r *OrdersLifeCycleRepository) createOrder(ctx context.Context, req *models
 		return nil, err
 	}
 
+	// Suites (caisse et Scan&Order sur place) : non bloquant, la commande
+	// existe déjà — une erreur laisse ses lignes partir tout de suite.
+	if usesCourses(&req.Order) && req.Order.OrderType == orderTypeIn {
+		createdBy := ""
+		if req.Order.CreatedBy != nil {
+			createdBy = *req.Order.CreatedBy
+		}
+		if err := r.SyncOrderCourses(ctx, req.MerchantID, orderID, *req.Order.Courses, createdBy); err != nil {
+			log.Error("SyncOrderCourses failure at creation", zap.String("order_id", orderID), zap.Error(err))
+		}
+	}
+
 	// Bloquant, volontairement : appelée dans une transaction par certains
 	// appelants, une requête en échec y rendrait de toute façon toutes les
 	// suivantes invalides. Seul échec plausible : migration 164 non appliquée
@@ -1884,8 +1896,8 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 			cost_price_reason = VALUES(cost_price_reason),
 			ordered_on      = VALUES(ordered_on)`
 	insertItemQuery := `
-		INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, reward_id, base_price, price, delay_id, is_upsell, cost_price_unit, cost_price_reason, ordered_on)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ` + dbx.UTCNow() + `)`
+		INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, reward_id, base_price, price, delay_id, is_upsell, cost_price_unit, cost_price_reason, course, ordered_on)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ` + dbx.UTCNow() + `)`
 	if dbx.ActiveDialect() == dbx.Postgres {
 		upsertItemQuery = `
 		INSERT INTO orderitems (order_item_id, order_id, product_id, merchant_id, quantity, discount_id, reward_id, base_price, price, delay_id, is_upsell, cost_price_unit, cost_price_reason, ordered_on)
@@ -1928,7 +1940,8 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 			// (RETURNING côté PG, LastInsertId côté MySQL).
 			newID, err := db.InsertReturningID(ctx, insertItemQuery, "order_item_id",
 				req.Order.OrderID, p.ProductID, req.MerchantID,
-				p.Quantity, p.DiscountID, p.RewardID, p.Price, finalPrice, p.DelayID, p.IsUpsell, costPriceUnit, costPriceReason)
+				p.Quantity, p.DiscountID, p.RewardID, p.Price, finalPrice, p.DelayID, p.IsUpsell, costPriceUnit, costPriceReason,
+				courseForInsert(&req.Order, p))
 			if err != nil {
 				return fmt.Errorf("product insert failed (product_id=%s): %w", p.ProductID, err)
 			}
@@ -2128,7 +2141,30 @@ func (r *OrdersLifeCycleRepository) UpdateOrder(ctx context.Context, req *models
 		}
 	}
 
-	// 9. Commit
+	// 9. Suites (seulement si le client les gère, cf. models.OrderRequest.Courses).
+	// Après les lignes : les nouvelles ont reçu leur suite à l'insertion, les
+	// existantes en changent ici si leur suite est encore en attente. Hors sur
+	// place, la commande perd ses suites : tout part tout de suite.
+	if usesCourses(&req.Order) {
+		if req.Order.OrderType != orderTypeIn {
+			if err := r.clearOrderCourses(ctx, *req.Order.OrderID); err != nil {
+				return err
+			}
+		} else {
+			if err := r.writeOrderItemCourses(ctx, *req.Order.OrderID, req.Order.Products); err != nil {
+				return err
+			}
+			updatedBy := ""
+			if req.Order.CreatedBy != nil {
+				updatedBy = *req.Order.CreatedBy
+			}
+			if err := r.SyncOrderCourses(ctx, req.MerchantID, *req.Order.OrderID, *req.Order.Courses, updatedBy); err != nil {
+				return err
+			}
+		}
+	}
+
+	// 10. Commit
 	/*
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("commit failed: %w", err)
@@ -2713,6 +2749,7 @@ func (r *OrdersLifeCycleRepository) insertOrderItems(ctx context.Context, req *m
 			IsUpsell:        p.IsUpsell,
 			CostPriceUnit:   costPriceUnit,
 			CostPriceReason: costPriceReason,
+			Course:          courseForInsert(&req.Order, &req.Order.Products[i]),
 		}
 		if p.Comment != nil && p.Comment.Content != "" {
 			item.Comment = &p.Comment.Content
@@ -2733,9 +2770,9 @@ func (r *OrdersLifeCycleRepository) InsertOrderItem(ctx context.Context, item *m
 	db := dbx.GetDB(ctx, r.database)
 
 	lastID, err := db.InsertReturningID(ctx, `
-		INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, reward_id, base_price, price, ordered_on, delay_id, is_upsell, cost_price_unit, cost_price_reason)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, `+dbx.UTCNow()+`, ?, ?, ?, ?)
-		`, "order_item_id", item.OrderID, item.ProductID, item.MerchantID, item.Quantity, item.DiscountID, item.RewardID, item.BasePrice, item.Price, item.DelayID, item.IsUpsell, item.CostPriceUnit, item.CostPriceReason)
+		INSERT INTO orderitems (order_id, product_id, merchant_id, quantity, discount_id, reward_id, base_price, price, ordered_on, delay_id, is_upsell, cost_price_unit, cost_price_reason, course)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, `+dbx.UTCNow()+`, ?, ?, ?, ?, ?)
+		`, "order_item_id", item.OrderID, item.ProductID, item.MerchantID, item.Quantity, item.DiscountID, item.RewardID, item.BasePrice, item.Price, item.DelayID, item.IsUpsell, item.CostPriceUnit, item.CostPriceReason, item.Course)
 	if err != nil {
 		return 0, err
 	}

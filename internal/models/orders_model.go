@@ -111,6 +111,7 @@ type OrderItemInsert struct {
 	Comment         *string
 	CreatedBy       string
 	IsUpsell        bool // true when this line was added from an upsell suggestion
+	Course          *int // orderitems.course : numéro de suite, nil = hors suite
 
 	// CostPriceUnit/CostPriceReason snapshot the frozen unit cost-of-goods at
 	// write time (see internal/modules/order_life_cycle.resolveOrderItemCost).
@@ -388,6 +389,18 @@ type Order struct {
 	// (brand_status CANCELED / DENIED / DELETED) portant un motif ou un
 	// commentaire ; absent du JSON sinon.
 	Cancellation *OrderCancellation `json:"cancellation,omitempty"`
+	// Courses : suites de la commande (order_courses), triées par numéro ;
+	// absent pour une commande sans suite. Les lignes portent leur numéro
+	// dans ProductEntry.Course.
+	Courses []OrderCourse `json:"courses,omitempty"`
+}
+
+// OrderCourse : état d'une suite (order_courses). Horodatages en secondes Unix.
+type OrderCourse struct {
+	Course       int    `json:"course"`
+	DelayMinutes *int   `json:"delay_minutes"` // nil = envoi manuel
+	FireAt       *int64 `json:"fire_at"`       // envoi programmé, nil sinon
+	FiredAt      *int64 `json:"fired_at"`      // nil = suite en attente
 }
 
 // OrderCancellation expose le motif d'annulation persisté sur orders

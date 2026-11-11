@@ -342,6 +342,10 @@ type UpdateProductCategoryPayload struct {
 	// #RRGGBB. Ne peut pas être effacée : la colonne est NOT NULL
 	// avec #ffffff par défaut, que la caisse traite comme « pas de couleur ».
 	BgColor *string `json:"bg_color"`
+	// CourseStep : étape de service pour les suites (1 = entrées, 2 = plats…,
+	// jusqu'à 20). 0 = retirer l'étape (les produits partent tout de suite).
+	// nil = ne pas toucher.
+	CourseStep *int `json:"course_step"`
 }
 
 // UpdateComponentCategoryPayload pour le renommage d'une catégorie de composants

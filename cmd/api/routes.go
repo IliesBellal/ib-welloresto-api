@@ -1848,6 +1848,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			r.Patch("/{order_id}/distributed-products", ordersLifeCycleH.SetDistributedProducts)
 			r.Patch("/{order_id}/back-to-production", ordersLifeCycleH.BackToProduction)
 			r.Patch("/multiple-production-status", ordersLifeCycleH.UpdateProductionStatus)
+			// Suites : réclamer (envoi immédiat ou programmé) / annuler l'envoi
+			// programmé (docs/order-lifecycle.md, « Suites »).
+			r.Post("/{order_id}/courses/{course}/fire", ordersLifeCycleH.FireCourse)
+			r.Delete("/{order_id}/courses/{course}/fire", ordersLifeCycleH.CancelCourseFire)
 
 			// Sous-route paiements (en écriture)
 			r.Route("/{order_id}/payments", func(r chi.Router) {

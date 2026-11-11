@@ -184,6 +184,10 @@ func (tm *TasksManager) computeDistributionStats(ctx context.Context) (map[strin
 			oi.distributed_quantity > 0 AND oi.distributed_on IS NOT NULL
 			AND oi.ordered_on >= ` + tskNowMinusMinutes() + `
 			AND ` + turnaround + ` BETWEEN ? AND ?
+			-- Suites (migration 212) : une ligne d'une suite suivante a attendu
+			-- d'être réclamée, son délai commande → service n'est pas un temps
+			-- de préparation.
+			AND COALESCE(oi.course, 1) = 1
 		GROUP BY p.merchant_id`
 
 	rows, err := db.QueryContext(ctx, query,

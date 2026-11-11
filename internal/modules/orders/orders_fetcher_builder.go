@@ -481,7 +481,8 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		p.price_take_away, p.price_delivery, p.image_url, oi.production_status, oi.production_status_done_quantity, p.production_color,
 		p.available_in, p.available_take_away, p.available_delivery,
 		       CASE WHEN oi.is_upsell THEN 1 ELSE 0 END AS is_upsell,
-		       COALESCE(oi.remake_quantity, 0) AS remake_quantity
+		       COALESCE(oi.remake_quantity, 0) AS remake_quantity,
+		       oi.course
 		FROM orders o
 		INNER JOIN orderitems oi ON o.order_id = oi.order_id AND oi.merchant_id = o.merchant_id
 		INNER JOIN products p ON oi.product_id = p.product_id AND oi.merchant_id = p.merchant_id
@@ -501,7 +502,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var quantity, paidQuantity, price, isPaid, isDistributed, basePrice, discountID, rewardID, readyForDistribution, distributedQuantity, priceTakeAway, priceDelivery, productionDoneQty, isUpsell, remakeQty sql.NullInt64
+			var quantity, paidQuantity, price, isPaid, isDistributed, basePrice, discountID, rewardID, readyForDistribution, distributedQuantity, priceTakeAway, priceDelivery, productionDoneQty, isUpsell, remakeQty, course sql.NullInt64
 			var productID, name, productDesc, categName, orderItemID, discountName, delayID, commentContent, commentUserID, imageURL, productionStatus, productionColor, orderID sql.NullString
 			var tvaIn, tvaDelivery, tvaTakeAway sql.NullFloat64
 			var orderedOn, commentCreation sql.NullTime
@@ -514,7 +515,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				&tvaIn, &tvaDelivery, &tvaTakeAway, &delayID, &commentContent, &commentUserID,
 				&commentCreation, &priceTakeAway, &priceDelivery, &imageURL, &productionStatus,
 				&productionDoneQty, &productionColor, &availableIn, &availableTakeAway,
-				&availableDelivery, &isUpsell, &remakeQty,
+				&availableDelivery, &isUpsell, &remakeQty, &course,
 			)
 
 			if scanErr != nil {
@@ -536,7 +537,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 					&tvaIn, &tvaDelivery, &tvaTakeAway, &delayID, &commentContent, &commentUserID,
 					&commentCreation, &priceTakeAway, &priceDelivery, &imageURL, &productionStatus,
 					&productionDoneQty, &productionColor, &availableIn, &availableTakeAway,
-					&availableDelivery, &isUpsell, &remakeQty,
+					&availableDelivery, &isUpsell, &remakeQty, &course,
 				}
 
 				fmt.Println("➡️ Types attendus par Go pour chaque champ :")
@@ -576,6 +577,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				IsDistributed:                helpers.BoolPtr(isDistributed.Int64 != 0),
 				IsUpsell:                     isUpsell.Int64 != 0,
 				RemakeQuantity:               int(remakeQty.Int64),
+				Course:                       nullInt64ToIntPtr(course),
 				Price:                        unitBasePrice(basePrice, price),
 				PriceTakeAway:               &priceTakeAway.Int64,
 				PriceDelivery:                &priceDelivery.Int64,
@@ -612,6 +614,39 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			}
 
 			productsByOrderID[orderID.String] = append(productsByOrderID[orderID.String], op)
+		}
+	}
+
+	// --- 2bis. SUITES (order_courses, migration 212) ---
+	coursesByOrderID := map[string][]models.OrderCourse{}
+	{
+		step := "courses"
+		q := `
+		SELECT oc.order_id, oc.course, oc.delay_minutes, oc.fire_at, oc.fired_at
+		FROM order_courses oc
+		INNER JOIN orders o ON o.order_id = oc.order_id
+		WHERE o.merchant_id = ? ` + whereFilters.SQL + `
+		ORDER BY oc.order_id, oc.course`
+
+		rows, err := runQuery(step, q, filteredArgs()...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var orderID string
+			var course int
+			var delay sql.NullInt64
+			var fireAt, firedAt sql.NullTime
+			if err := rows.Scan(&orderID, &course, &delay, &fireAt, &firedAt); err != nil {
+				return nil, err
+			}
+			coursesByOrderID[orderID] = append(coursesByOrderID[orderID], models.OrderCourse{
+				Course:       course,
+				DelayMinutes: nullInt64ToIntPtr(delay),
+				FireAt:       nullTimeToUnixPtr(fireAt),
+				FiredAt:      nullTimeToUnixPtr(firedAt),
+			})
 		}
 	}
 
@@ -920,6 +955,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			} else {
 				ord.Products = []models.ProductEntry{}
 			}
+			ord.Courses = coursesByOrderID[orderID.String]
 			if pay, ok := paymentsByOrderID[orderID.String]; ok {
 				ord.Payments = pay
 			} else {
@@ -1022,4 +1058,20 @@ func lineDiscountID(discountID, rewardID sql.NullInt64) *int64 {
 		return helpers.NullInt64ToPtr(rewardID)
 	}
 	return helpers.NullInt64ToPtr(discountID)
+}
+
+func nullInt64ToIntPtr(v sql.NullInt64) *int {
+	if !v.Valid {
+		return nil
+	}
+	i := int(v.Int64)
+	return &i
+}
+
+func nullTimeToUnixPtr(v sql.NullTime) *int64 {
+	if !v.Valid {
+		return nil
+	}
+	u := v.Time.UTC().Unix()
+	return &u
 }

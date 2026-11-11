@@ -658,12 +658,12 @@ func (s *MenuService) UpdateProductCategory(ctx context.Context, token, category
 		return err
 	}
 
-	name, bgColor, err := normalizeProductCategoryUpdate(payload)
+	update, err := normalizeProductCategoryUpdate(payload)
 	if err != nil {
 		return err
 	}
 
-	if err := s.legacy.UpdateProductCategory(ctx, user.MerchantID, categoryID, name, bgColor); err != nil {
+	if err := s.legacy.UpdateProductCategory(ctx, user.MerchantID, categoryID, update); err != nil {
 		return err
 	}
 	s.onMenuChanged(ctx, user.MerchantID)

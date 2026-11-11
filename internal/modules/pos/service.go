@@ -421,6 +421,13 @@ func (s *POSService) UpdateMerchantSettings(ctx context.Context, token string, r
 			if req.ScanOrder.EnableRating != nil {
 				req.Parameters.EnabledRating = req.ScanOrder.EnableRating
 			}
+			if req.ScanOrder.CourseDelayMinutes != nil {
+				delay := *req.ScanOrder.CourseDelayMinutes
+				if delay < 0 || delay > 240 {
+					return nil, models.ErrInvalidInput
+				}
+				req.Parameters.SnoCourseDelayMinutes = &delay
+			}
 		}
 
 		if req.Security != nil {
@@ -562,6 +569,7 @@ func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*mo
 			AllowScheduled:     boolVal(params.EnableAdvanceOrders),
 			MaxScheduleDays:    intVal(params.AdvanceOrderDays),
 			EnableRating:       boolVal(params.EnabledRating),
+			CourseDelayMinutes: intVal(params.SnoCourseDelayMinutes),
 		},
 		Security: models.POSSettingsSecurity{
 			POSAutoLockEnabled:      boolVal(params.POSAutoLockEnabled),

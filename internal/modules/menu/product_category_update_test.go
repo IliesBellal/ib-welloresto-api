@@ -8,6 +8,7 @@ import (
 )
 
 func strPtr(s string) *string { return &s }
+func intPtr(i int) *int       { return &i }
 
 func TestNormalizeProductCategoryUpdate(t *testing.T) {
 	tests := []struct {
@@ -15,6 +16,7 @@ func TestNormalizeProductCategoryUpdate(t *testing.T) {
 		in        UpdateProductCategoryPayload
 		wantName  *string
 		wantColor *string
+		wantStep  *int
 		wantErr   bool
 	}{
 		{name: "nom seul (ancien client)", in: UpdateProductCategoryPayload{Name: strPtr("  Entrées ")}, wantName: strPtr("Entrées")},
@@ -29,14 +31,18 @@ func TestNormalizeProductCategoryUpdate(t *testing.T) {
 		{name: "couleur vide", in: UpdateProductCategoryPayload{BgColor: strPtr("")}, wantErr: true},
 		{name: "couleur injectée", in: UpdateProductCategoryPayload{BgColor: strPtr("#ffffff'; DROP TABLE productcateg;--")}, wantErr: true},
 		{name: "nom valide mais couleur invalide", in: UpdateProductCategoryPayload{Name: strPtr("Plats"), BgColor: strPtr("rouge")}, wantErr: true},
+		{name: "étape seule", in: UpdateProductCategoryPayload{CourseStep: intPtr(2)}, wantStep: intPtr(2)},
+		{name: "retrait de l'étape", in: UpdateProductCategoryPayload{CourseStep: intPtr(0)}, wantStep: intPtr(0)},
+		{name: "étape négative", in: UpdateProductCategoryPayload{CourseStep: intPtr(-1)}, wantErr: true},
+		{name: "étape trop grande", in: UpdateProductCategoryPayload{CourseStep: intPtr(21)}, wantErr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			name, color, err := normalizeProductCategoryUpdate(tt.in)
+			u, err := normalizeProductCategoryUpdate(tt.in)
 			if tt.wantErr {
 				if err == nil {
-					t.Fatalf("attendu une erreur, obtenu name=%v color=%v", name, color)
+					t.Fatalf("attendu une erreur, obtenu %+v", u)
 				}
 				if !errors.Is(err, models.ErrInvalidInput) {
 					t.Fatalf("l'erreur doit envelopper ErrInvalidInput (→ HTTP 400), obtenu %v", err)
@@ -46,11 +52,14 @@ func TestNormalizeProductCategoryUpdate(t *testing.T) {
 			if err != nil {
 				t.Fatalf("erreur inattendue : %v", err)
 			}
-			if !equalStrPtr(name, tt.wantName) {
-				t.Errorf("name = %v, attendu %v", deref(name), deref(tt.wantName))
+			if !equalStrPtr(u.Name, tt.wantName) {
+				t.Errorf("name = %v, attendu %v", deref(u.Name), deref(tt.wantName))
 			}
-			if !equalStrPtr(color, tt.wantColor) {
-				t.Errorf("bgColor = %v, attendu %v", deref(color), deref(tt.wantColor))
+			if !equalStrPtr(u.BgColor, tt.wantColor) {
+				t.Errorf("bgColor = %v, attendu %v", deref(u.BgColor), deref(tt.wantColor))
+			}
+			if (u.CourseStep == nil) != (tt.wantStep == nil) || (u.CourseStep != nil && *u.CourseStep != *tt.wantStep) {
+				t.Errorf("courseStep = %v, attendu %v", u.CourseStep, tt.wantStep)
 			}
 		})
 	}

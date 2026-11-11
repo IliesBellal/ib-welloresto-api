@@ -703,6 +703,40 @@ Puis purge du cache Redis de la commande et notification `OrderUpdate` (websocke
 
 ---
 
+## Suites
+
+Envoi des plats d'une commande **sur place** (`IN`) en plusieurs temps : entrées, puis plats, puis desserts. Migration 212, code dans `internal/modules/order_life_cycle/courses.go`.
+
+**Données**
+
+| Champ | Rôle |
+|---|---|
+| `productcateg.course_step` | Étape de la catégorie (1 = entrées, 2 = plats…). NULL = part tout de suite (boissons). Aucune étape = aucune suite pour l'établissement. Modifiable par `PATCH` de la catégorie (`course_step`, 0 = retirer). |
+| `orderitems.course` | Numéro de suite de la ligne dans sa commande (1, 2, 3…), NULL = hors suite. |
+| `order_courses` | Une ligne par suite : `delay_minutes` (NULL = manuel), `fire_at` (envoi programmé), `fired_at` (envoi réel, NULL = en attente). |
+| `merchant_parameters.sno_course_delay_minutes` | Scan&Order : délai d'envoi des suites suivantes (0 = réclamées depuis la caisse). Réglages, groupe `scan_order.course_delay_minutes`. |
+
+**Règles**
+
+- Les suites partent **dans l'ordre** : envoyer la suite N envoie les suites < N encore en attente. Les suites envoyées forment toujours le début de la liste.
+- Une suite envoyée est verrouillée : ses lignes n'en sortent plus (`writeOrderItemCourses` ne change la suite d'une ligne que si sa suite actuelle est en attente). Une ligne ajoutée à une suite envoyée part tout de suite.
+- Délai : compté depuis l'envoi de la suite précédente (pas depuis le service : beaucoup de cuisines ne marquent jamais un plat servi).
+- La commande reste ouverte et non servie tant qu'une suite est en attente (ses lignes ne sont pas distribuées).
+
+**Écritures**
+
+- Création / modification POS : `order.courses` = réglages `[{course, delay_minutes, fire_now}]`, `products[].course`. **Champ absent = caisse qui ne connaît pas les suites : rien n'est touché** (une ancienne caisse qui modifie une commande Scan&Order n'en efface pas les suites). Hors `IN`, la commande perd ses suites.
+- Scan&Order sur place : suites attribuées par `AssignCoursesFromCategories` (étapes présentes numérotées 1, 2, 3…), S1 envoyée tout de suite, suivantes au délai Scan&Order.
+- `POST /orders/{order_id}/courses/{course}/fire` `{ "delay_seconds": 5 }` : réclamer. `delay_seconds = 0` envoie tout de suite ; sinon `fire_at = now + délai`, envoi fait **par le serveur** (l'appareil peut se verrouiller juste après). 409 `course_already_fired` si déjà partie.
+- `DELETE /orders/{order_id}/courses/{course}/fire` : annule l'envoi programmé ; la suite repasse en manuel.
+- Tâche `FireDueOrderCourses` (boucle dédiée toutes les 5 s, `cmd/api/tasks.go`) : envoie les suites échues des commandes ouvertes (UPDATE atomique, sûr entre instances), programme la suivante, purge le cache Redis et notifie `OrderUpdate`.
+
+**Lecture** : `products[].course` et `courses[]` (`course`, `delay_minutes`, `fire_at`, `fired_at` en secondes Unix) dans chaque commande.
+
+**Hors suites** : borne, Uber Eats, Deliveroo, à emporter, livraison. Le temps de préparation moyen ignore les lignes des suites ≥ 2.
+
+---
+
 ## Schéma récapitulatif
 
 ```

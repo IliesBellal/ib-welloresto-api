@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
@@ -189,6 +190,50 @@ func (h *OrdersLifeCycleHandler) BackToProduction(w http.ResponseWriter, r *http
 	}
 
 	models.SendJSON(w, http.StatusOK, "order_life_cycle", "back_to_production", result)
+}
+
+// FireCourse : POST /orders/{order_id}/courses/{course}/fire
+// { "delay_seconds": 5 } — réclame la suite (et les précédentes en attente).
+func (h *OrdersLifeCycleHandler) FireCourse(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	orderID := chi.URLParam(r, "order_id")
+	course, err := strconv.Atoi(chi.URLParam(r, "course"))
+	if orderID == "" || err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "fire_course", map[string]string{"error": "missing_parameter"})
+		return
+	}
+
+	var req FireCourseRequest
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "fire_course", map[string]string{"error": "invalid_body"})
+			return
+		}
+	}
+
+	if err := h.ordersLifeCycleService.FireCourse(ctx, orderID, course, &req); err != nil {
+		models.SendErrorJSON(w, "order_life_cycle", "fire_course", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "order_life_cycle", "fire_course", map[string]string{"status": "1"})
+}
+
+// CancelCourseFire : DELETE /orders/{order_id}/courses/{course}/fire —
+// annule l'envoi programmé d'une suite encore en attente.
+func (h *OrdersLifeCycleHandler) CancelCourseFire(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	orderID := chi.URLParam(r, "order_id")
+	course, err := strconv.Atoi(chi.URLParam(r, "course"))
+	if orderID == "" || err != nil {
+		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "cancel_course_fire", map[string]string{"error": "missing_parameter"})
+		return
+	}
+
+	if err := h.ordersLifeCycleService.CancelCourseFire(ctx, orderID, course); err != nil {
+		models.SendErrorJSON(w, "order_life_cycle", "cancel_course_fire", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "order_life_cycle", "cancel_course_fire", map[string]string{"status": "1"})
 }
 
 func (h *OrdersLifeCycleHandler) AcceptOrder(w http.ResponseWriter, r *http.Request) {

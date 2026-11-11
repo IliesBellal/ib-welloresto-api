@@ -1100,16 +1100,17 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 
 	// --- STEP 2: categories ---
 	var cats []struct {
-		ID    *string
-		Name  string
-		Order int
-		Bg    sql.NullString
-		Image sql.NullString
+		ID         *string
+		Name       string
+		Order      int
+		Bg         sql.NullString
+		Image      sql.NullString
+		CourseStep sql.NullInt64
 	}
 	{
 		step := "categories"
 		q := `
-            SELECT pc.merchant_categ_id, pc.categ_name, pc.categ_order, pc.bg_color, pc.image_url
+            SELECT pc.merchant_categ_id, pc.categ_name, pc.categ_order, pc.bg_color, pc.image_url, pc.course_step
             FROM productcateg pc
             WHERE pc.available = TRUE AND pc.enabled = TRUE AND pc.merchant_id = ?
             ORDER BY pc.categ_order ASC
@@ -1122,13 +1123,14 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 		count := 0
 		for rows.Next() {
 			var c struct {
-				ID    *string
-				Name  string
-				Order int
-				Bg    sql.NullString
-				Image sql.NullString
+				ID         *string
+				Name       string
+				Order      int
+				Bg         sql.NullString
+				Image      sql.NullString
+				CourseStep sql.NullInt64
 			}
-			if err := rows.Scan(&c.ID, &c.Name, &c.Order, &c.Bg, &c.Image); err != nil {
+			if err := rows.Scan(&c.ID, &c.Name, &c.Order, &c.Bg, &c.Image, &c.CourseStep); err != nil {
 				return nil, err
 			}
 			cats = append(cats, c)
@@ -1597,6 +1599,7 @@ func (r *MenuRepository) GetMenu(ctx context.Context, merchantID string, lastMen
 			Order:        c.Order,
 			BgColor:      bg,
 			ImageURL:     categoryImageURL,
+			CourseStep:   courseStepPtr(c.CourseStep),
 			Products:     actual,
 		})
 	}
@@ -1684,17 +1687,18 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 
 	// --- STEP 1: categories (NO available/enabled filter) ---
 	var cats []struct {
-		ID        *string
-		Name      string
-		Order     int
-		Bg        sql.NullString
-		Image     sql.NullString
-		Available bool
+		ID         *string
+		Name       string
+		Order      int
+		Bg         sql.NullString
+		Image      sql.NullString
+		Available  bool
+		CourseStep sql.NullInt64
 	}
 	{
 		step := "categories_all_products"
 		q := `
-            SELECT pc.merchant_categ_id, pc.categ_name, pc.categ_order, pc.bg_color, pc.image_url, pc.available
+            SELECT pc.merchant_categ_id, pc.categ_name, pc.categ_order, pc.bg_color, pc.image_url, pc.available, pc.course_step
             FROM productcateg pc
             WHERE pc.merchant_id = ?
 			AND pc.enabled = TRUE
@@ -1707,14 +1711,15 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 		defer rows.Close()
 		for rows.Next() {
 			var c struct {
-				ID        *string
-				Name      string
-				Order     int
-				Bg        sql.NullString
-				Image     sql.NullString
-				Available bool
+				ID         *string
+				Name       string
+				Order      int
+				Bg         sql.NullString
+				Image      sql.NullString
+				Available  bool
+				CourseStep sql.NullInt64
 			}
-			if err := rows.Scan(&c.ID, &c.Name, &c.Order, &c.Bg, &c.Image, &c.Available); err != nil {
+			if err := rows.Scan(&c.ID, &c.Name, &c.Order, &c.Bg, &c.Image, &c.Available, &c.CourseStep); err != nil {
 				return nil, err
 			}
 			cats = append(cats, c)
@@ -2177,11 +2182,21 @@ func (r *MenuRepository) GetAllProducts(ctx context.Context, merchantID string) 
 			BgColor:      bg,
 			ImageURL:     categoryImageURL,
 			Available:    c.Available,
+			CourseStep:   courseStepPtr(c.CourseStep),
 			Products:     actual,
 		})
 	}
 
 	return productTypes, nil
+}
+
+// courseStepPtr : étape de service de la catégorie (nil = hors suite).
+func courseStepPtr(v sql.NullInt64) *int {
+	if !v.Valid || v.Int64 <= 0 {
+		return nil
+	}
+	s := int(v.Int64)
+	return &s
 }
 
 func (r *MenuRepository) GetAllComponents(ctx context.Context, merchantID string) ([]models.ComponentCategory, error) {
@@ -3624,18 +3639,40 @@ func (r *MenuRepository) SetProductAvailability(ctx context.Context, merchantID,
 	return res.RowsAffected()
 }
 
-// UpdateProductCategory modifie le nom et/ou la couleur de fond d'une catégorie
-// caisse. Un champ nil est laissé inchangé (COALESCE) ; les valeurs doivent
-// avoir été validées par normalizeProductCategoryUpdate.
-func (r *MenuRepository) UpdateProductCategory(ctx context.Context, merchantID, categoryID string, name, bgColor *string) error {
+// UpdateProductCategory modifie le nom, la couleur de fond et/ou l'étape de
+// service d'une catégorie caisse. Un champ nil est laissé inchangé ; une
+// étape à 0 est retirée (NULL). Les valeurs doivent avoir été validées par
+// normalizeProductCategoryUpdate.
+func (r *MenuRepository) UpdateProductCategory(ctx context.Context, merchantID, categoryID string, u productCategoryUpdate) error {
 	db := dbx.GetDB(ctx, r.database)
 
+	sets := []string{}
+	args := []interface{}{}
+	if u.Name != nil {
+		sets = append(sets, "categ_name = ?")
+		args = append(args, *u.Name)
+	}
+	if u.BgColor != nil {
+		sets = append(sets, "bg_color = ?")
+		args = append(args, *u.BgColor)
+	}
+	if u.CourseStep != nil {
+		sets = append(sets, "course_step = ?")
+		if *u.CourseStep == 0 {
+			args = append(args, nil)
+		} else {
+			args = append(args, *u.CourseStep)
+		}
+	}
+	if len(sets) == 0 {
+		return nil
+	}
+	args = append(args, categoryID, merchantID)
+
 	_, err := db.ExecContext(ctx,
-		`UPDATE productcateg
-			 SET categ_name = COALESCE(?, categ_name),
-			     bg_color = COALESCE(?, bg_color)
+		`UPDATE productcateg SET `+strings.Join(sets, ", ")+`
 			 WHERE merchant_categ_id = ? AND merchant_id = ?`,
-		name, bgColor, categoryID, merchantID,
+		args...,
 	)
 	if err != nil {
 		return err
@@ -5658,6 +5695,7 @@ func (r *MenuRepository) GetMenuWithMarketingCategories(ctx context.Context, mer
 						BgColor:      pt.BgColor,
 						ImageURL:     pt.ImageURL,
 						Available:    pt.Available,
+						CourseStep:   pt.CourseStep,
 						Products:     []models.ProductEntry{},
 					}
 					standardCatOrder = append(standardCatOrder, catKey)

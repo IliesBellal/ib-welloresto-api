@@ -1324,6 +1324,10 @@ func (r *POSRepository) UpdateMerchantParameters(ctx context.Context, merchantID
 		updates = append(updates, "auto_accept_sno_take_away_orders = ?")
 		args = append(args, *req.AutoAcceptSnoTakeAwayOrders)
 	}
+	if req.SnoCourseDelayMinutes != nil {
+		updates = append(updates, "sno_course_delay_minutes = ?")
+		args = append(args, *req.SnoCourseDelayMinutes)
+	}
 	if req.AutomaticallyAddCustomerRewards != nil {
 		updates = append(updates, "automatically_add_customer_rewards = ?")
 		args = append(args, *req.AutomaticallyAddCustomerRewards)
@@ -1491,7 +1495,8 @@ func (r *POSRepository) GetMerchantSettings(ctx context.Context, merchantID stri
 		       pos_covers_count_required, customer_form_requirements,
 		       enabled_rating, currency, is_open, primary_color, text_color_on_primary_color,
 		       zoning_type, radial_cone_count, radial_zone_ranges, grid_cell_size_km,
-		       grid_origin_lat, grid_origin_lng, cardinal_cone_count, cardinal_zone_ranges
+		       grid_origin_lat, grid_origin_lng, cardinal_cone_count, cardinal_zone_ranges,
+		       sno_course_delay_minutes
 		FROM merchant_parameters
 		WHERE merchant_id = ?
 	`
@@ -1548,6 +1553,7 @@ func (r *POSRepository) GetMerchantSettings(ctx context.Context, merchantID stri
 		&params.GridOriginLng,
 		&params.CardinalConeCount,
 		&params.CardinalZoneRanges,
+		&params.SnoCourseDelayMinutes,
 	)
 	if err != nil {
 		log.Error(fmt.Sprintf("Error fetching merchant parameters for ID %s: %v", merchantID, err))

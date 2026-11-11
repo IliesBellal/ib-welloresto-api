@@ -1282,6 +1282,21 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest
 	order.Payments = []models.PaymentPayload{}
 	order.CashRegisterId = &ScannorderOwner
 
+	// 5️⃣bis Suites (sur place) : répartition selon l'étape des catégories, la
+	// première suite part tout de suite, les suivantes au délai Scan&Order de
+	// l'établissement (0 = réclamées depuis la caisse). Non bloquant : en cas
+	// d'échec, tout part tout de suite comme avant.
+	if order.OrderType == "IN" && s.orderLifeCycleSvc != nil {
+		delay := s.orderLifeCycleSvc.SnoCourseDelayMinutes(ctx, orderReq.Merchant.MerchantID)
+		if err := s.orderLifeCycleSvc.AssignCoursesFromCategories(ctx, orderReq.Merchant.MerchantID, order, delay); err != nil {
+			log.Warn("SNO course assignment failed, order sent at once", zap.Error(err))
+			order.Courses = nil
+			for i := range order.Products {
+				order.Products[i].Course = nil
+			}
+		}
+	}
+
 	// 6️⃣ Création commande BDD
 	newOrder, err := s.orderLifeCycleSvc.CreateOrder(ctx, &models.RequestObject{
 		MerchantID:         orderReq.Merchant.MerchantID,

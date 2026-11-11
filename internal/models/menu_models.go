@@ -36,7 +36,10 @@ type ProductCategory struct {
 	BgColor      *string        `json:"bg_color,omitempty"`
 	ImageURL     *string        `json:"image_url,omitempty"`
 	Available    bool           `json:"available"`
-	Products     []ProductEntry `json:"products"`
+	// CourseStep : étape de service (productcateg.course_step), nil = les
+	// produits de la catégorie partent tout de suite (hors suite).
+	CourseStep *int           `json:"course_step,omitempty"`
+	Products   []ProductEntry `json:"products"`
 }
 
 // product
@@ -89,6 +92,7 @@ type ProductEntry struct {
 	IsPaid                       *bool                  `json:"isPaid,omitempty"`
 	IsDistributed                *bool                  `json:"isDistributed,omitempty"`
 	IsUpsell                     bool                   `json:"is_upsell,omitempty"` // orderitems.is_upsell ; absent quand false, donc jamais dans les réponses menu
+	Course                       *int                   `json:"course,omitempty"`    // orderitems.course : numéro de suite ; absent hors suite et dans les réponses menu
 	DiscountID                   *int64                 `json:"discount_id,omitempty"`
 	RewardID                     *int64                 `json:"reward_id,omitempty"` // orderitems.reward_id : récompense « produit offert » de la ligne
 	DiscountName                 *string                `json:"discount_name,omitempty"`

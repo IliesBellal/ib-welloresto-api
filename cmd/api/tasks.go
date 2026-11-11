@@ -1,6 +1,8 @@
 package main
 
 import (
+	"time"
+
 	"welloresto-api/internal/tasks"
 
 	"github.com/robfig/cron/v3"
@@ -50,6 +52,7 @@ func SetupTasks(
 	// (docs/emails-styles.md). Fenêtre de 2 h : 5 minutes laissent le temps
 	// de retenter un envoi en échec.
 	add("@every 5m", taskManager.RunOnlineOrderInvoices)
+	// Suites : voir startOrderCoursesLoop (hors cron, toutes les 5 s).
 
 	// ── Temps de préparation moyen (simulation capacité parallèle) ──────────
 	add("@every 15m", taskManager.UpdateAverageDistributionTime)
@@ -170,4 +173,30 @@ func SetupTasks(
 	// Démarrage du Cron en arrière-plan
 	c.Start()
 	log.Info("✅ Système CRON démarré (toutes tâches actives, protégées par SkipIfStillRunning + Recover)")
+
+	startOrderCoursesLoop(log, taskManager)
+}
+
+// startOrderCoursesLoop envoie les suites programmées toutes les 5 s (délai
+// après la suite précédente, ou fin des 5 s d'annulation de « Réclamer »).
+// Boucle dédiée plutôt qu'une entrée cron : le logger cron verbeux écrirait
+// deux lignes toutes les 5 s. Les passages sont séquentiels (jamais deux en
+// parallèle) et un panic est récupéré sans arrêter la boucle.
+func startOrderCoursesLoop(log *zap.Logger, taskManager *tasks.TasksManager) {
+	const interval = 5 * time.Second
+	run := func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Error("FireDueOrderCourses panic", zap.Any("panic", rec))
+			}
+		}()
+		taskManager.FireDueOrderCourses()
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			run()
+		}
+	}()
 }

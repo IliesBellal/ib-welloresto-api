@@ -306,6 +306,10 @@ var (
 
 	ErrOrderClosed = errors.New("order_closed")
 
+	// Suites : la suite demandée est déjà partie en cuisine (envoi ou
+	// annulation d'envoi impossible).
+	ErrCourseAlreadyFired = errors.New("course_already_fired")
+
 	// Annulation de paiement refusée (conformité caisse, lot C, R4) : la
 	// commande est close, ou le paiement (ou l'un des paiements d'une commande
 	// qu'on annule) a été encaissé sur un registre déjà fermé. Seul le
@@ -1303,6 +1307,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusUnauthorized
 		errorStatus = "order_closed"
 		errorMsg = "cannot permorm this action on a closed order"
+
+	case errors.Is(err, ErrCourseAlreadyFired):
+		status = http.StatusConflict
+		errorStatus = "course_already_fired"
+		errorMsg = "this course has already been sent to the kitchen"
 
 	case errors.Is(err, ErrUnauthorized):
 		status = http.StatusUnauthorized
