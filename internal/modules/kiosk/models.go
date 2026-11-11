@@ -84,6 +84,7 @@ type KioskSettingsRow struct {
 	MarketingRibbonEnabled          bool
 	MarketingDefaultDurationSeconds int
 	BusinessName                    *string
+	Currency                        *string
 	Slug                            *string
 	CreatedAt                       time.Time
 	UpdatedAt            *time.Time
@@ -326,6 +327,10 @@ type KioskSettingsResponse struct {
 	// via UpdateKioskSettingsRequest : le nom de l'établissement se gère
 	// ailleurs, pas dans les paramètres Kiosk) — voir docs/KIOSK_DECISIONS.md.
 	BusinessName *string `json:"business_name"`
+
+	// Currency — merchant_parameters.currency (code ISO 4217, ex. "EUR"), en
+	// lecture seule : la borne en déduit le symbole des prix (écran et ticket).
+	Currency *string `json:"currency"`
 
 	// Slug — code QR principal du merchant (qrcodes.code, sans location_id ni
 	// user_id), en lecture seule. Correspond au {merchant_slug} des routes

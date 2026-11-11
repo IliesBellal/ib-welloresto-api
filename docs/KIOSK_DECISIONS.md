@@ -5106,3 +5106,14 @@ les nouvelles colonnes ; sans elles `GET /kiosk/settings` échoue). Rollback :
 Tests : `marketing_test.go` (durées, ordre, détection de format),
 `marketing_postgres_integration_test.go` (contraintes, cloisonnement par
 merchant — tag `postgres_integration`, nécessite la migration 190).
+
+## Devise de l'établissement dans `GET /kiosk/settings` (2026-11-10)
+
+`KioskSettingsResponse.Currency` (`currency`, lecture seule, jamais modifiable
+via `UpdateKioskSettingsRequest`) expose `merchant_parameters.currency` (code
+ISO 4217, ex. `"EUR"`). Comme `business_name`, elle est attachée par
+`Repository.GetKioskSettings` dans une requête séparée
+(`getMerchantCurrency`), que la ligne `kiosk_settings` existe ou non ; `null`
+si le merchant n'a pas encore de paramètres. La borne en déduit le symbole des
+prix affichés et imprimés (« 12,50 € » au lieu de « 12.50 EUR »), comme la
+caisse le fait déjà avec la `currency` de la réponse de connexion.
