@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/openinghours"
 )
 
 type LocationsRepository struct {
@@ -100,7 +102,7 @@ func (r *LocationsRepository) GetLocations(ctx context.Context, merchantID strin
 		FROM bookings b
 		INNER JOIN booked_location bl ON bl.booking_id = b.booking_id
 		INNER JOIN customer c ON c.customer_id = b.customer_id
-		WHERE b.merchant_id = ? AND b.status = 'ACCEPTED'
+		WHERE b.merchant_id = ? AND b.status IN (` + activeBookingStatuses + `)
 		AND b.booking_date_to > %s
 		AND b.booking_date_from < %s;`, windowStart, windowEnd)
 
@@ -242,77 +244,192 @@ func locEndOfBooking(alias string) string {
 	return "COALESCE(" + prefix + "booking_date_to, " + prefix + "booking_date_from + INTERVAL COALESCE(" + prefix + "booking_duration, 90) MINUTE)"
 }
 
-// loadBookingConflicts renseigne Location.BookingConflict pour chaque table
-// de locMap ayant une réservation active (PENDING_APPROVAL, ACCEPTED ou
-// ORDER_OPEN) chevauchant strictement [window.DateFrom, window.DateTo).
-func (r *LocationsRepository) loadBookingConflicts(ctx context.Context, merchantID string, window *BookingWindow, locMap map[string]*models.Location) error {
+// activeBookingStatuses : statuts d'une réservation qui bloque sa table. Même
+// liste que bookings.FindConflictingBookings (409 table_conflict), pour que
+// le plan de salle, la réglette et le contrôle à l'écriture disent la même
+// chose.
+const activeBookingStatuses = `'PENDING_APPROVAL','ACCEPTED','ORDER_OPEN'`
+
+// activeBooking : une réservation active rattachée à une table (une ligne
+// par couple résa × table).
+type activeBooking struct {
+	LocationID string
+	Entry      models.LocationTimelineEntry
+}
+
+// queryActiveBookings liste les réservations actives (activeBookingStatuses)
+// chevauchant strictement [from, to), une ligne par table réservée, triées
+// par début. excludeBookingID ("" = aucune) retire une résa du résultat.
+//
+// from/to sont formatés tels quels (bookingWindowLayout) : pas de .UTC() ici,
+// sous peine de désaligner ce calcul de bookings.FindConflictingBookings, qui
+// compare ces mêmes chaînes à booking_date_from/to.
+func (r *LocationsRepository) queryActiveBookings(ctx context.Context, merchantID string, from, to time.Time, excludeBookingID string) ([]activeBooking, error) {
 	db := dbx.GetDB(ctx, r.db)
 
 	endExpr := locEndOfBooking("b")
-	// DateFrom/DateTo restent l'heure murale opaque reçue en query string (cf.
-	// bookingWindowLayout dans handler.go) : pas de .UTC() ici, sous peine de
-	// désaligner ce calcul de bookings.FindConflictingBookings, qui compare
-	// ces mêmes chaînes telles quelles à booking_date_from/to.
-	dateFrom := window.DateFrom.Format(bookingWindowLayout)
-	dateTo := window.DateTo.Format(bookingWindowLayout)
-	excludeBookingID := window.ExcludeBookingID
 	if excludeBookingID == "" {
 		excludeBookingID = "0" // booking_id est un AUTO_INCREMENT : 0 n'existe jamais
 	}
 
 	query := fmt.Sprintf(`
-		SELECT bl.location_id, b.booking_id, b.booking_number, b.party_size,
+		SELECT bl.location_id, b.booking_id, b.booking_number, b.status, b.party_size,
 			b.booking_date_from, %s, COALESCE(c.customer_name, '')
 		FROM booked_location bl
 		INNER JOIN bookings b ON b.booking_id = bl.booking_id
 		LEFT JOIN customer c ON c.customer_id = b.customer_id
 		WHERE b.merchant_id = ?
-			AND b.status IN ('PENDING_APPROVAL','ACCEPTED','ORDER_OPEN')
+			AND b.status IN (%s)
 			AND b.booking_date_from < ?
 			AND %s > ?
-			AND b.booking_id <> ?`, endExpr, endExpr)
+			AND b.booking_id <> ?
+		ORDER BY b.booking_date_from`, endExpr, activeBookingStatuses, endExpr)
 
-	rows, err := db.QueryContext(ctx, query, merchantID, dateTo, dateFrom, excludeBookingID)
+	rows, err := db.QueryContext(ctx, query, merchantID,
+		to.Format(bookingWindowLayout), from.Format(bookingWindowLayout), excludeBookingID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer rows.Close()
 
+	var out []activeBooking
 	for rows.Next() {
-		var locID, bID, bNum, bFrom, bEnd, cName string
+		var locID, bID, bNum, bStatus, bFrom, bEnd, cName string
 		var bSize int
-		if err := rows.Scan(&locID, &bID, &bNum, &bSize, &bFrom, &bEnd, &cName); err != nil {
-			return err
+		if err := rows.Scan(&locID, &bID, &bNum, &bStatus, &bSize, &bFrom, &bEnd, &cName); err != nil {
+			return nil, err
 		}
 
-		loc, ok := locMap[locID]
+		out = append(out, activeBooking{
+			LocationID: locID,
+			Entry: models.LocationTimelineEntry{
+				BookingID:     bID,
+				BookingNumber: bNum,
+				Status:        bStatus,
+				PartySize:     bSize,
+				StartsAt:      naiveUTCToRFC3339(bFrom),
+				EndsAt:        naiveUTCToRFC3339(bEnd),
+				CustomerName:  cName,
+			},
+		})
+	}
+
+	return out, rows.Err()
+}
+
+// naiveUTCToRFC3339 : "YYYY-MM-DD HH:MM:SS" (UTC naïf stocké) → RFC3339 UTC ;
+// chaîne rendue telle quelle si elle n'est pas dans ce format.
+func naiveUTCToRFC3339(value string) string {
+	if t, err := time.Parse("2006-01-02 15:04:05", value); err == nil {
+		return t.UTC().Format(time.RFC3339)
+	}
+	return value
+}
+
+// loadBookingConflicts renseigne Location.BookingConflict pour chaque table
+// de locMap ayant une réservation active chevauchant strictement
+// [window.DateFrom, window.DateTo) — la plus tôt si plusieurs.
+func (r *LocationsRepository) loadBookingConflicts(ctx context.Context, merchantID string, window *BookingWindow, locMap map[string]*models.Location) error {
+	bookings, err := r.queryActiveBookings(ctx, merchantID, window.DateFrom, window.DateTo, window.ExcludeBookingID)
+	if err != nil {
+		return err
+	}
+
+	for _, b := range bookings {
+		loc, ok := locMap[b.LocationID]
 		if !ok || loc.BookingConflict != nil {
 			continue
 		}
-
-		startsAt := bFrom
-		if t, err := time.Parse("2006-01-02 15:04:05", bFrom); err == nil {
-			startsAt = t.UTC().Format(time.RFC3339)
-		}
-		endsAt := bEnd
-		if t, err := time.Parse("2006-01-02 15:04:05", bEnd); err == nil {
-			endsAt = t.UTC().Format(time.RFC3339)
-		}
-
 		loc.BookingConflict = &models.LocationBooking{
-			BookingID:     bID,
-			BookingNumber: bNum,
-			PartySize:     bSize,
-			StartsAt:      startsAt,
-			EndsAt:        endsAt,
-			CustomerName:  cName,
+			BookingID:     b.Entry.BookingID,
+			BookingNumber: b.Entry.BookingNumber,
+			PartySize:     b.Entry.PartySize,
+			StartsAt:      b.Entry.StartsAt,
+			EndsAt:        b.Entry.EndsAt,
+			CustomerName:  b.Entry.CustomerName,
 		}
 	}
 
-	return rows.Err()
+	return nil
 }
 
-// nextActiveBooking sélectionne, parmi les réservations ACCEPTED déjà
+// AttachTimeline complète une réponse GET /locations pour la réglette horaire
+// du POS : Timeline de chaque table sur [rng.From, rng.To), plages d'ouverture
+// de la période (fuseau du marchand) et durée de résa par défaut.
+func (r *LocationsRepository) AttachTimeline(ctx context.Context, merchantID string, rng *TimelineRange, res *models.LocationResponse) error {
+	bookings, err := r.queryActiveBookings(ctx, merchantID, rng.From, rng.To, "")
+	if err != nil {
+		return err
+	}
+
+	byLocation := make(map[string][]models.LocationTimelineEntry)
+	for _, b := range bookings {
+		byLocation[b.LocationID] = append(byLocation[b.LocationID], b.Entry)
+	}
+	for i := range res.Locations {
+		res.Locations[i].Timeline = byLocation[res.Locations[i].LocationID]
+	}
+
+	timezone, defaultDuration, err := r.timelineSettings(ctx, merchantID)
+	if err != nil {
+		return err
+	}
+	res.DefaultBookingDuration = defaultDuration
+
+	loc := helpers.MerchantLocation(ctx, timezone)
+	slots, err := openinghours.FetchActiveSlots(ctx, r.db, merchantID, rng.From.In(loc))
+	if err != nil {
+		return err
+	}
+
+	openRanges := []models.LocationOpenRange{}
+	for _, or := range openinghours.OpenRanges(slots, rng.From, rng.To, loc) {
+		openRanges = append(openRanges, models.LocationOpenRange{
+			From: or.Start.Format(time.RFC3339),
+			To:   or.End.Format(time.RFC3339),
+		})
+	}
+	res.OpenRanges = &openRanges
+
+	return nil
+}
+
+// timelineSettings lit le fuseau du marchand et sa durée de résa par défaut
+// (90 min si aucun réglage, comme bookings.GetBookingSettings). Fuseau vide →
+// Europe/Paris, comme le module attestations.
+func (r *LocationsRepository) timelineSettings(ctx context.Context, merchantID string) (string, int, error) {
+	db := dbx.GetDB(ctx, r.db)
+
+	castID := "CAST(m.id AS CHAR)"
+	if dbx.ActiveDialect() == dbx.Postgres {
+		castID = "CAST(m.id AS TEXT)"
+	}
+
+	var timezone string
+	var defaultDuration int
+	err := db.QueryRowContext(ctx, `
+		SELECT COALESCE(m.timezone, ''), COALESCE(bs.default_booking_duration, 90)
+		FROM merchant m
+		LEFT JOIN bookings_settings bs ON bs.merchant_id = `+castID+`
+		WHERE m.id = ?
+		LIMIT 1`, merchantID).Scan(&timezone, &defaultDuration)
+	if err == sql.ErrNoRows {
+		return "Europe/Paris", 90, nil
+	}
+	if err != nil {
+		return "", 0, err
+	}
+
+	if strings.TrimSpace(timezone) == "" {
+		timezone = "Europe/Paris"
+	}
+	if defaultDuration <= 0 {
+		defaultDuration = 90
+	}
+	return timezone, defaultDuration, nil
+}
+
+// nextActiveBooking sélectionne, parmi les réservations actives déjà
 // chargées pour une table (fenêtre calibrée pour le plan de salle live dans
 // queryBookings), celle à afficher comme résumé "booking" sur la table dans
 // GET /locations : priorité à la réservation future la plus proche ; si

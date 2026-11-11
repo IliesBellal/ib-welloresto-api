@@ -283,6 +283,55 @@ func TestLocationsRepository_Postgres(t *testing.T) {
 		t.Fatalf("expected no booking_conflict outside the booked slot, got %+v", byID3NoConflict[locationID3].BookingConflict)
 	}
 
+	// --- timeline (range_from/range_to) : toutes les résas actives de la
+	// période, PENDING_APPROVAL compris, triées par début ; les statuts hors
+	// liste (CANCELED) sont ignorés.
+	seedBooking := func(number, status string, from, to time.Time) {
+		t.Helper()
+		var id int64
+		if err := db.QueryRowContext(ctx, `
+			INSERT INTO bookings (booking_number, merchant_id, customer_id, booking_date_from, booking_date_to, booking_duration, party_size, status, created_by)
+			VALUES ($1, $2, $3, $4, $5, 60, 2, $6, 'itest')
+			RETURNING booking_id`, number, merchantID, customerID, from, to, status).Scan(&id); err != nil {
+			t.Fatalf("seed booking %s: %v", number, err)
+		}
+		if _, err := db.ExecContext(ctx, `INSERT INTO booked_location (booking_id, location_id) VALUES ($1, $2)`, id, locIntID3); err != nil {
+			t.Fatalf("seed booked_location %s: %v", number, err)
+		}
+	}
+	seedBooking("ITL003", "PENDING_APPROVAL", time.Date(2026, 8, 20, 21, 30, 0, 0, time.UTC), time.Date(2026, 8, 20, 22, 30, 0, 0, time.UTC))
+	seedBooking("ITL004", "CANCELED", time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC), time.Date(2026, 8, 20, 13, 0, 0, 0, time.UTC))
+
+	resTimeline, err := repo.GetLocations(ctx, merchantID, nil)
+	if err != nil {
+		t.Fatalf("GetLocations (timeline base) failed against postgres: %v", err)
+	}
+	dayRange := &TimelineRange{
+		From: time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC),
+		To:   time.Date(2026, 8, 21, 0, 0, 0, 0, time.UTC),
+	}
+	if err := repo.AttachTimeline(ctx, merchantID, dayRange, resTimeline); err != nil {
+		t.Fatalf("AttachTimeline failed against postgres: %v", err)
+	}
+	var t3Timeline []models.LocationTimelineEntry
+	for _, l := range resTimeline.Locations {
+		if l.LocationID == locationID3 {
+			t3Timeline = l.Timeline
+		}
+	}
+	if len(t3Timeline) != 2 || t3Timeline[0].BookingNumber != "ITL002" || t3Timeline[1].BookingNumber != "ITL003" {
+		t.Fatalf("expected table 3 timeline [ITL002, ITL003], got %+v", t3Timeline)
+	}
+	if t3Timeline[1].Status != "PENDING_APPROVAL" || t3Timeline[1].EndsAt != "2026-08-20T22:30:00Z" {
+		t.Fatalf("unexpected pending timeline entry: %+v", t3Timeline[1])
+	}
+	if resTimeline.DefaultBookingDuration != 90 {
+		t.Fatalf("expected default booking duration 90, got %d", resTimeline.DefaultBookingDuration)
+	}
+	if resTimeline.OpenRanges == nil {
+		t.Fatal("expected open_ranges to be set (possibly empty) when a range is requested")
+	}
+
 	if err := repo.DeleteTable(ctx, merchantID, locationID3); err != nil {
 		t.Fatalf("DeleteTable (3rd) failed against postgres: %v", err)
 	}

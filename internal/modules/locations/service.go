@@ -18,13 +18,24 @@ func NewLocationsService(locationsRepo *LocationsRepository) *LocationsService {
 	}
 }
 
-func (s *LocationsService) GetLocations(ctx context.Context, token string, window *BookingWindow) (*models.LocationResponse, error) {
+func (s *LocationsService) GetLocations(ctx context.Context, token string, window *BookingWindow, timeline *TimelineRange) (*models.LocationResponse, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.locationsRepo.GetLocations(ctx, user.MerchantID, window)
+	res, err := s.locationsRepo.GetLocations(ctx, user.MerchantID, window)
+	if err != nil {
+		return nil, err
+	}
+
+	if timeline != nil {
+		if err := s.locationsRepo.AttachTimeline(ctx, user.MerchantID, timeline, res); err != nil {
+			return nil, err
+		}
+	}
+
+	return res, nil
 }
 
 // validTableShapes reflète les trois formes proposées par l'éditeur BO.

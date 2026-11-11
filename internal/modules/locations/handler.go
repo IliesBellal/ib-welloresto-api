@@ -35,7 +35,13 @@ func (h *LocationsHandler) GetLocations(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	resp, err := h.locationsService.GetLocations(r.Context(), token, window)
+	timeline, err := parseTimelineRange(r)
+	if err != nil {
+		models.SendErrorJSON(w, "locations", "get", err)
+		return
+	}
+
+	resp, err := h.locationsService.GetLocations(r.Context(), token, window, timeline)
 	if err != nil {
 		models.SendErrorJSON(w, "locations", "get", err)
 		return
@@ -88,6 +94,39 @@ func parseBookingWindow(r *http.Request) (*BookingWindow, error) {
 		DateTo:           to,
 		ExcludeBookingID: strings.TrimSpace(r.URL.Query().Get("exclude_booking_id")),
 	}, nil
+}
+
+// timelineMaxSpan borne la période de la réglette : une journée de service
+// (éventuellement à cheval sur minuit) tient largement dans 48 h.
+const timelineMaxSpan = 48 * time.Hour
+
+// parseTimelineRange lit range_from/range_to (UTC, bookingWindowLayout, même
+// convention que booking_date_from/to stockés) depuis la query string de GET
+// /locations. Optionnels mais solidaires, from < to, écart <= timelineMaxSpan.
+func parseTimelineRange(r *http.Request) (*TimelineRange, error) {
+	rawFrom := strings.TrimSpace(r.URL.Query().Get("range_from"))
+	rawTo := strings.TrimSpace(r.URL.Query().Get("range_to"))
+
+	if rawFrom == "" && rawTo == "" {
+		return nil, nil
+	}
+	if rawFrom == "" || rawTo == "" {
+		return nil, models.ErrInvalidTimelineRange
+	}
+
+	from, err := time.Parse(bookingWindowLayout, rawFrom)
+	if err != nil {
+		return nil, models.ErrInvalidTimelineRange
+	}
+	to, err := time.Parse(bookingWindowLayout, rawTo)
+	if err != nil {
+		return nil, models.ErrInvalidTimelineRange
+	}
+	if !from.Before(to) || to.Sub(from) > timelineMaxSpan {
+		return nil, models.ErrInvalidTimelineRange
+	}
+
+	return &TimelineRange{From: from, To: to}, nil
 }
 
 func (h *LocationsHandler) CreateTable(w http.ResponseWriter, r *http.Request) {

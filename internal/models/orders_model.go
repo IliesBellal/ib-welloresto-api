@@ -201,11 +201,38 @@ type Location struct {
 	// avec la même règle que le contrôle serveur de bookings.FindConflictingBookings
 	// (qui renverrait 409 table_conflict pour cette table sur ce créneau).
 	BookingConflict *LocationBooking `json:"booking_conflict,omitempty"`
-	Attributes      *TableAttributes `json:"attributes,omitempty"`
+	// Timeline n'est renseigné que si range_from/range_to sont passés à GET
+	// /locations : toutes les réservations actives (PENDING_APPROVAL, ACCEPTED,
+	// ORDER_OPEN) de la table chevauchant la période, triées par début. Sert à
+	// la réglette horaire du POS, qui calcule l'occupation en local. Clé
+	// distincte de Bookings, que le POS renvoie tel quel à la création de
+	// commande et qu'on ne veut pas alourdir.
+	Timeline   []LocationTimelineEntry `json:"timeline,omitempty"`
+	Attributes *TableAttributes        `json:"attributes,omitempty"`
+}
+
+// LocationTimelineEntry : une réservation active d'une table sur la période
+// demandée (Location.Timeline). Fin calculée avec la même règle que le
+// contrôle de conflit (booking_date_to, sinon départ + booking_duration).
+type LocationTimelineEntry struct {
+	BookingID     string `json:"booking_id"`
+	BookingNumber string `json:"booking_number"`
+	Status        string `json:"status"`
+	PartySize     int    `json:"party_size"`
+	StartsAt      string `json:"starts_at"` // ISO 8601 UTC
+	EndsAt        string `json:"ends_at"`   // ISO 8601 UTC
+	CustomerName  string `json:"customer_name"`
+}
+
+// LocationOpenRange : plage d'ouverture datée du marchand (hours_of_operation)
+// sur la période demandée, pour griser les heures fermées de la réglette.
+type LocationOpenRange struct {
+	From string `json:"from"` // ISO 8601 UTC
+	To   string `json:"to"`   // ISO 8601 UTC
 }
 
 // LocationBooking résume, pour une table du plan de salle, la prochaine
-// réservation ACCEPTED sur le créneau actif (dérivée de Location.Bookings,
+// réservation active (PENDING_APPROVAL, ACCEPTED ou ORDER_OPEN) sur le créneau actif (dérivée de Location.Bookings,
 // déjà chargées via la jointure booked_location de GetLocations). Réutilisé
 // tel quel pour Location.BookingConflict (même shape, sémantique différente).
 type LocationBooking struct {
@@ -226,6 +253,12 @@ type LocationResponse struct {
 	// à la publication (base_revision) pour détecter une publication
 	// concurrente. 0 = jamais publié par lot.
 	Revision int64 `json:"revision"`
+	// Renseignés uniquement avec range_from/range_to (réglette horaire) :
+	// durée de résa par défaut (estimation de fin des commandes ouvertes) et
+	// plages d'ouverture de la période. OpenRanges est un pointeur pour
+	// distinguer "non demandé" (absent) de "fermé toute la période" ([]).
+	DefaultBookingDuration int                  `json:"default_booking_duration,omitempty"`
+	OpenRanges             *[]LocationOpenRange `json:"open_ranges,omitempty"`
 }
 
 type Floor struct {

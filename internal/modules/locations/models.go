@@ -13,6 +13,16 @@ type BookingWindow struct {
 	ExcludeBookingID string
 }
 
+// TimelineRange porte la période optionnelle passée à GET /locations
+// (range_from/range_to, UTC) pour la réglette horaire du POS : chaque table
+// reçoit alors toutes ses réservations actives de la période (Timeline), et
+// la réponse les plages d'ouverture et la durée de résa par défaut. Le POS
+// calcule ensuite l'occupation à n'importe quelle heure sans nouvel appel.
+type TimelineRange struct {
+	From time.Time
+	To   time.Time
+}
+
 type TableAttributes struct {
 	PMR     bool `json:"pmr"`
 	Terrace bool `json:"terrace"`

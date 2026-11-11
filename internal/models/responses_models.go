@@ -577,6 +577,7 @@ var (
 	ErrInvalidObstacleGeometry = errors.New("invalid_obstacle_geometry")
 	ErrInvalidAreaGeometry     = errors.New("invalid_area_geometry")
 	ErrInvalidBookingWindow    = errors.New("invalid_booking_window")
+	ErrInvalidTimelineRange    = errors.New("invalid_timeline_range")
 	// Publication du plan par lot (POST /locations/plan/publish)
 	ErrInvalidPlanPayload   = errors.New("invalid_plan_payload")
 	ErrPlanRevisionConflict = errors.New("plan_revision_conflict")
@@ -1975,6 +1976,11 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		status = http.StatusBadRequest
 		errorStatus = "invalid_booking_window"
 		errorMsg = "booking_date_from and booking_date_to must both be provided as RFC3339 timestamps, with booking_date_from before booking_date_to."
+
+	case errors.Is(err, ErrInvalidTimelineRange):
+		status = http.StatusBadRequest
+		errorStatus = "invalid_timeline_range"
+		errorMsg = "range_from and range_to must both be provided as 'YYYY-MM-DD HH:MM:SS' UTC, with range_from before range_to and a span of at most 48 hours."
 
 	case errors.Is(err, ErrTableConflict):
 		status = http.StatusConflict
