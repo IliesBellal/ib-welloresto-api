@@ -231,9 +231,13 @@ func buildHistoryFilter(merchantID string, req models.OrderHistoryRequest) histo
 					OR LOWER(COALESCE(c.customer_code, '')) LIKE LOWER(?)
 					OR LOWER(COALESCE(o.brand_order_num, '')) LIKE LOWER(?)
 					OR LOWER(COALESCE(` + castChar("o.order_id") + `, '')) LIKE LOWER(?)
+					OR ` + castChar("o.order_num") + ` LIKE ?
 				)
 			`
-			args = append(args, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm)
+			// o.order_num : le numéro affiché au restaurateur (« #42098 ») ; un
+			// « # » saisi est ignoré pour cette colonne.
+			args = append(args, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm,
+				"%"+strings.TrimPrefix(searchTerm, "#")+"%")
 		}
 	}
 

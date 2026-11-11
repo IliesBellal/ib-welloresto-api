@@ -37,8 +37,10 @@ par leurs routes existantes, avec leurs propres droits.
 npm run assistant:seed-sql -- ../ib-welloresto-api/migrations/todo 207_assistant_seed
 ```
 
-Rejouable : les intentions sont mises à jour, un terme déjà présent n'est
-jamais modifié (un rejet ou un poids changé par l'administration est conservé).
+Rejouable : les intentions sont mises à jour. Jusqu'à 209, un terme déjà présent
+n'était jamais modifié ; depuis 210, un terme pré-rempli prend le poids du seed
+tant qu'aucun administrateur n'y a touché (`reviewed_at` NULL) : un rejet ou un
+poids changé par l'administration reste conservé.
 
 `208_assistant_seed_channels` (2026-11-10) : même pré-remplissage régénéré
 (canal de vente facultatif sur le CA et les meilleures ventes) et suppression
@@ -49,7 +51,15 @@ télécharger » (factures, virements, rapports comptables, archive fiscale),
 synonymes de l'historique des commandes. Rejouable ; son down retire seulement
 la demande « documents ».
 
-**Ordre de déploiement** : 206, 207, 208, 209, puis le code. Sans les tables, l'API
+`210_assistant_seed_fiches` (2026-11-11) : demandes « ouvre la commande 42098 »,
+fiche équipier, fiche produit, fiche client ; poids ajustés après l'audit
+anti-confusion (appliqués aux termes pré-remplis jamais modifiés par
+l'administration) ; l'indice « liste » ne pousse plus vers les informations.
+Rejouable ; son down retire seulement les quatre nouvelles demandes. La
+recherche de l'historique des commandes trouve aussi le numéro affiché
+(`order_num`, avec ou sans « # »).
+
+**Ordre de déploiement** : 206, 207, 208, 209, 210, puis le code. Sans les tables, l'API
 sert un modèle vide (le back-office garde son modèle embarqué) et ignore les
 événements avec un avertissement.
 
