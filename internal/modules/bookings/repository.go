@@ -951,7 +951,7 @@ func (r *BookingsRepository) FindConflictingBookings(ctx context.Context, mercha
         INNER JOIN bookings b ON b.booking_id = bl.booking_id
         WHERE bl.location_id IN (%s)
           AND b.merchant_id = ?
-          AND b.status IN ('PENDING_APPROVAL','ACCEPTED','ORDER_OPEN')
+          AND b.status IN (` + bookingcore.ActiveStatusesSQL + `)
           AND b.booking_date_from < ?
           AND ` + bkgEndOfBooking("b") + ` > ?
           AND b.booking_id <> ?

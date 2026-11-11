@@ -56,6 +56,12 @@ func NormalizeLegacyStatus(status string) string {
 	}
 }
 
+// ActiveStatusesSQL : liste SQL des statuts qui bloquent une table, miroir de
+// IsActiveForConflict. Les écritures utilisent le vocabulaire cible depuis la
+// migration 055 ; les alias historiques restent couverts (lignes écrites par
+// un ancien client). Ne filtrer que sur les alias ne trouve plus aucune résa.
+const ActiveStatusesSQL = `'pending','confirmed','seated','PENDING_APPROVAL','ACCEPTED','ORDER_OPEN'`
+
 func IsActiveForConflict(status string) bool {
 	n := NormalizeLegacyStatus(status)
 	return n == StatusPending || n == StatusConfirmed || n == StatusSeated

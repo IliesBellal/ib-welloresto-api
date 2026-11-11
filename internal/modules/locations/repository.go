@@ -12,6 +12,7 @@ import (
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/bookingcore"
 	"welloresto-api/internal/modules/openinghours"
 )
 
@@ -248,7 +249,7 @@ func locEndOfBooking(alias string) string {
 // liste que bookings.FindConflictingBookings (409 table_conflict), pour que
 // le plan de salle, la réglette et le contrôle à l'écriture disent la même
 // chose.
-const activeBookingStatuses = `'PENDING_APPROVAL','ACCEPTED','ORDER_OPEN'`
+const activeBookingStatuses = bookingcore.ActiveStatusesSQL
 
 // activeBooking : une réservation active rattachée à une table (une ligne
 // par couple résa × table).

@@ -18,6 +18,7 @@ import (
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
 	"welloresto-api/internal/modules/auth"
+	"welloresto-api/internal/modules/bookingcore"
 	"welloresto-api/internal/utils/dbutils"
 )
 
@@ -85,7 +86,7 @@ func TestFindConflictingBookings_QueryShapeAndArgs(t *testing.T) {
 	for _, fragment := range []string{
 		"FOR UPDATE",
 		"IN (?,?)",
-		"'PENDING_APPROVAL','ACCEPTED','ORDER_OPEN'",
+		"'pending','confirmed','seated','PENDING_APPROVAL','ACCEPTED','ORDER_OPEN'",
 		"b.booking_date_from < ?",
 		"b.booking_id <> ?",
 	} {
@@ -480,7 +481,7 @@ func TestFindConflictingBookings_MySQL_Concurrency(t *testing.T) {
         FROM booked_location bl
         JOIN bookings b ON b.booking_id = bl.booking_id
         WHERE bl.location_id = 33
-          AND b.status IN ('PENDING_APPROVAL','ACCEPTED','ORDER_OPEN')
+          AND b.status IN (`+bookingcore.ActiveStatusesSQL+`)
           AND b.booking_date_from < '2026-07-11 21:00:00'
           AND b.booking_date_to   > '2026-07-11 19:00:00'`).Scan(&overlapping)
 	if err != nil {
