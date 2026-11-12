@@ -1929,6 +1929,45 @@ func clientsSegmentCounts(buckets map[string][]CustomerLifetimeRow) []ClientsSeg
 	return result
 }
 
+// buildClientsOrdersTimeline spreads the period's orders over every local day
+// of [dateFrom, dateTo] (inclusive, zero-filled so the chart has no gaps),
+// split by the customer's segment. A cell whose customer is in none of the
+// three active segments is skipped — cannot happen for orders inside the
+// period (inactif/dormant have none by construction), but a stale or racing
+// read must never panic or invent a bar.
+func buildClientsOrdersTimeline(buckets map[string][]CustomerLifetimeRow, cells []CustomerDayOrders, dateFrom, dateTo time.Time) []ClientsOrdersDayPoint {
+	segmentOf := make(map[string]string)
+	for _, seg := range []string{ClientsSegmentNew, ClientsSegmentReturning, ClientsSegmentLoyal} {
+		for _, row := range buckets[seg] {
+			segmentOf[row.CustomerID] = seg
+		}
+	}
+
+	points := make([]ClientsOrdersDayPoint, 0, int(dateTo.Sub(dateFrom).Hours()/24)+1)
+	indexByDay := make(map[string]int)
+	for d := dateFrom; !d.After(dateTo); d = d.AddDate(0, 0, 1) {
+		day := d.Format("2006-01-02")
+		indexByDay[day] = len(points)
+		points = append(points, ClientsOrdersDayPoint{LocalDay: day})
+	}
+
+	for _, cell := range cells {
+		idx, ok := indexByDay[cell.LocalDay]
+		if !ok {
+			continue
+		}
+		switch segmentOf[cell.CustomerID] {
+		case ClientsSegmentNew:
+			points[idx].Nouveau += cell.Orders
+		case ClientsSegmentReturning:
+			points[idx].Recurrent += cell.Orders
+		case ClientsSegmentLoyal:
+			points[idx].Fidele += cell.Orders
+		}
+	}
+	return points
+}
+
 // clientsDefinitions states, in the response itself, which reading this tab
 // committed to for each term PROMPT 18 §4 flags as admitting several
 // defensible interpretations — see ClientsDefinitions' doc comment (models.go).
@@ -2041,6 +2080,7 @@ func (s *Service) GetClients(ctx context.Context, req ClientsRequest) (*ClientsR
 	if len(lifetimeRows) == 0 {
 		resp.NoIdentifiedCustomers = true
 		resp.Segments = clientsSegmentCounts(computeClientsSegments(nil, startUTC, endUTC))
+		resp.OrdersTimeline = buildClientsOrdersTimeline(nil, nil, dateFrom, dateTo)
 		s.logInstrumentation(ctx, "clients", merchantIDs, int(periodDays), 0, time.Since(started))
 		return resp, nil
 	}
@@ -2072,7 +2112,14 @@ func (s *Service) GetClients(ctx context.Context, req ClientsRequest) (*ClientsR
 		resp.RecurringRate = &rate
 	}
 
-	resp.Segments = clientsSegmentCounts(computeClientsSegments(lifetimeRows, startUTC, endUTC))
+	segmentBuckets := computeClientsSegments(lifetimeRows, startUTC, endUTC)
+	resp.Segments = clientsSegmentCounts(segmentBuckets)
+
+	orderCells, err := s.repo.GetCustomersOrdersByDay(ctx, merchantIDs, channels, tzString, startUTC, endUTC)
+	if err != nil {
+		return nil, err
+	}
+	resp.OrdersTimeline = buildClientsOrdersTimeline(segmentBuckets, orderCells, dateFrom, dateTo)
 
 	s.logInstrumentation(ctx, "clients", merchantIDs, int(periodDays), len(lifetimeRows), time.Since(started))
 

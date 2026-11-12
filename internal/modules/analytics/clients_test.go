@@ -200,3 +200,46 @@ func TestClientsSegmentCounts(t *testing.T) {
 		}
 	})
 }
+
+func TestBuildClientsOrdersTimeline(t *testing.T) {
+	buckets := map[string][]CustomerLifetimeRow{
+		ClientsSegmentNew:       {{CustomerID: "n1"}},
+		ClientsSegmentReturning: {{CustomerID: "r1"}},
+		ClientsSegmentLoyal:     {{CustomerID: "f1"}},
+		ClientsSegmentInactive:  {{CustomerID: "i1"}},
+	}
+	cells := []CustomerDayOrders{
+		{CustomerID: "n1", LocalDay: "2026-03-01", Orders: 2},
+		{CustomerID: "r1", LocalDay: "2026-03-01", Orders: 1},
+		{CustomerID: "f1", LocalDay: "2026-03-03", Orders: 4},
+		{CustomerID: "n1", LocalDay: "2026-03-03", Orders: 1},
+		{CustomerID: "i1", LocalDay: "2026-03-02", Orders: 9},   // inactive: never charted
+		{CustomerID: "zz", LocalDay: "2026-03-02", Orders: 9},   // unknown customer: skipped
+		{CustomerID: "n1", LocalDay: "2026-04-01", Orders: 9},   // outside the window: skipped
+	}
+	from := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 3, 3, 0, 0, 0, 0, time.UTC)
+
+	got := buildClientsOrdersTimeline(buckets, cells, from, to)
+
+	want := []ClientsOrdersDayPoint{
+		{LocalDay: "2026-03-01", Nouveau: 2, Recurrent: 1},
+		{LocalDay: "2026-03-02"},
+		{LocalDay: "2026-03-03", Nouveau: 1, Fidele: 4},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d days (zero-filled), got %d: %+v", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("day %d: expected %+v, got %+v", i, want[i], got[i])
+		}
+	}
+
+	t.Run("no customers still yields one zero point per day", func(t *testing.T) {
+		empty := buildClientsOrdersTimeline(nil, nil, from, to)
+		if len(empty) != 3 || empty[0].LocalDay != "2026-03-01" || empty[2].LocalDay != "2026-03-03" {
+			t.Fatalf("unexpected timeline: %+v", empty)
+		}
+	})
+}

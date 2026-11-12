@@ -189,3 +189,63 @@ func (r *Repository) GetCustomersLifetimeStats(ctx context.Context, merchantIDs 
 	}
 	return result, nil
 }
+
+// CustomerDayOrders is one (customer, local day) cell of GetCustomersOrdersByDay:
+// how many qualifying orders that identified customer placed on that
+// establishment-local calendar day.
+type CustomerDayOrders struct {
+	CustomerID string
+	LocalDay   string
+	Orders     int64
+}
+
+// GetCustomersOrdersByDay returns, for every identified customer, the number of
+// orders placed on each local day of [periodStartUTC, periodEndUTC) — the raw
+// material of the Clients tab's "commandes par type de client" chart.
+//
+// It deliberately returns per-CUSTOMER cells rather than pre-aggregated
+// segment counts: a customer's segment (nouveau/récurrent/fidèle) depends on
+// lifetime figures that only computeClientsSegments knows how to derive, so
+// the segment is attached in Go from the same buckets the segment cards use.
+// That keeps the chart and the cards unable to disagree about who is "new".
+//
+// Same scope as every other query of this file (AnalyticsOrdersScope, orders
+// with a customer_id, requested channels) and same local-day bucketing as
+// GetPaymentsTimeline (o.creation_date AT TIME ZONE tz).
+func (r *Repository) GetCustomersOrdersByDay(ctx context.Context, merchantIDs []string, channels []string, tzName string, periodStartUTC, periodEndUTC time.Time) ([]CustomerDayOrders, error) {
+	scopeWhere, scopeArgs := AnalyticsOrdersScope(merchantIDs, periodStartUTC, periodEndUTC)
+
+	query := strings.TrimSpace(`
+		SELECT o.customer_id::text,
+			to_char(o.creation_date AT TIME ZONE ?, 'YYYY-MM-DD') AS local_day,
+			COUNT(*) AS orders
+		FROM orders o
+	`) + "\nWHERE " + scopeWhere + ` AND o.customer_id IS NOT NULL AND (` + channelCaseExpr + `) = ANY(?)
+		GROUP BY o.customer_id, local_day
+	`
+
+	args := append([]interface{}{tzName}, scopeArgs...)
+	args = append(args, channels)
+
+	var result []CustomerDayOrders
+	err := r.runTx(ctx, func(ctx context.Context, tx *dbx.DB) error {
+		rows, err := tx.QueryContext(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var cell CustomerDayOrders
+			if err := rows.Scan(&cell.CustomerID, &cell.LocalDay, &cell.Orders); err != nil {
+				return err
+			}
+			result = append(result, cell)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get customers orders by day: %w", err)
+	}
+	return result, nil
+}

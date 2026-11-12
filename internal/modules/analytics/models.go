@@ -954,6 +954,17 @@ type ClientsSegmentCount struct {
 	AvgBasketTTCCents *int64 `json:"avg_basket_ttc_cents,omitempty"`
 }
 
+// ClientsOrdersDayPoint is one local day of ClientsResponse.OrdersTimeline:
+// how many orders that day came from customers of each active segment. Only
+// the three segments that can own orders in the period appear — inactif and
+// dormant are defined by having NO order in it.
+type ClientsOrdersDayPoint struct {
+	LocalDay  string `json:"local_day"`
+	Nouveau   int64  `json:"nouveau"`
+	Recurrent int64  `json:"recurrent"`
+	Fidele    int64  `json:"fidele"`
+}
+
 // ClientsResponse. SegmentRatesAvailable/MinCustomersForRate/RecurringRate
 // all gate on the SAME threshold and the SAME denominator
 // (IdentifiedCustomersInPeriod) — PROMPT 18 §6 asks for "le seuil déjà en
@@ -995,6 +1006,13 @@ type ClientsResponse struct {
 
 	SegmentRatesAvailable bool                  `json:"segment_rates_available"`
 	Segments              []ClientsSegmentCount `json:"segments"`
+
+	// OrdersTimeline is the order count per local day and customer segment —
+	// one point for EVERY day of [From, To] (zeros included, so the chart has no
+	// gaps). Each order is attributed to its customer's segment for the whole
+	// period, i.e. the same partition as Segments, so the timeline's totals
+	// match the segments' period orders.
+	OrdersTimeline []ClientsOrdersDayPoint `json:"orders_timeline"`
 }
 
 // ---- Clients — bloc nominatif (POST /analytics/clients/top) ----
