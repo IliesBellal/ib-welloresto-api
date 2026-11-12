@@ -263,6 +263,10 @@ func TestCreateBooking_TableConflict_RollsBackWith409Sentinel(t *testing.T) {
 	ctx := middleware.WithUser(context.Background(), &auth.UserLoginRow{MerchantID: "m_1"})
 
 	mock.ExpectBegin()
+	// Fuseau du marchand : le créneau reçu (heure murale) est converti en
+	// UTC avant la détection de conflits.
+	mock.ExpectQuery("SELECT timezone").
+		WillReturnRows(sqlmock.NewRows([]string{"timezone"}).AddRow("Europe/Paris"))
 	mock.ExpectQuery("anything").
 		WillReturnRows(sqlmock.NewRows([]string{"booking_id", "location_id"}).AddRow("42", "12"))
 	mock.ExpectRollback()

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/infrastructure/redis"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
@@ -52,17 +54,34 @@ type DeliverySessionsService struct {
 	orderDeliverer       OrderDeliverer
 	smsService           merchantsms.SMSService
 	uberSvc              *ubereats.UberEatsService
+	redis                *redis.Client
 	log                  *zap.Logger
 }
 
-func NewDeliverySessionsService(deliverySessionsRepo *DeliverySessionsRepository, notificationsService *notification.NotificationService, orderDeliverer OrderDeliverer, smsService merchantsms.SMSService, uberSvc *ubereats.UberEatsService, log *zap.Logger) *DeliverySessionsService {
+func NewDeliverySessionsService(deliverySessionsRepo *DeliverySessionsRepository, notificationsService *notification.NotificationService, orderDeliverer OrderDeliverer, smsService merchantsms.SMSService, uberSvc *ubereats.UberEatsService, redisClient *redis.Client, log *zap.Logger) *DeliverySessionsService {
 	return &DeliverySessionsService{
 		deliverySessionsRepo: deliverySessionsRepo,
 		notificationsService: notificationsService,
 		orderDeliverer:       orderDeliverer,
 		smsService:           smsService,
 		uberSvc:              uberSvc,
+		redis:                redisClient,
 		log:                  log,
+	}
+}
+
+// invalidateOrderCache vide le cache Redis des commandes dont le repo vient
+// de reecrire orders.brand_status en SQL (demarrage, annulation, echec d'une
+// tournee). GET /orders/pending lit ce cache (TTL 10 min) : sans cette purge,
+// le POS recevait l'ancien statut ("En preparation") juste apres la creation
+// d'une session. Meme pratique que order_life_cycle apres chaque mutation.
+// Sans effet si Redis n'est pas configure (client nil).
+func (s *DeliverySessionsService) invalidateOrderCache(ctx context.Context, merchantID string, orderIDs ...string) {
+	for _, orderID := range orderIDs {
+		if strings.TrimSpace(orderID) == "" {
+			continue
+		}
+		s.redis.Delete(ctx, helpers.GetRedisOrderKey(merchantID, orderID))
 	}
 }
 
@@ -153,6 +172,12 @@ func (s *DeliverySessionsService) StartDeliverySession(ctx context.Context, toke
 	if err != nil {
 		return nil, err // ← propagation propre de l'erreur
 	}
+
+	startedOrderIDs := make([]string, len(req.Orders))
+	for i, o := range req.Orders {
+		startedOrderIDs[i] = o.OrderID
+	}
+	s.invalidateOrderCache(ctx, user.MerchantID, startedOrderIDs...)
 
 	_ = s.notificationsService.SendNotificationAsync(user.MerchantID, session.DeliverySessionID, "UPDATE_DELIVERY_SESSION")
 
@@ -396,6 +421,7 @@ func (s *DeliverySessionsService) MarkDeliveryStopFailed(ctx context.Context, or
 	if err != nil {
 		return nil, err
 	}
+	s.invalidateOrderCache(ctx, user.MerchantID, orderID)
 
 	_ = s.notificationsService.SendNotificationAsync(user.MerchantID, sessionID, "UPDATE_DELIVERY_SESSION")
 
@@ -422,6 +448,7 @@ func (s *DeliverySessionsService) CancelDeliveryStop(ctx context.Context, orderI
 	if err != nil {
 		return nil, err
 	}
+	s.invalidateOrderCache(ctx, user.MerchantID, orderID)
 
 	_ = s.notificationsService.SendNotificationAsync(user.MerchantID, sessionID, "UPDATE_DELIVERY_SESSION")
 
@@ -485,5 +512,17 @@ func (s *DeliverySessionsService) CancelDeliverySession(ctx context.Context, tok
 	_ = s.notificationsService.SendNotificationAsync(user.MerchantID, session.DeliverySessionID, "UPDATE_DELIVERY_SESSION")
 
 	// Return full delivery session object
-	return s.deliverySessionsRepo.GetDeliverySession(ctx, session.MerchantID, sessionID)
+	fullSession, err := s.deliverySessionsRepo.GetDeliverySession(ctx, session.MerchantID, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Les commandes repassent READY_FOR_HANDOFF en SQL : purge du cache.
+	canceledOrderIDs := make([]string, len(fullSession.Orders))
+	for i, o := range fullSession.Orders {
+		canceledOrderIDs[i] = o.OrderID
+	}
+	s.invalidateOrderCache(ctx, session.MerchantID, canceledOrderIDs...)
+
+	return fullSession, nil
 }

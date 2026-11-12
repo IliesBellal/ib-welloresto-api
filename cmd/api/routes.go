@@ -430,7 +430,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	uberService.SetSaleReceiptIssuer(ordersLifeCycleService)
 
 	// ---- Delivery Sessions ----
-	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, notificationService, ordersLifeCycleService, merchantSMSService, uberService, log)
+	deliverySessionsService := deliverysessionsModule.NewDeliverySessionsService(deliverySessionsRepo, notificationService, ordersLifeCycleService, merchantSMSService, uberService, redisClient, log)
 
 	// ---- ScanNOrder ----
 	scannRepo := scannorder.NewRepository(selectedDB)

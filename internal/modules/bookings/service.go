@@ -92,9 +92,16 @@ func (s *BookingsService) CreateBooking(ctx context.Context, req *BookingObjectR
 				locationIDs = append(locationIDs, loc.LocationID)
 			}
 
+			// Les dates stockées sont en UTC, le créneau reçu en heure du
+			// marchand : sans conversion, le contrôle visait une autre heure.
+			// (repo.CreateBooking convertit de son côté pour l'écriture.)
+			startUTC, endUTC, err := s.toUTCWindow(txCtx, req.MerchantID, req.Booking.StartDate, req.Booking.EndDate)
+			if err != nil {
+				return err
+			}
 			conflicts, err := s.repo.FindConflictingBookings(
 				txCtx, req.MerchantID, locationIDs,
-				req.Booking.StartDate, req.Booking.EndDate, "",
+				startUTC, endUTC, "",
 			)
 			if err != nil {
 				return fmt.Errorf("repo.FindConflictingBookings failed: %w", err)
@@ -307,11 +314,42 @@ func (s *BookingsService) CancelBooking(ctx context.Context, token, bookingID st
 	}, nil
 }
 
+// bookingWallClockLayout : format des dates de résa échangées avec le POS et
+// stockées en base.
+const bookingWallClockLayout = "2006-01-02 15:04:05"
+
+// toUTCWindow convertit un créneau reçu du POS — heure murale du marchand,
+// la même que celle des créneaux de GET /bookings/availability — en UTC, la
+// convention de stockage de booking_date_from/to. À faire une seule fois, à
+// l'entrée du service : la création (bookingcore.CreateBooking), la
+// replanification, la détection de conflits et le contrôle de capacité
+// comparent tous à des dates UTC.
+func (s *BookingsService) toUTCWindow(ctx context.Context, merchantID, from, to string) (string, string, error) {
+	loc, err := s.repo.loadMerchantLocation(ctx, merchantID)
+	if err != nil {
+		return "", "", err
+	}
+	start, err := time.ParseInLocation(bookingWallClockLayout, strings.TrimSpace(from), loc)
+	if err != nil {
+		return "", "", models.ErrInvalidInput
+	}
+	end, err := time.ParseInLocation(bookingWallClockLayout, strings.TrimSpace(to), loc)
+	if err != nil {
+		return "", "", models.ErrInvalidInput
+	}
+	return start.UTC().Format(bookingWallClockLayout), end.UTC().Format(bookingWallClockLayout), nil
+}
+
 // RescheduleBooking modifie staff la date/heure (et éventuellement le nombre
 // de couverts, la note et le client) d'une résa pending|confirmed, en
 // revalidant la disponibilité via le moteur unifié (booking exclue de son
 // propre calcul d'occupation). Les autres statuts (seated/completed/
 // cancelled/denied/no_show) sont verrouillés côté staff.
+//
+// Le créneau reçu est l'heure murale du marchand (comme à la création) :
+// il est converti en UTC avant tout contrôle et toute écriture. L'écrire tel
+// quel le décalait de l'offset du fuseau (20h saisi → 21h affiché à Paris en
+// hiver).
 func (s *BookingsService) RescheduleBooking(ctx context.Context, token, bookingID string, req *RescheduleBookingRequest) (map[string]interface{}, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
@@ -322,6 +360,11 @@ func (s *BookingsService) RescheduleBooking(ctx context.Context, token, bookingI
 	}
 	if req.PartySize != nil && *req.PartySize <= 0 {
 		return nil, models.ErrInvalidInput
+	}
+
+	dateFromUTC, dateToUTC, err := s.toUTCWindow(ctx, user.MerchantID, req.BookingDateFrom, req.BookingDateTo)
+	if err != nil {
+		return nil, err
 	}
 
 	var result *Booking
@@ -349,7 +392,7 @@ func (s *BookingsService) RescheduleBooking(ctx context.Context, token, bookingI
 
 			conflicts, err := s.repo.FindConflictingBookings(
 				txCtx, user.MerchantID, locationIDs,
-				req.BookingDateFrom, req.BookingDateTo, bookingID,
+				dateFromUTC, dateToUTC, bookingID,
 			)
 			if err != nil {
 				return err
@@ -359,7 +402,7 @@ func (s *BookingsService) RescheduleBooking(ctx context.Context, token, bookingI
 			}
 		}
 
-		available, err := s.repo.CheckCapacityForWindow(txCtx, user.MerchantID, req.BookingDateFrom, req.BookingDateTo, partySize, bookingID)
+		available, err := s.repo.CheckCapacityForWindow(txCtx, user.MerchantID, dateFromUTC, dateToUTC, partySize, bookingID)
 		if err != nil {
 			return err
 		}
@@ -367,7 +410,7 @@ func (s *BookingsService) RescheduleBooking(ctx context.Context, token, bookingI
 			return models.ErrSlotUnavailable
 		}
 
-		if err := s.repo.RescheduleBooking(txCtx, user.MerchantID, bookingID, req.BookingDateFrom, req.BookingDateTo, req.PartySize, req.Comment, req.Customer); err != nil {
+		if err := s.repo.RescheduleBooking(txCtx, user.MerchantID, bookingID, dateFromUTC, dateToUTC, req.PartySize, req.Comment, req.Customer); err != nil {
 			return err
 		}
 
