@@ -396,6 +396,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	bookingCommService.SetMerchantSMS(merchantSMSService)
 	bookingCommService.SetBrandResolver(merchantBrands)
 	bookingsRepo := bookingsModule.NewBookingsRepository(selectedDB, log)
+	bookingCommService.SetEmailChannelGate(bookingsRepo)
 	bookingsService := bookingsModule.NewBookingsService(bookingsRepo, selectedDB, mailService, smsService, bookingEventsRepo, notificationService, bookingCommService, log)
 
 	// ---- Orders Lifecycle ----

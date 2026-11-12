@@ -137,6 +137,7 @@ type BookingSettings struct {
 	CancelBookingLimitOffsetHours int                   `json:"cancel_booking_limit_offset_hours"`
 	PendingExpirationHours        int                   `json:"pending_expiration_hours"`
 	SMSEnabled                    bool                  `json:"sms_enabled"`
+	EmailEnabled                  bool                  `json:"email_enabled"`
 	WaitlistEnabled               bool                  `json:"waitlist_enabled"`
 	WaitlistMaxSize               int                   `json:"waitlist_max_size"`
 	WaitlistSlotExpiryMinutes     int                   `json:"waitlist_slot_expiry_minutes"`
@@ -161,9 +162,12 @@ type PutBookingSettingsRequest struct {
 	CancelBookingLimitOffsetHours int    `json:"cancel_booking_limit_offset_hours"`
 	PendingExpirationHours        int    `json:"pending_expiration_hours"`
 	SMSEnabled                    bool   `json:"sms_enabled"`
-	WaitlistEnabled               bool   `json:"waitlist_enabled"`
-	WaitlistMaxSize               int    `json:"waitlist_max_size"`
-	WaitlistSlotExpiryMinutes     int    `json:"waitlist_slot_expiry_minutes"`
+	// EmailEnabled : absent = inchangé (les clients qui ne connaissent pas ce
+	// champ ne doivent pas couper les emails en enregistrant autre chose).
+	EmailEnabled              *bool `json:"email_enabled,omitempty"`
+	WaitlistEnabled           bool  `json:"waitlist_enabled"`
+	WaitlistMaxSize           int   `json:"waitlist_max_size"`
+	WaitlistSlotExpiryMinutes int   `json:"waitlist_slot_expiry_minutes"`
 }
 
 type BookingDurationRule struct {

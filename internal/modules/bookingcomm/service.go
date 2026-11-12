@@ -32,6 +32,7 @@ type Service struct {
 	sms         sms.Service
 	merchantSMS merchantSMSSender
 	brands      brandResolver
+	emailGate   emailChannelGate
 	baseURL     string
 	outbound    outboundRecorder
 	log         *zap.Logger
@@ -47,6 +48,13 @@ type brandResolver interface {
 // comptabilise dans son compteur mensuel (merchantsms.Service).
 type merchantSMSSender interface {
 	SendAsync(ctx context.Context, merchantID, senderID, phoneNumber, message string, onSent func(messageID string))
+}
+
+// emailChannelGate dit si l'établissement a désactivé les emails de
+// réservation (bookings_settings.email_enabled). Sans lui (tests), les emails
+// sont toujours envoyés.
+type emailChannelGate interface {
+	IsBookingEmailEnabled(ctx context.Context, merchantID string) bool
 }
 
 type outboundRecorder interface {
@@ -83,6 +91,18 @@ func (s *Service) SetMerchantSMS(merchantSMS merchantSMSSender) {
 // l'établissement. Sans lui (tests), le cadre par défaut porte seulement son nom.
 func (s *Service) SetBrandResolver(brands brandResolver) {
 	s.brands = brands
+}
+
+// SetEmailChannelGate permet à l'établissement de couper les emails de réservation.
+func (s *Service) SetEmailChannelGate(gate emailChannelGate) {
+	s.emailGate = gate
+}
+
+func (s *Service) emailAllowed(ctx context.Context, merchantID string) bool {
+	if s.emailGate == nil || strings.TrimSpace(merchantID) == "" {
+		return true
+	}
+	return s.emailGate.IsBookingEmailEnabled(ctx, merchantID)
 }
 
 func (s *Service) brand(ctx context.Context, merchantID, merchantName string) mailer.MerchantBrand {
@@ -228,7 +248,7 @@ func (s *Service) emailBase() mailer.EmailBaseData {
 }
 
 func (s *Service) sendEmail(ctx context.Context, m BookingMessage, subject, template string, calendar calendarAction) {
-	if s.mailer == nil || strings.TrimSpace(m.CustomerEmail) == "" {
+	if s.mailer == nil || strings.TrimSpace(m.CustomerEmail) == "" || !s.emailAllowed(ctx, m.MerchantID) {
 		return
 	}
 	data := s.emailData(ctx, m)
@@ -355,7 +375,7 @@ type WaitlistMessage struct {
 // s'est libérée. Unique point d'envoi pour ce type de message (remplace les
 // appels mailer/sms directs faits en Phase 3).
 func (s *Service) SendWaitlistAvailable(ctx context.Context, m WaitlistMessage) {
-	if s.mailer != nil && strings.TrimSpace(m.CustomerEmail) != "" {
+	if s.mailer != nil && strings.TrimSpace(m.CustomerEmail) != "" && s.emailAllowed(ctx, m.MerchantID) {
 		data := mailer.WaitlistAvailableData{
 			EmailBaseData: s.emailBase(),
 			Brand:         s.brand(ctx, m.MerchantID, m.MerchantName),

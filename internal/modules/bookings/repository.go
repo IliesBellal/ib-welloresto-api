@@ -143,6 +143,7 @@ func (r *BookingsRepository) GetBookingSettings(ctx context.Context, merchantID 
 			COALESCE(bs.cancel_booking_limit_offset_hours, 48),
 			COALESCE(bs.pending_expiration_hours, 24),
 			COALESCE(bs.sms_enabled, FALSE),
+			COALESCE(bs.email_enabled, TRUE),
 			COALESCE(bs.waitlist_enabled, FALSE),
 			COALESCE(bs.waitlist_max_size, 0),
 			COALESCE(bs.waitlist_slot_expiry_minutes, 15)
@@ -166,6 +167,7 @@ func (r *BookingsRepository) GetBookingSettings(ctx context.Context, merchantID 
 		&settings.CancelBookingLimitOffsetHours,
 		&settings.PendingExpirationHours,
 		&settings.SMSEnabled,
+		&settings.EmailEnabled,
 		&settings.WaitlistEnabled,
 		&settings.WaitlistMaxSize,
 		&settings.WaitlistSlotExpiryMinutes,
@@ -273,6 +275,11 @@ func (r *BookingsRepository) UpsertBookingSettings(ctx context.Context, merchant
 	// corrigé ici par un upsert réel : UPDATE de la ligne la plus ancienne
 	// (celle que lisent les SELECT), INSERT si absente. À déployer/vérifier
 	// séparément de la migration Postgres (cf. rapport 29).
+	emailEnabled := true
+	if req.EmailEnabled != nil {
+		emailEnabled = *req.EmailEnabled
+	}
+
 	var settingsID int64
 	err := db.QueryRowContext(ctx,
 		`SELECT id FROM bookings_settings WHERE merchant_id = ? ORDER BY id LIMIT 1`,
@@ -301,11 +308,12 @@ func (r *BookingsRepository) UpsertBookingSettings(ctx context.Context, merchant
 				cancel_booking_limit_offset_hours,
 				pending_expiration_hours,
 				sms_enabled,
+				email_enabled,
 				waitlist_enabled,
 				waitlist_max_size,
 				waitlist_slot_expiry_minutes
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			merchantID,
 			req.Enabled,
@@ -323,6 +331,7 @@ func (r *BookingsRepository) UpsertBookingSettings(ctx context.Context, merchant
 			req.CancelBookingLimitOffsetHours,
 			req.PendingExpirationHours,
 			req.SMSEnabled,
+			emailEnabled,
 			req.WaitlistEnabled,
 			req.WaitlistMaxSize,
 			req.WaitlistSlotExpiryMinutes,
@@ -347,6 +356,7 @@ func (r *BookingsRepository) UpsertBookingSettings(ctx context.Context, merchant
 			cancel_booking_limit_offset_hours = ?,
 			pending_expiration_hours = ?,
 			sms_enabled = ?,
+			email_enabled = COALESCE(?, email_enabled),
 			waitlist_enabled = ?,
 			waitlist_max_size = ?,
 			waitlist_slot_expiry_minutes = ?
@@ -367,6 +377,7 @@ func (r *BookingsRepository) UpsertBookingSettings(ctx context.Context, merchant
 		req.CancelBookingLimitOffsetHours,
 		req.PendingExpirationHours,
 		req.SMSEnabled,
+		req.EmailEnabled,
 		req.WaitlistEnabled,
 		req.WaitlistMaxSize,
 		req.WaitlistSlotExpiryMinutes,
@@ -1959,4 +1970,20 @@ func (r *BookingsRepository) loadMerchantLocations(ctx context.Context, merchant
 	}
 
 	return list, nil
+}
+
+// IsBookingEmailEnabled dit si l'établissement envoie les emails de
+// réservation. Vrai par défaut (pas de ligne, colonne vide ou erreur de
+// lecture : mieux vaut un email de trop qu'une confirmation perdue).
+func (r *BookingsRepository) IsBookingEmailEnabled(ctx context.Context, merchantID string) bool {
+	db := dbx.GetDB(ctx, r.database)
+	var enabled bool
+	err := db.QueryRowContext(ctx,
+		`SELECT COALESCE(email_enabled, TRUE) FROM bookings_settings WHERE merchant_id = ? ORDER BY id LIMIT 1`,
+		merchantID,
+	).Scan(&enabled)
+	if err != nil {
+		return true
+	}
+	return enabled
 }
