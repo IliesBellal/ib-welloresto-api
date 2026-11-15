@@ -20,6 +20,16 @@ func (c *StripeManager) CreateCheckoutSession(req CheckoutSessionRequestObject) 
 	order := req.Order
 	merchant := req.Merchant
 
+	// Garde-fou : scannorder.CreateOrderSNO refuse déjà la commande sans compte
+	// Stripe (onlineOrderingEnabled) ; une erreur plutôt qu'un panic si un
+	// autre appelant l'oublie.
+	if merchant == nil || merchant.AccountID == nil || strings.TrimSpace(*merchant.AccountID) == "" {
+		return nil, fmt.Errorf("checkout session: merchant has no stripe connected account")
+	}
+	if merchant.VariableFees == nil || merchant.FixedFees == nil {
+		return nil, fmt.Errorf("checkout session: merchant %s has no scannorder fees", merchant.MerchantID)
+	}
+
 	variableFees := *merchant.VariableFees
 	fixedFees := *merchant.FixedFees
 
