@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 	"welloresto-api/internal/database/dbx"
+	"welloresto-api/internal/helpers"
 )
 
 // kpiExcludedStatuses lists brand_status values that represent failed / unpaid orders.
@@ -378,15 +379,31 @@ func (r *Repository) GetScanNOrderIntegration(ctx context.Context, merchantID st
 			) AS orders_count,
 			(
 				-- QR principal du merchant (ni table ni serveur) = {slug} des
-				-- routes ScanNOrder, cf. kiosk.getMerchantSlug
+				-- routes ScanNOrder : même choix que scannorder.snoMainQRCondition
+				-- (le plus ancien QR actif), sinon le lien affiché pourrait
+				-- différer de celui que ScanNOrder référence.
 				SELECT code
 				FROM   qrcodes
 				WHERE  merchant_id = ?
 				  AND  location_id IS NULL
 				  AND  user_id     IS NULL
 				  AND  deleted     = false
+				  AND  enabled     = true
+				ORDER BY qr_id
 				LIMIT  1
-			) AS slug
+			) AS slug,
+			snos.storefront_enabled,
+			(
+				SELECT sa.verification_status
+				FROM   stripe_accounts sa
+				WHERE  sa.merchant_id = snos.merchant_id
+				  AND  TRIM(sa.account_id) <> ''
+				LIMIT  1
+			) AS stripe_account_status,
+			EXISTS (
+				SELECT 1 FROM subscriptions sub
+				WHERE  sub.merchant_id = snos.merchant_id AND sub.status = 'suspended'
+			) AS suspended
 		FROM   scannorder_settings snos
 		INNER JOIN merchant_parameters mp ON mp.merchant_id = snos.merchant_id
 		WHERE  snos.merchant_id = ?
@@ -416,6 +433,9 @@ func (r *Repository) GetScanNOrderIntegration(ctx context.Context, merchantID st
 		revenue               int
 		ordersCount           int
 		slug                  sql.NullString
+		storefrontEnabled     bool
+		stripeAccountStatus   sql.NullString
+		suspended             bool
 	)
 
 	err := db.QueryRowContext(ctx, q,
@@ -432,6 +452,7 @@ func (r *Repository) GetScanNOrderIntegration(ctx context.Context, merchantID st
 		&deliveryEnabled, &deliveryAutoAccept,
 		&deliveryDistanceLimit,
 		&revenue, &ordersCount, &slug,
+		&storefrontEnabled, &stripeAccountStatus, &suspended,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -449,6 +470,9 @@ func (r *Repository) GetScanNOrderIntegration(ctx context.Context, merchantID st
 		Platform:              "scannorder",
 		slug:                  slug.String, // "" si le merchant n'a pas de QR principal
 		Active:                activated,
+		StorefrontEnabled:     storefrontEnabled,
+		OnlineOrderingEnabled: storefrontEnabled && activated && stripeAccountStatus.Valid && !suspended,
+		StripeAccountStatus:   helpers.NullStringToPtr(stripeAccountStatus),
 		CommissionRate:        commissionRate,
 		AutoAcceptOrders:      takeawayAutoAccept || deliveryAutoAccept,
 		SyncedItems:           syncedItems,
@@ -679,6 +703,10 @@ func (r *Repository) UpdateScanNOrderSettings(ctx context.Context, merchantID st
 	if req.Active != nil {
 		setClauses = append(setClauses, "activated = ?")
 		args = append(args, *req.Active)
+	}
+	if req.StorefrontEnabled != nil {
+		setClauses = append(setClauses, "storefront_enabled = ?")
+		args = append(args, *req.StorefrontEnabled)
 	}
 	if req.HeaderTitle != nil {
 		setClauses = append(setClauses, "header_title = ?")

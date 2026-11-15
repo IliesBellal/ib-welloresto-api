@@ -63,6 +63,21 @@ type ScanNOrderIntegration struct {
 	SyncedItems      int             `json:"synced_items"`
 	KPIs             IntegrationKPIs `json:"kpis"`
 
+	// Active (ci-dessus) = scannorder_settings.activated : commutateur de la
+	// commande en ligne. Il ne suffit pas à commander — voir
+	// OnlineOrderingEnabled — et ne dit rien de l'affichage de la carte
+	// (docs/scannorder-carte-sans-stripe.md).
+	//
+	// StorefrontEnabled : carte affichée sur ScanNOrder.
+	StorefrontEnabled bool `json:"storefront_enabled"`
+	// StripeAccountStatus : nil sans compte Stripe Connect enregistré, sinon
+	// stripe_accounts.verification_status ("verified", "action_required").
+	StripeAccountStatus *string `json:"stripe_account_status"`
+	// OnlineOrderingEnabled : les clients peuvent commander et payer —
+	// carte affichée, Active, compte Stripe, abonnement non suspendu (même
+	// règle que scannorder.onlineOrderingEnabled).
+	OnlineOrderingEnabled bool `json:"online_ordering_enabled"`
+
 	// Temps d'attente supplémentaire temporaire. Renvoyés bruts (sans filtrage
 	// par l'échéance) : c'est l'écran de réglages, il doit montrer ce qui est
 	// enregistré. Le filtrage temporel n'a lieu que sur le chemin client
@@ -178,6 +193,7 @@ type StripeBrandingResult struct {
 // UpdateScanNOrderRequest is the body for PATCH /integrations/scannorder.
 type UpdateScanNOrderRequest struct {
 	Active                *bool   `json:"active,omitempty"`
+	StorefrontEnabled     *bool   `json:"storefront_enabled,omitempty"`
 	PrimaryColor          *string `json:"primary_color,omitempty"`
 	HeaderTitle           *string `json:"header_title,omitempty"`
 	HeaderText            *string `json:"header_text,omitempty"`

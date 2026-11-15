@@ -174,7 +174,15 @@ func (s *Service) DisableDeliveroo(ctx context.Context, merchantID, locationID s
 }
 
 func (s *Service) UpdateScanNOrderSettings(ctx context.Context, merchantID string, req *UpdateScanNOrderRequest) error {
-	return s.repo.UpdateScanNOrderSettings(ctx, merchantID, req)
+	if err := s.repo.UpdateScanNOrderSettings(ctx, merchantID, req); err != nil {
+		return err
+	}
+	// Commande en ligne coupée / carte masquée : effet immédiat côté client,
+	// sans attendre l'expiration du cache vitrine (ScannorderMerchantTTL).
+	if req.Active != nil || req.StorefrontEnabled != nil {
+		s.invalidateScanNOrderStatus(ctx, merchantID, []string{"scannorder"})
+	}
+	return nil
 }
 
 func (s *Service) CloseTemporaryIntegrations(ctx context.Context, merchantID string, req *CloseTemporaryIntegrationsRequest) (time.Time, []string, error) {
