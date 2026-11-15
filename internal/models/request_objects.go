@@ -284,6 +284,13 @@ type MerchantRow struct {
 	FixedFees                   *int
 	AccountID                   *string
 
+	// Activated : commande en ligne ouverte (scannorder_settings.activated —
+	// posé par le webhook Stripe à la validation du compte, puis commutateur
+	// back-office / POS). Ne dit rien de l'affichage de la carte.
+	Activated bool
+	// StorefrontEnabled : carte affichée (scannorder_settings.storefront_enabled).
+	StorefrontEnabled bool
+
 	TakeawayEnabled   bool `json:"takeaway_enabled"`
 	TakeawayAvailable bool `json:"takeaway_available"`
 	DeliveryEnabled   bool `json:"delivery_enabled"`

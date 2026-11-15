@@ -132,7 +132,7 @@ func TestScannorderRepository_Postgres(t *testing.T) {
 		t.Fatalf("GetMerchantSEOInfo failed against postgres: %v", err)
 	}
 	if seo.City != "Paris" || seo.ZipCode != "75001" || seo.SEODescription != "d" || seo.SEOCuisineType != "fr" ||
-		!seo.Activated || seo.Blocked || seo.MainSlug == nil || *seo.MainSlug != qrCode {
+		!seo.StorefrontEnabled || seo.Blocked || seo.MainSlug == nil || *seo.MainSlug != qrCode {
 		t.Fatalf("unexpected seo row: %+v (main=%v)", seo, seo.MainSlug)
 	}
 
@@ -159,11 +159,11 @@ func TestScannorderRepository_Postgres(t *testing.T) {
 	if found, tableFound := inSitemap(); !found || tableFound {
 		t.Fatalf("sitemap: main=%v table=%v, want main only", found, tableFound)
 	}
-	mustExec("deactivate sno", `UPDATE scannorder_settings SET activated = false WHERE merchant_id = $1`, merchantID)
+	mustExec("hide storefront", `UPDATE scannorder_settings SET storefront_enabled = false WHERE merchant_id = $1`, merchantID)
 	if found, _ := inSitemap(); found {
-		t.Fatalf("sitemap must exclude a merchant with ScanNOrder deactivated")
+		t.Fatalf("sitemap must exclude a merchant with its storefront hidden")
 	}
-	mustExec("reactivate sno", `UPDATE scannorder_settings SET activated = true WHERE merchant_id = $1`, merchantID)
+	mustExec("show storefront", `UPDATE scannorder_settings SET storefront_enabled = true WHERE merchant_id = $1`, merchantID)
 
 	// --- GetAvailableSlots (CTE récursif traduit) ---
 	mustExec("hours_of_operation", `

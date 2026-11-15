@@ -83,7 +83,8 @@ func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.Me
 
            snos.take_away_enabled, snos.take_away_available,
            snos.delivery_enabled, snos.delivery_available,
-		   snos.in_enabled, snos.in_available, mp.enable_advance_orders
+		   snos.in_enabled, snos.in_available, mp.enable_advance_orders,
+		   snos.activated, snos.storefront_enabled
 
     FROM   qrcodes qr
           INNER JOIN merchant m on %[1]s = qr.merchant_id
@@ -106,6 +107,7 @@ func (r *Repository) GetMerchantByQR(ctx context.Context, qr string) (*models.Me
 		&row.TakeawayEnabled, &row.TakeawayAvailable,
 		&row.DeliveryEnabled, &row.DeliveryAvailable,
 		&row.InEnabled, &row.InAvailable, &row.EnableAdvanceOrders,
+		&row.Activated, &row.StorefrontEnabled,
 	)
 	if err != nil {
 		return nil, err
@@ -306,7 +308,7 @@ func (r *Repository) GetMerchantSEOInfo(ctx context.Context, merchantID string) 
 	query := fmt.Sprintf(`
 	SELECT m.city, m.zip_code, m.country,
 	       snos.seo_title, snos.seo_description, snos.seo_cuisine_type,
-	       snos.activated,
+	       snos.storefront_enabled,
 	       %[2]s,
 	       (SELECT qr.code FROM qrcodes qr
 	         WHERE qr.merchant_id = snos.merchant_id AND %[3]s
@@ -323,7 +325,7 @@ func (r *Repository) GetMerchantSEOInfo(ctx context.Context, merchantID string) 
 	err := db.QueryRowContext(ctx, query, merchantID).Scan(
 		&row.City, &row.ZipCode, &row.Country,
 		&row.SEOTitle, &row.SEODescription, &row.SEOCuisineType,
-		&row.Activated, &row.Blocked, &mainSlug,
+		&row.StorefrontEnabled, &row.Blocked, &mainSlug,
 		&row.FranchiseName, &row.FranchiseSlug,
 	)
 	if err != nil {
@@ -350,7 +352,7 @@ func (r *Repository) GetSitemapEntries(ctx context.Context) ([]SitemapEntry, err
 	        SELECT MIN(main.qr_id) FROM qrcodes main
 	        WHERE main.merchant_id = qr.merchant_id AND %s
 	      )
-	  AND snos.activated = true
+	  AND snos.storefront_enabled = true
 	  AND NOT %s
 	ORDER BY qr.code`, snoMainQRCondition("main"), snoSubscriptionBlocked("qr.merchant_id"))
 
@@ -387,7 +389,7 @@ func (r *Repository) GetSitemapFranchises(ctx context.Context) ([]SitemapEntry, 
 	WHERE EXISTS (
 		SELECT 1
 		FROM merchant m
-		INNER JOIN scannorder_settings snos ON snos.merchant_id = %[1]s AND snos.activated = true
+		INNER JOIN scannorder_settings snos ON snos.merchant_id = %[1]s AND snos.storefront_enabled = true
 		WHERE m.franchise_id = f.franchise_id
 		  AND m.franchise_hub_visible = true
 		  AND EXISTS (SELECT 1 FROM qrcodes main WHERE main.merchant_id = snos.merchant_id AND %[2]s)
@@ -1068,9 +1070,10 @@ func (r *Repository) GetFranchiseHub(ctx context.Context, slug string) (*Franchi
 		  LEFT JOIN packages p ON p.id = sub.package_id
 		  WHERE bs.merchant_id = snos.merchant_id AND bs.enabled = TRUE
 		    AND COALESCE(sub.bookings_enabled, p.bookings_enabled, TRUE)
-		  LIMIT 1)
+		  LIMIT 1),
+		%[5]s
 	FROM merchant m
-	INNER JOIN scannorder_settings snos ON snos.merchant_id = %[1]s AND snos.activated = true
+	INNER JOIN scannorder_settings snos ON snos.merchant_id = %[1]s AND snos.storefront_enabled = true
 	INNER JOIN merchant_parameters mp ON mp.merchant_id = %[1]s
 	INNER JOIN qrcodes qr ON qr.qr_id = (
 		SELECT MIN(main.qr_id) FROM qrcodes main
@@ -1081,7 +1084,8 @@ func (r *Repository) GetFranchiseHub(ctx context.Context, slug string) (*Franchi
 	  AND m.franchise_hub_visible = true
 	  AND NOT %[4]s
 	ORDER BY m.fullName`,
-		snoMerchantJoinCast(), snoActiveExtraPrepMinutes(), snoMainQRCondition("main"), snoSubscriptionBlocked("snos.merchant_id"))
+		snoMerchantJoinCast(), snoActiveExtraPrepMinutes(), snoMainQRCondition("main"), snoSubscriptionBlocked("snos.merchant_id"),
+		snoOnlineOrderingSQL("snos"))
 
 	rows, err := db.QueryContext(ctx, query, franchise.FranchiseID)
 	if err != nil {
@@ -1102,6 +1106,7 @@ func (r *Repository) GetFranchiseHub(ctx context.Context, slug string) (*Franchi
 			&row.PrepTimeMode, &row.PrepTime, &row.ExtraPrepMinutes, &row.AdvanceOrdersEnabled,
 			&row.Slug,
 			&reservationCode,
+			&row.OnlineOrderingEnabled,
 		); err != nil {
 			return nil, nil, err
 		}

@@ -102,6 +102,7 @@ func (s *Service) hubMerchant(ctx context.Context, row FranchiseHubRow) Franchis
 			InEnabled:         row.InEnabled,
 			InAvailable:       row.InAvailable,
 		},
+		OnlineOrderingEnabled: row.OnlineOrderingEnabled,
 	}
 
 	now := time.Now().In(helpers.MerchantLocation(ctx, row.Timezone))

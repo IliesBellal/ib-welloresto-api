@@ -69,6 +69,12 @@ type MerchantData struct {
 	PaymentTypes         PaymentTypes `json:"payment_types"`
 	AdvanceOrdersEnabled bool         `json:"advance_orders_enabled"`
 
+	// OnlineOrderingEnabled : la commande en ligne est possible
+	// (onlineOrderingEnabled). Faux : carte et panier restent utilisables, le
+	// front ne propose pas de passer commande et CreateOrderSNO la refuse
+	// (StatusOnlineOrderingUnavailable).
+	OnlineOrderingEnabled bool `json:"online_ordering_enabled"`
+
 	// DeliveryHours : créneaux de livraison par jour (delivery_hours), absent
 	// quand aucun n'est configuré (livraison sur les horaires d'ouverture).
 	DeliveryHours []OpenHoursDay `json:"delivery_hours,omitempty"`
@@ -103,15 +109,15 @@ type MerchantSEO struct {
 
 // MerchantSEORow : lecture brute de GetMerchantSEOInfo.
 type MerchantSEORow struct {
-	City           string
-	ZipCode        string
-	Country        string
-	SEOTitle       string
-	SEODescription string
-	SEOCuisineType string
-	Activated      bool
-	Blocked        bool
-	MainSlug       *string
+	City              string
+	ZipCode           string
+	Country           string
+	SEOTitle          string
+	SEODescription    string
+	SEOCuisineType    string
+	StorefrontEnabled bool // scannorder_settings.storefront_enabled : carte affichée (indépendant de la commande en ligne)
+	Blocked           bool
+	MainSlug          *string
 	// FranchiseName / FranchiseSlug : franchise dont le hub affiche
 	// l'établissement, nil sinon.
 	FranchiseName *string
@@ -258,6 +264,9 @@ type FranchiseHubMerchant struct {
 	// AdvanceOrdersEnabled : commande programmée possible (le hub propose
 	// « Précommander » quand l'établissement est fermé).
 	AdvanceOrdersEnabled bool `json:"advance_orders_enabled"`
+	// OnlineOrderingEnabled : commande en ligne possible. Faux : le hub
+	// propose « Voir la carte » au lieu de « Commander » / « Précommander ».
+	OnlineOrderingEnabled bool `json:"online_ordering_enabled"`
 	// Discounts : remises actives maintenant, en commande en ligne (à emporter
 	// ou livraison) — même forme que GET /scannorder/{slug}/discounts.
 	Discounts []Discount `json:"discounts"`
@@ -290,6 +299,9 @@ type FranchiseHubRow struct {
 	// ouverte.
 	ReservationCode      *string
 	AdvanceOrdersEnabled bool
+	// OnlineOrderingEnabled : snoOnlineOrderingSQL (l'abonnement bloquant est
+	// déjà exclu du hub).
+	OnlineOrderingEnabled bool
 }
 
 // MerchantFranchise : franchise d'un établissement visible sur son hub (lien

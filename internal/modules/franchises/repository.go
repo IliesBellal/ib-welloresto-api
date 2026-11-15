@@ -17,10 +17,11 @@ import (
 const merchantAdminCondition = `ur.enabled = TRUE AND ur.login_enabled = TRUE
 	AND ((ur.role_id IS NOT NULL AND rl.system_key = 'admin') OR (ur.role_id IS NULL AND ur.admin = TRUE))`
 
-// merchantSNOActive : ScanNOrder activé, non coupé par l'abonnement et QR
+// merchantSNOActive : carte ScanNOrder affichée (storefront_enabled — la
+// commande en ligne n'est pas requise), non coupée par l'abonnement et QR
 // principal existant — les conditions pour figurer sur le hub (mêmes règles que
 // scannorder.snoSubscriptionBlocked / snoMainQRCondition et le sitemap).
-const merchantSNOActive = `(COALESCE(snos.activated, FALSE)
+const merchantSNOActive = `(COALESCE(snos.storefront_enabled, FALSE)
 	AND NOT EXISTS (SELECT 1 FROM subscriptions sub WHERE sub.merchant_id = CAST(m.id AS TEXT)
 		AND (sub.status IN ('suspended', 'canceled') OR sub.scannorder_enabled = FALSE))
 	AND EXISTS (SELECT 1 FROM qrcodes qr WHERE qr.merchant_id = CAST(m.id AS TEXT)

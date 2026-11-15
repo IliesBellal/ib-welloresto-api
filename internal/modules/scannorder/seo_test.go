@@ -10,10 +10,10 @@ func TestApplyMerchantSEO(t *testing.T) {
 		row           MerchantSEORow
 		wantIndexable bool
 	}{
-		{"activé, non bloqué, QR principal", MerchantSEORow{Activated: true, MainSlug: strPtr("pizzeria-x")}, true},
-		{"ScanNOrder désactivé", MerchantSEORow{Activated: false, MainSlug: strPtr("pizzeria-x")}, false},
-		{"abonnement bloquant", MerchantSEORow{Activated: true, Blocked: true, MainSlug: strPtr("pizzeria-x")}, false},
-		{"sans QR principal", MerchantSEORow{Activated: true}, false},
+		{"carte affichée, non bloquée, QR principal", MerchantSEORow{StorefrontEnabled: true, MainSlug: strPtr("pizzeria-x")}, true},
+		{"carte masquée", MerchantSEORow{StorefrontEnabled: false, MainSlug: strPtr("pizzeria-x")}, false},
+		{"abonnement bloquant", MerchantSEORow{StorefrontEnabled: true, Blocked: true, MainSlug: strPtr("pizzeria-x")}, false},
+		{"sans QR principal", MerchantSEORow{StorefrontEnabled: true}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -31,7 +31,7 @@ func TestApplyMerchantSEO_Fields(t *testing.T) {
 	applyMerchantSEO(m, &MerchantSEORow{
 		City: "Lyon", ZipCode: "69001", Country: "France",
 		SEOTitle: "  ", SEODescription: "Pizzas au feu de bois", SEOCuisineType: "Italienne",
-		Activated: true, MainSlug: strPtr("pizzeria-x"),
+		StorefrontEnabled: true, MainSlug: strPtr("pizzeria-x"),
 	})
 
 	if m.Address.City != "Lyon" || m.Address.ZipCode != "69001" || m.Address.Country != "France" || m.Address.Address != "1 rue X" {

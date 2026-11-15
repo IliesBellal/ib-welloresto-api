@@ -184,6 +184,17 @@ func (s *Service) computeGetMerchant(ctx context.Context, qr string) (*MerchantR
 		}
 	}
 
+	// Carte masquée par l'établissement : rien n'est servi. Statut d'échec,
+	// donc jamais mis en cache par GetMerchant.
+	if !row.StorefrontEnabled {
+		return &MerchantResponse{Status: StatusStorefrontDisabled}, nil
+	}
+
+	suspended, err := s.repo.IsMerchantSuspended(ctx, row.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+
 	status, err := s.GetMerchantStatus(ctx, row.MerchantID)
 	if err != nil {
 		return nil, err
@@ -223,7 +234,8 @@ func (s *Service) computeGetMerchant(ctx context.Context, qr string) (*MerchantR
 				Cash:   false,
 				Online: true,
 			},
-			AdvanceOrdersEnabled: row.EnableAdvanceOrders,
+			AdvanceOrdersEnabled:  row.EnableAdvanceOrders,
+			OnlineOrderingEnabled: onlineOrderingEnabled(row, suspended),
 		},
 	}
 	// Mapping des sous-structures refactorisées
@@ -286,7 +298,7 @@ func applyMerchantSEO(m *MerchantData, seo *MerchantSEORow) {
 	m.SEO = &MerchantSEO{
 		Title:         nonEmpty(seo.SEOTitle),
 		CanonicalSlug: seo.MainSlug,
-		Indexable:     seo.Activated && !seo.Blocked && seo.MainSlug != nil,
+		Indexable:     seo.StorefrontEnabled && !seo.Blocked && seo.MainSlug != nil,
 	}
 	if seo.FranchiseName != nil && seo.FranchiseSlug != nil {
 		m.Franchise = &MerchantFranchise{Name: *seo.FranchiseName, Slug: *seo.FranchiseSlug}
@@ -1089,6 +1101,15 @@ func (s *Service) CreateOrderSNO(ctx context.Context, req *models.PricingRequest
 	}
 	if suspended {
 		return models.CreateOrderResult{Status: "merchant_suspended"}, nil
+	}
+
+	// Carte consultable sans compte Stripe (docs/scannorder-carte-sans-stripe.md),
+	// mais aucune commande sans encaissement possible : refus avant toute
+	// écriture. Sans ce contrôle, une commande sur place ou programmée (qui
+	// échappent à la vérification d'ouverture) était insérée puis le checkout
+	// déréférençait un AccountID nil.
+	if !onlineOrderingEnabled(merchant, suspended) {
+		return models.CreateOrderResult{Status: StatusOnlineOrderingUnavailable}, nil
 	}
 
 	// Mode de commande proposé par le marchand — avant la vérif d'ouverture,
