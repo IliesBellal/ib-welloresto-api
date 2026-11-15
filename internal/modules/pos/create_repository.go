@@ -3,6 +3,7 @@ package pos
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strconv"
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
@@ -100,6 +101,46 @@ func (r *POSRepository) InsertSubscription(ctx context.Context, merchantID, pack
 	return nil
 }
 
+// maxMainQRCodeAttempts borne la recherche d'un code libre (nom-ville, puis
+// -2, -3…). 50 homonymes dans la même ville n'existent pas ; au-delà, mieux vaut
+// échouer que boucler.
+const maxMainQRCodeAttempts = 50
+
+// uniqueMainQRCode choisit le code lisible du QR principal d'un établissement
+// tout juste inséré : son nom et sa ville (helpers.ScanNOrderSlugBase),
+// suffixés -2, -3… tant que le code est pris. Le code est figé : il n'est
+// jamais recalculé si l'établissement change de nom ou de ville, pour ne pas
+// casser les liens déjà partagés.
+//
+// Lecture puis insertion dans la même transaction : deux créations simultanées
+// d'homonymes peuvent encore se heurter, c'est l'index unique de
+// qrcodes.code (migration 217) qui fait alors échouer la seconde.
+func (r *POSRepository) uniqueMainQRCode(ctx context.Context, merchantID string) (string, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	var name, city sql.NullString
+	if err := db.QueryRowContext(ctx,
+		`SELECT fullName, city FROM merchant WHERE id = ?`, merchantID,
+	).Scan(&name, &city); err != nil {
+		return "", err
+	}
+
+	base := helpers.ScanNOrderSlugBase(name.String, city.String)
+	for n := 1; n <= maxMainQRCodeAttempts; n++ {
+		candidate := helpers.ScanNOrderSlugCandidate(base, n)
+		var taken bool
+		if err := db.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM qrcodes WHERE code = ?)`, candidate,
+		).Scan(&taken); err != nil {
+			return "", err
+		}
+		if !taken {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("no free QR code for %q after %d attempts", base, maxMainQRCodeAttempts)
+}
+
 // InitMerchantSatellites creates the companion rows expected for every new merchant.
 func (r *POSRepository) InitMerchantSatellites(ctx context.Context, merchantID string) error {
 	db := dbx.GetDB(ctx, r.database)
@@ -110,11 +151,26 @@ func (r *POSRepository) InitMerchantSatellites(ctx context.Context, merchantID s
 		uuidExpr = "CAST(gen_random_uuid() AS TEXT)"
 	}
 
-	// 2 QR codes — one for standard menu, one for menu-only (mywelloresto flag)
+	// 2 QR codes — one for standard menu, one for menu-only (mywelloresto flag).
+	// Le premier est le QR principal, celui de l'URL publique de la carte
+	// ScanNOrder : son code est lisible (nom-ville, voir uniqueMainQRCode). Le
+	// second garde un code aléatoire, comme les QR de table, qui ne doivent pas
+	// se deviner.
 	for _, row := range []struct{ menuOnly, mywelloresto bool }{{false, false}, {true, true}} {
+		codeExpr, codeArgs := uuidExpr, []interface{}{}
+		if !row.menuOnly {
+			code, err := r.uniqueMainQRCode(ctx, merchantID)
+			if err != nil {
+				log.Error("InitMerchantSatellites: failed to build main QR code: " + err.Error())
+				return err
+			}
+			codeExpr, codeArgs = "?", []interface{}{code}
+		}
+		args := append([]interface{}{merchantID}, codeArgs...)
+		args = append(args, row.menuOnly, row.mywelloresto)
 		if _, err := db.ExecContext(ctx,
-			`INSERT INTO qrcodes (merchant_id, code, menu_only, mywelloresto_flag) VALUES (?, `+uuidExpr+`, ?, ?)`,
-			merchantID, row.menuOnly, row.mywelloresto,
+			`INSERT INTO qrcodes (merchant_id, code, menu_only, mywelloresto_flag) VALUES (?, `+codeExpr+`, ?, ?)`,
+			args...,
 		); err != nil {
 			log.Error("InitMerchantSatellites: failed to insert QR code: " + err.Error())
 			return err

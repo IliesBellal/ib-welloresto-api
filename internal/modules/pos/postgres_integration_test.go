@@ -88,6 +88,17 @@ func TestPOSRepository_Postgres(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM qrcodes WHERE merchant_id = $1`, merchantID).Scan(&qrCount); err != nil || qrCount != 2 {
 		t.Fatalf("qrcodes after satellites = (%d, %v), want 2", qrCount, err)
 	}
+	// Le QR principal a un code lisible nom-ville (suffixé si pris), le QR
+	// « carte seule » un UUID.
+	var mainCode, menuOnlyCode string
+	if err := db.QueryRowContext(ctx, `SELECT code FROM qrcodes WHERE merchant_id = $1 AND NOT menu_only`, merchantID).Scan(&mainCode); err != nil ||
+		!strings.HasPrefix(mainCode, "itest-pos-merchant-paris") {
+		t.Fatalf("main QR code = (%q, %v), want itest-pos-merchant-paris[-n]", mainCode, err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT code FROM qrcodes WHERE merchant_id = $1 AND menu_only`, merchantID).Scan(&menuOnlyCode); err != nil ||
+		len(menuOnlyCode) != 36 {
+		t.Fatalf("menu-only QR code = (%q, %v), want a UUID", menuOnlyCode, err)
+	}
 	adminRoleID, _, err := rolesModule.NewRepository(db).EnsureSystemRoles(ctx, merchantID)
 	if err != nil {
 		t.Fatalf("EnsureSystemRoles: %v", err)
