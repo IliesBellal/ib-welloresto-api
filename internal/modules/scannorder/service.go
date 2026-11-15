@@ -175,13 +175,12 @@ func (s *Service) computeGetMerchant(ctx context.Context, qr string) (*MerchantR
 		return nil, err
 	}
 
-	// Expiration QR (2h)
-	if row.CreationDate != nil {
-		if time.Since(*row.CreationDate) > 2*time.Hour {
-			return &MerchantResponse{
-				Status: "qr_code_expired",
-			}, nil
-		}
+	// Expiration des QR temporaires (table / serveur, 2 h) ; le QR principal
+	// est permanent (qrCodeExpired).
+	if qrCodeExpired(row, time.Now()) {
+		return &MerchantResponse{
+			Status: "qr_code_expired",
+		}, nil
 	}
 
 	// Carte masquée par l'établissement : rien n'est servi. Statut d'échec,
