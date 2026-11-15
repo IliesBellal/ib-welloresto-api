@@ -381,6 +381,8 @@ type Order struct {
 	Priority              *int             `json:"priority"`
 	CreationDate          int64            `json:"creation_date"`
 	FulfillmentType       *string          `json:"fulfillment_type"`
+	OrderSource           *string          `json:"order_source"` // canal (orders.order_source) : WELLO_RESTO_POS, KIOSK, SCANNORDER, UBER_EATS, DELIVEROO ; nil si non reconnu
+	KioskName             *string          `json:"kiosk_name"`   // nom de la borne (kiosks.name), commandes KIOSK uniquement
 	LastUpdate            int64            `json:"last_update"`
 	DeliverySession       *DeliverySession `json:"delivery_session"`
 	CashRegister          *CashRegister    `json:"cash_register"`
