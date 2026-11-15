@@ -5117,3 +5117,44 @@ ISO 4217, ex. `"EUR"`). Comme `business_name`, elle est attachée par
 si le merchant n'a pas encore de paramètres. La borne en déduit le symbole des
 prix affichés et imprimés (« 12,50 € » au lieu de « 12.50 EUR »), comme la
 caisse le fait déjà avec la `currency` de la réponse de connexion.
+
+## Upload d'image d'option de configuration : version d'URL et ordre des opérations (2026-11-13)
+
+**Constat.** `UploadAttributeOptionImage` était annoncé « calqué à l'identique »
+sur `UploadProductImage`, mais celui-ci a évolué depuis (cache-buster, ordre
+des opérations) et pas l'endpoint des options :
+- la clé R2 est fixe par option (`config_options/{option_id}{ext}`) : remplacer
+  une image par une autre du même format redonnait **la même URL** — le
+  back-office (`<img>`), les navigateurs, le CDN et les bornes (`Image.network`)
+  gardaient l'ancienne en cache ;
+- l'ancienne image était supprimée **avant** l'envoi de la nouvelle : un échec
+  d'upload laissait l'option pointer vers un fichier effacé ;
+- l'ancien fichier était supprimé quelle que soit sa provenance. Or l'URL d'une
+  option peut pointer vers le fichier d'une autre option du même nom
+  (`propagateAttributeOptionImageByTitle`) : si leurs titres avaient divergé
+  depuis, cette suppression cassait l'image de l'autre option.
+
+**Décision.** Même séquence que `UploadProductImage` : upload R2 → URL versionnée
+`…{ext}?v=<ms>` (`versionedImageURL`, `GetKeyFromURL` ignore la requête) →
+écriture en base (propagée aux options du même nom) → suppression de l'ancien
+fichier **seulement** s'il a une autre clé que le nouveau **et** appartient à
+cette option (`shouldDeleteOldOptionImage`, préfixe
+`config_options/{option_id}.`). Conséquence assumée : remplacer l'image d'une
+option par celle d'une option du même nom laisse l'ancien fichier de l'autre
+option orphelin dans R2 (≤ 2 Mo) plutôt que de risquer une image cassée.
+
+La réponse renvoie l'URL versionnée dans `image_url` ; les options déjà en base
+gardent leur URL sans `?v=` jusqu'à leur prochain remplacement (aucune migration).
+
+Côté back-office, la cause de « l'image uploadée ne s'affiche pas pendant la
+modification » était indépendante de l'API : voir
+`wello-back-office/src/hooks/useAttributesData.ts` (`refreshAttributes` repassait
+`loading` à vrai, ce qui démontait le formulaire d'édition et le recréait avec
+l'attribut figé à l'ouverture — sans la nouvelle image, et en perdant les
+modifications non enregistrées ; enregistrer ensuite renvoyait l'ancienne URL,
+déjà supprimée si le format avait changé).
+
+Tests : `attribute_option_image_test.go` (`versionedImageURL`,
+`shouldDeleteOldOptionImage`) ; `go vet ./internal/modules/menu/` propre. L'upload
+de bout en bout (R2 + base) n'est pas couvert automatiquement.
+

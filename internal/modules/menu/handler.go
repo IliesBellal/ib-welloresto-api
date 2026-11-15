@@ -1728,18 +1728,8 @@ func (h *MenuHandler) UploadAttributeOptionImage(w http.ResponseWriter, r *http.
 	ext := r2.GetExtensionFromContentType(contentType)
 	key := r2.GenerateConfigOptionKey(user.MerchantID, optionID, ext)
 
-	// 7. Supprimer l'ancienne image de R2 (si elle existe)
-	if oldImageURL != "" {
-		oldKey := h.r2Client.GetKeyFromURL(oldImageURL)
-		if oldKey != "" {
-			if err := h.r2Client.DeleteFile(ctx, oldKey); err != nil {
-				// On log l'erreur mais on continue (pas bloquant)
-				log.Warn("[WARN] UploadAttributeOptionImage DeleteFile (old image): " + err.Error())
-			}
-		}
-	}
-
-	// 8. Upload le nouveau fichier vers R2
+	// 7. Upload le nouveau fichier vers R2 — AVANT toute suppression : un échec
+	// d'upload ne doit pas laisser l'option pointer vers une image effacée.
 	publicURL, err := h.r2Client.UploadFile(ctx, key, file, contentType)
 	if err != nil {
 		log.Error("[ERROR] UploadAttributeOptionImage UploadFile: " + err.Error())
@@ -1747,17 +1737,61 @@ func (h *MenuHandler) UploadAttributeOptionImage(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// 9. Mettre à jour la base de données
-	if err := h.service.UpdateAttributeOptionImageURL(ctx, token, optionID, publicURL); err != nil {
+	// La clé R2 est fixe par option : remplacer une image par une autre du même
+	// format redonnerait la même URL, et le back-office (<img>), navigateurs,
+	// CDN et bornes continueraient d'afficher l'ancienne depuis leur cache. Le
+	// paramètre de version change l'URL à chaque upload ; GetKeyFromURL
+	// l'ignore. Même mécanisme que UploadProductImage.
+	versionedURL := versionedImageURL(publicURL, time.Now())
+
+	// 8. Mettre à jour la base de données
+	if err := h.service.UpdateAttributeOptionImageURL(ctx, token, optionID, versionedURL); err != nil {
 		log.Error("[ERROR] UploadAttributeOptionImage UpdateAttributeOptionImageURL: " + err.Error())
 		models.SendErrorJSON(w, "menu", "upload_attribute_option_image", err)
 		return
 	}
 
+	// 9. Supprimer l'ancienne image de R2, une fois la nouvelle en place et
+	// seulement si c'était un fichier de cette option (voir
+	// shouldDeleteOldOptionImage).
+	if oldImageURL != "" {
+		oldKey := h.r2Client.GetKeyFromURL(oldImageURL)
+		if shouldDeleteOldOptionImage(oldKey, key, user.MerchantID, optionID) {
+			if err := h.r2Client.DeleteFile(ctx, oldKey); err != nil {
+				// On log l'erreur mais on continue (pas bloquant)
+				log.Warn("[WARN] UploadAttributeOptionImage DeleteFile (old image): " + err.Error())
+			}
+		}
+	}
+
 	// 10. Réponse
 	models.SendJSON(w, http.StatusOK, "menu", "upload_attribute_option_image", map[string]interface{}{
-		"image_url": publicURL,
+		"image_url": versionedURL,
 	})
+}
+
+// versionedImageURL ajoute à publicURL un paramètre de version (horodatage en
+// millisecondes) qui force navigateurs, CDN et apps à recharger l'image quand
+// son contenu change alors que la clé R2, elle, reste identique.
+func versionedImageURL(publicURL string, now time.Time) string {
+	return publicURL + "?v=" + strconv.FormatInt(now.UnixMilli(), 10)
+}
+
+// shouldDeleteOldOptionImage indique si l'ancien fichier R2 d'une option peut
+// être supprimé après remplacement de son image : il faut qu'il ait une autre
+// clé que le nouveau (sinon on effacerait la nouvelle image) ET qu'il soit un
+// fichier de cette option. L'URL d'une option peut en effet pointer vers le
+// fichier d'une autre option du même nom (voir
+// propagateAttributeOptionImageByTitle) : le supprimer casserait l'image de
+// celle-ci si leurs titres ont divergé depuis.
+func shouldDeleteOldOptionImage(oldKey, newKey, merchantID, optionID string) bool {
+	if oldKey == "" || oldKey == newKey {
+		return false
+	}
+	// Clé sans extension : ".../config_options/{optionID}." (l'extension est
+	// normalisée en ".ext" par GenerateConfigOptionKey).
+	ownPrefix := r2.GenerateConfigOptionKey(merchantID, optionID, "")
+	return strings.HasPrefix(oldKey, ownPrefix)
 }
 
 // GetDeliverooMenu récupère le menu depuis l'API Deliveroo
