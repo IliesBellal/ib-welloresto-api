@@ -141,7 +141,7 @@ func TestValidatePublishPlan_Rejects(t *testing.T) {
 func TestValidatePublishPlan_AcceptsTheNewObstacleTypesAndLongWalls(t *testing.T) {
 	for _, typ := range []ObstacleType{
 		ObstacleTypeWall, ObstacleTypeDoor, ObstacleTypeWindow, ObstacleTypeStairs,
-		ObstacleTypePlant, ObstacleTypeBar, ObstacleTypePillar,
+		ObstacleTypePlant, ObstacleTypeBar, ObstacleTypePillar, ObstacleTypeCashRegister,
 	} {
 		plan := PublishPlanRequest{Obstacles: PublishObstacles{Create: []PublishObstacleCreate{{
 			TempID: "tmp_o", FloorID: "1", Type: typ, X: 10, Y: 10, Width: 1000, Height: 12,

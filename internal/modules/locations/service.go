@@ -175,10 +175,11 @@ func (s *LocationsService) DeleteFloor(ctx context.Context, token, floorID strin
 }
 
 // validObstacleTypes reflète le catalogue d'obstacles proposé par l'éditeur BO
-// et la contrainte floor_obstacles_type_check (migration 205).
+// et la contrainte floor_obstacles_type_check (migrations 205 et 213).
 var validObstacleTypes = map[ObstacleType]bool{
 	ObstacleTypeWall: true, ObstacleTypeBar: true, ObstacleTypeStairs: true, ObstacleTypeDoor: true,
 	ObstacleTypeWindow: true, ObstacleTypePlant: true, ObstacleTypePillar: true,
+	ObstacleTypeCashRegister: true,
 }
 
 // maxObstacleSize : un mur dessiné d'un bord à l'autre du plan mesure jusqu'à

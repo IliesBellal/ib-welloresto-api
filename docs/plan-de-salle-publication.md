@@ -90,7 +90,7 @@ lot incrémentent la révision (pas les routes unitaires).
 
 ## Obstacles : catalogue
 
-`wall`, `door`, `window`, `stairs`, `plant`, `bar`, `pillar`. `direction` n'est
+`wall`, `door`, `window`, `stairs`, `plant`, `bar`, `pillar`, `cash_register` (caisse). `direction` n'est
 accepté que pour `door`. Les coordonnées d'un obstacle désignent son **centre**
 (celles d'une table, son coin haut-gauche) ; l'angle est en degrés.
 

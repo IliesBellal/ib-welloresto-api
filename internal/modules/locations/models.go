@@ -84,6 +84,8 @@ const (
 	ObstacleTypeWindow ObstacleType = "window"
 	ObstacleTypePlant  ObstacleType = "plant"
 	ObstacleTypePillar ObstacleType = "pillar"
+	// ObstacleTypeCashRegister : la caisse (poste d'encaissement).
+	ObstacleTypeCashRegister ObstacleType = "cash_register"
 )
 
 // Obstacle est le modèle de lecture d'un obstacle du plan de salle (mur, bar,
