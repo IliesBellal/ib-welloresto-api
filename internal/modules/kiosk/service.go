@@ -1547,12 +1547,18 @@ func mapProductEntryToKioskProduct(p *models.ProductEntry, orderType string) Kio
 	available := p.Available == nil || *p.Available
 
 	allergens := make([]string, 0, len(p.Allergens))
+	allergenDetails := make([]KioskAllergen, 0, len(p.Allergens))
 	for _, a := range p.Allergens {
 		allergens = append(allergens, a.Name)
+		allergenDetails = append(allergenDetails, KioskAllergen{
+			ID: a.ID, Name: a.Name, Code: a.Code, Icon: a.Icon, Color: a.Color,
+		})
 	}
 	tags := make([]string, 0, len(p.Tags))
+	tagDetails := make([]KioskTag, 0, len(p.Tags))
 	for _, t := range p.Tags {
 		tags = append(tags, t.Name)
+		tagDetails = append(tagDetails, KioskTag{ID: t.ID, Name: t.Name, Color: t.Color})
 	}
 	components := make([]KioskProductComponent, 0, len(p.Components))
 	for _, c := range p.Components {
@@ -1597,7 +1603,9 @@ func mapProductEntryToKioskProduct(p *models.ProductEntry, orderType string) Kio
 		Available:          available,
 		AvailableOnKiosk:   true,
 		Allergens:          allergens,
+		AllergenDetails:    allergenDetails,
 		Tags:               tags,
+		TagDetails:         tagDetails,
 		ModifierGroups:     modifierGroups,
 		IsPopular:          p.IsPopular,
 		TVARate:            p.TVARate,

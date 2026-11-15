@@ -396,6 +396,29 @@ type KioskCategory struct {
 	Products  []KioskProduct `json:"products"`
 }
 
+// KioskAllergen : un allergène réglementaire (14 allergènes UE) tel que la
+// borne l'affiche, avec son icône (emoji) et sa couleur (hex) maintenues par
+// Wello Resto. Exposé dans KioskProduct.AllergenDetails, à côté de la liste de
+// noms KioskProduct.Allergens (même ordre) que les bornes déjà installées
+// continuent de lire : le champ est ajouté, jamais substitué.
+type KioskAllergen struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Code  string `json:"code,omitempty"`
+	Icon  string `json:"icon,omitempty"`
+	Color string `json:"color,omitempty"`
+}
+
+// KioskTag : une étiquette marchand (ex. « Végétarien ») avec la couleur de fond
+// (hex) choisie dans le back-office. Exposé dans KioskProduct.TagDetails, à côté
+// de la liste de noms KioskProduct.Tags (même ordre) que les bornes déjà
+// installées continuent de lire : le champ est ajouté, jamais substitué.
+type KioskTag struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Color string `json:"color,omitempty"`
+}
+
 type KioskProduct struct {
 	ID                 string                  `json:"id"`
 	Name               string                  `json:"name"`
@@ -406,7 +429,9 @@ type KioskProduct struct {
 	Available          bool                    `json:"available"`
 	AvailableOnKiosk   bool                    `json:"available_on_kiosk"`
 	Allergens          []string                `json:"allergens,omitempty"`
+	AllergenDetails    []KioskAllergen         `json:"allergen_details,omitempty"`
 	Tags               []string                `json:"tags,omitempty"`
+	TagDetails         []KioskTag              `json:"tag_details,omitempty"`
 	ModifierGroups     []KioskModifierGroup    `json:"modifier_groups,omitempty"`
 	IsPopular          bool                    `json:"is_popular,omitempty"`
 	TVARate            *float64                `json:"tva_rate,omitempty"`

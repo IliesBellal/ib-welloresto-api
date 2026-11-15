@@ -5158,3 +5158,24 @@ Tests : `attribute_option_image_test.go` (`versionedImageURL`,
 `shouldDeleteOldOptionImage`) ; `go vet ./internal/modules/menu/` propre. L'upload
 de bout en bout (R2 + base) n'est pas couvert automatiquement.
 
+## Borne : `allergen_details` (icône et couleur des allergènes) — 2026-11-14
+
+`KioskProduct` expose désormais `allergen_details: [{id, name, code, icon, color}]`
+(`icon` = emoji, `color` = hex, tous deux maintenus par Wello Resto dans la table
+`allergens`), **en plus** de `allergens` (liste de noms, même ordre) qui reste
+inchangé : champ additif, les bornes déjà installées n'ont rien à mettre à jour. Omis
+quand le produit n'a aucun allergène ; `icon`/`color` omis s'ils sont vides.
+
+Implémentation : `mapProductEntryToKioskProduct` (`service.go`), type `KioskAllergen`
+(`models.go`). Test : `internal/modules/kiosk/allergen_details_test.go`. La borne
+(`wello-kiosk`) retombe sur les noms seuls si le champ est absent. Voir
+`wello-kiosk/docs/KIOSK_DECISIONS.md`, « Allergènes avec icône et couleur ».
+
+## Borne : `tag_details` (couleur des tags) — 2026-11-14
+
+`KioskProduct` expose aussi `tag_details: [{id, name, color}]` (`color` = hex choisi
+dans le back-office, omis s'il est vide), **en plus** de `tags` (liste de noms, même
+ordre) inchangé — même principe additif que `allergen_details`. Omis sans tag.
+Implémentation : `mapProductEntryToKioskProduct` (`service.go`), type `KioskTag`
+(`models.go`). Test : `allergen_details_test.go`. La borne retombe sur sa palette
+interne pour un tag sans couleur ou si le champ est absent.
