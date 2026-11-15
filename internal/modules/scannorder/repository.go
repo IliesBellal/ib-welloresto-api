@@ -560,13 +560,16 @@ func (r *Repository) GetMerchantOpenState(ctx context.Context, merchantID string
 	day := normalizeDayOfWeek(dow)
 	holidayRepo := settingspkg.NewRepository(r.database)
 
-	// 1️⃣ Global open status
+	// 1️⃣ Global open status — commutateur ouvert/fermé du POS (is_open) et
+	// fermeture temporaire ScanNOrder. Volontairement indépendant de
+	// snos.activated : l'ouverture décrit l'établissement, pas la commande en
+	// ligne (onlineOrderingEnabled), sinon une carte sans Stripe serait
+	// « Fermé » en permanence.
 	query1 := fmt.Sprintf(`
 	SELECT 1
 	FROM merchant_parameters mp
 	INNER JOIN scannorder_settings snos ON snos.merchant_id = mp.merchant_id
 	WHERE mp.is_open = true
-	AND snos.activated = true
 	AND (snos.closed_until IS NULL OR snos.closed_until <= %s)
 	AND mp.merchant_id = ?
 	LIMIT 1`, dbx.UTCNow())
@@ -581,7 +584,7 @@ func (r *Repository) GetMerchantOpenState(ctx context.Context, merchantID string
 	query2 := `
 	SELECT 1
 	FROM hours_of_operation hoo
-	INNER JOIN scannorder_settings snos ON snos.merchant_id = hoo.merchant_id AND snos.activated = true
+	INNER JOIN scannorder_settings snos ON snos.merchant_id = hoo.merchant_id
 	INNER JOIN merchant_parameters mp ON mp.merchant_id = snos.merchant_id
 	WHERE hoo.merchant_id = ?
 	AND (
@@ -657,7 +660,7 @@ func (r *Repository) GetMerchantOpenHours(ctx context.Context, merchantID string
 		CAST(hoo.hour_from AS CHAR(8)),
 		CAST(hoo.hour_to AS CHAR(8))
 	FROM hours_of_operation hoo
-	INNER JOIN scannorder_settings snos ON snos.merchant_id = hoo.merchant_id AND snos.activated = true
+	INNER JOIN scannorder_settings snos ON snos.merchant_id = hoo.merchant_id
 	INNER JOIN merchant_parameters mp ON mp.merchant_id = snos.merchant_id
 	WHERE hoo.merchant_id = ?
 	AND hoo.enabled = true
