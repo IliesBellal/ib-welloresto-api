@@ -37,6 +37,36 @@ puis `CreateCheckoutSession` déréférençait un `AccountID` nil (panic).
   Flutter actuelle ne l'appelle pas. S'il était activé sans compte Stripe, la
   commande reste impossible (garde-fou ci-dessus).
 
+## URL lisible (nouveaux établissements)
+
+Le code du QR principal (`qrcodes.code`, celui de `/restaurant/{code}`) est
+`nom-ville` au lieu d'un UUID : « L'Atelier du Bœuf » à Lyon →
+`l-atelier-du-boeuf-lyon` (`helpers.ScanNOrderSlugBase`, `pos.uniqueMainQRCode`,
+appelé par `InitMerchantSatellites`, donc `/pos/create` comme le signup).
+
+- Minuscules, accents retirés, tout ce qui n'est pas `a-z0-9` devient un tiret
+  unique. Nom limité à 40 caractères, ville à 30. La ville n'est pas répétée si
+  le nom la termine déjà (« Pizza Metz » à Metz → `pizza-metz`). Nom sans lettre
+  latine : `restaurant`.
+- Déjà pris : `-2`, `-3`… (50 essais maximum). L'index unique
+  `qrcodes_code_key` (migration 217) rend une collision impossible ; deux
+  créations simultanées d'homonymes peuvent faire échouer la seconde, qui
+  réessaie à la demande.
+- Segments réservés aux routes `/scannorder/franchises`, `/events`, `/sitemap` :
+  suffixe `-restaurant`.
+- **Figé** : jamais recalculé si l'établissement change de nom ou de ville, et
+  **non modifiable** (décision du 2026-11-15) — les liens déjà partagés ne
+  cassent pas.
+- **Établissements existants : inchangés** (leur UUID reste leur code). Pas
+  d'alias ni de redirection.
+- Restent des UUID : les QR de table et de serveur (un code lisible se devinerait
+  pour commander « sur place »), et le second QR créé à l'inscription
+  (`menu_only`, qui n'est pas le lien public).
+- Le QR principal ne **expire** pas (`qrCodeExpired`) : seuls les QR de table et
+  de serveur valent 2 h. Sans cette exception, `creation_date` (`DEFAULT now()`)
+  aurait rendu l'URL d'un établissement neuf inutilisable deux heures après sa
+  création.
+
 ## Requêtes (Postgres)
 
 Établissements qui **pourront commander** après le déploiement (même règle que
@@ -89,8 +119,9 @@ ORDER BY m.fullname;
 
 ## Déploiement
 
-1. Migration `216_scannorder_settings_storefront_enabled` **avant** l'API (l'API lit
-   la colonne).
+1. Migrations **avant** l'API : `216_scannorder_settings_storefront_enabled` (l'API
+   lit la colonne) puis `217_qrcodes_code_unique` (refuse de s'appliquer s'il
+   existe des codes en double ; la requête pour les lister est dans son en-tête).
 2. API.
 3. Front ScanNOrder et back-office (ils lisent les nouveaux champs ; un front
    ancien reste fonctionnel, la commande refusée remonte en erreur générique).
