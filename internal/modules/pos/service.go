@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/mail"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -321,6 +322,15 @@ func (s *POSService) UpdateMerchantSettings(ctx context.Context, token string, r
 				req.Merchant.Email = &email
 			}
 
+			if req.Info.Website != nil {
+				// Vide accepté (colonne NOT NULL : on stocke une chaîne vide).
+				website := strings.TrimSpace(*req.Info.Website)
+				if website != "" && !validMerchantWebsite(website) {
+					return nil, models.ErrInvalidInput
+				}
+				req.Merchant.WebSite = &website
+			}
+
 			if req.Info.Currency != nil {
 				req.Parameters.Currency = req.Info.Currency
 			}
@@ -525,6 +535,7 @@ func (s *POSService) GetMerchantSettings(ctx context.Context, token string) (*mo
 			Phone:        stringVal(m.MerchantTel),
 			SIRET:        stringVal(m.SIRET),
 			Email:        stringVal(m.Email),
+			Website:      stringVal(m.WebSite),
 			Address:      stringVal(m.Address),
 			Street:       stringVal(m.Street),
 			City:         stringVal(m.City),
@@ -629,6 +640,22 @@ func stringVal(v *string) string {
 func validMerchantEmail(email string) bool {
 	addr, err := mail.ParseAddress(email)
 	return err == nil && addr.Address == email && strings.Contains(email[strings.LastIndex(email, "@"):], ".")
+}
+
+// maxMerchantWebsiteLen : taille de la colonne merchant.web_site (varchar(100)).
+const maxMerchantWebsiteLen = 100
+
+// validMerchantWebsite accepte une URL http(s) absolue avec un hôte, dans la
+// limite de la colonne merchant.web_site.
+func validMerchantWebsite(raw string) bool {
+	if len(raw) > maxMerchantWebsiteLen {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return u.Scheme == "http" || u.Scheme == "https"
 }
 
 func floatVal(v *float64) float64 {

@@ -755,6 +755,8 @@ type POSSettingsInfo struct {
 	// Email : adresse de l'établissement (merchant.email), destinataire de
 	// repli des documents financiers (docsmode.Recipient).
 	Email        string  `json:"email"`
+	// Website : site web de l'établissement (merchant.web_site, 100 car. max).
+	Website      string  `json:"website"`
 	Address      string  `json:"address"`
 	Street       string  `json:"street"`
 	City         string  `json:"city"`
@@ -774,6 +776,7 @@ type POSSettingsInfoPatch struct {
 	Phone        *string  `json:"phone,omitempty"`
 	SIRET        *string  `json:"siret,omitempty"`
 	Email        *string  `json:"email,omitempty"`
+	Website      *string  `json:"website,omitempty"`
 	Address      *string  `json:"address,omitempty"`
 	Street       *string  `json:"street,omitempty"`
 	City         *string  `json:"city,omitempty"`

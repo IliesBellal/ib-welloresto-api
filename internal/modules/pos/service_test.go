@@ -1,6 +1,7 @@
 package pos
 
 import (
+	"strings"
 	"testing"
 
 	"welloresto-api/internal/modules/notification"
@@ -79,6 +80,24 @@ func TestBroadcastPOSStatus_IgnoresNoListener(t *testing.T) {
 
 	if len(fake.calls) != 1 {
 		t.Fatalf("BroadcastToMerchant appelé %d fois, attendu 1", len(fake.calls))
+	}
+}
+
+func TestValidMerchantWebsite(t *testing.T) {
+	for website, want := range map[string]bool{
+		"https://www.brasseriedumidi.fr":        true,
+		"http://resto.example.com/carte?lang=fr": true,
+		"https://" + strings.Repeat("a", 92):    true, // 100 car. pile
+		"https://" + strings.Repeat("a", 93):    false, // 101 car. : dépasse la colonne
+		"www.brasseriedumidi.fr":                false, // schéma manquant
+		"ftp://resto.example.com":               false,
+		"javascript:alert(1)":                   false,
+		"https://":                              false,
+		"pas une url":                           false,
+	} {
+		if got := validMerchantWebsite(website); got != want {
+			t.Errorf("validMerchantWebsite(%q) = %v, want %v", website, got, want)
+		}
 	}
 }
 
