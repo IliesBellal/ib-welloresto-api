@@ -35,6 +35,7 @@ func (h *OrdersHandler) GetPendingOrders(w http.ResponseWriter, r *http.Request)
 
 	orders, err := h.ordersService.GetPendingOrders(ctx, app)
 	if err != nil {
+		logger.FromContext(ctx).Error("GetPendingOrders failed: " + err.Error())
 		models.SendJSON(w, http.StatusInternalServerError, "orders", "pending", map[string]string{"error": err.Error()})
 		return
 	}

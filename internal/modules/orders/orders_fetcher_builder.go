@@ -798,7 +798,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 	LEFT JOIN customer c ON o.customer_id = c.customer_id
 	LEFT JOIN users u ON ` + castChar("o.responsible") + ` = u.user_id
     LEFT JOIN cash_registers cr on ` + castChar("cr.cash_register_id") + ` = o.cash_register_id
-	LEFT JOIN kiosks k ON k.public_id = o.kiosk_id
+	LEFT JOIN kiosks k ON k.id = o.kiosk_id
 	WHERE o.merchant_id = ? ` + whereFilters.SQL + " " + orderByFilter + " " + limitsFilters
 
 		rows, err := runQuery(step, q, filteredArgs()...)
