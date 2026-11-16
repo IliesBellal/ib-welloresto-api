@@ -1149,6 +1149,7 @@ func (r *Repository) GetUpsellProducts(ctx context.Context, merchantID string) (
 		p.product_id
 	FROM products p
 	WHERE p.merchant_id = ?
+	AND p.enabled = TRUE
 	AND p.is_popular = TRUE
 	AND p.status in ('available','1')
 	AND (p.is_product_group IS NULL OR p.is_product_group != TRUE)

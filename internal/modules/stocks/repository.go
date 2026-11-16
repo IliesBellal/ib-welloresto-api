@@ -366,26 +366,28 @@ func (r *StocksRepository) GetStockProducts(ctx context.Context, merchantID stri
 		qCateg = `
             SELECT merchant_categ_id, categ_name
             FROM productcateg
-            WHERE available = true AND merchant_id = ?
+            WHERE available = true AND enabled = TRUE AND merchant_id = ?
             ORDER BY categ_order ASC;
         `
+		// enabled = TRUE : un produit supprimé (soft delete) ne doit plus être
+		// proposé à la déclaration de perte.
 		qObjects = `
             SELECT product_id, name, category, 1 as unit_of_measure
             FROM products
-            WHERE merchant_id = ? AND available = true;
+            WHERE merchant_id = ? AND available = true AND enabled = TRUE;
         `
 
 	case "COMPONENT":
 		qCateg = `
             SELECT merchant_categ_id, name
             FROM component_category
-            WHERE merchant_id = ? AND available = true
+            WHERE merchant_id = ? AND available = true AND enabled = TRUE
             ORDER BY categ_order ASC;
         `
 		qObjects = `
             SELECT component_id, name, category_id, unit_of_measure
             FROM components
-            WHERE merchant_id = ? AND category_id <> 'UBER_EATS_TEMP';
+            WHERE merchant_id = ? AND enabled = TRUE AND category_id <> 'UBER_EATS_TEMP';
         `
 	default:
 		return nil, errors.New("invalid type")
