@@ -6034,16 +6034,20 @@ func (r *MenuRepository) BulkUpdateProductPrices(ctx context.Context, merchantID
 	return nil
 }
 
-// DeleteProduct disables a product by setting enabled = 0.
+// DeleteProduct disables a product by setting enabled = 0, ainsi que ses
+// sous-produits encore rattachés (comme BulkDeleteProducts) : restés actifs sous
+// un groupe supprimé, ils n'apparaissent plus dans le menu mais continuent de
+// remonter dans les listes qui ne passent pas par la hiérarchie (stocks, etc.).
+// Les sous-produits détachés au préalable (by_product_of vidé) ne sont pas touchés.
 // It verifies that the product belongs to merchantID before modifying it.
 func (r *MenuRepository) DeleteProduct(ctx context.Context, merchantID, productID string) error {
 	db := dbx.GetDB(ctx, r.database)
 
 	_, err := db.ExecContext(ctx,
-		`UPDATE products 
+		`UPDATE products
 		 SET enabled = FALSE
-		 WHERE product_id = ? AND merchant_id = ?`,
-		productID, merchantID,
+		 WHERE merchant_id = ? AND (product_id = ? OR by_product_of = ?)`,
+		merchantID, productID, productID,
 	)
 	if err != nil {
 		return err
