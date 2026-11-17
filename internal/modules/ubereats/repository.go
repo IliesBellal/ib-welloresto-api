@@ -368,13 +368,18 @@ func (r *UberRepository) UpdateOrderAccepted(ctx context.Context, orderID string
 	if dbx.ActiveDialect() == dbx.Postgres {
 		estimatedReady = "now() + (? * interval '1 minute')"
 	}
+	// production_ready_at suit estimated_ready (commande plateforme : pas de
+	// trajet à retirer, cf. resolveProductionReadyAt) — sans quoi la deadline
+	// cuisine restait celle calculée à la création, avant l'acceptation.
 	query := fmt.Sprintf(`
 		UPDATE orders
 		SET brand_status = 'ACCEPTED', merchant_approval = 'ACCEPTED',
 		    last_update = %s,
-		    estimated_ready = %s
-		WHERE order_id = ?`, dbx.UTCNow(), estimatedReady)
-	_, err := db.ExecContext(ctx, query, prepTime, orderID)
+		    estimated_ready = %s,
+		    production_ready_at = %s,
+		    production_ready_manual = false
+		WHERE order_id = ?`, dbx.UTCNow(), estimatedReady, estimatedReady)
+	_, err := db.ExecContext(ctx, query, prepTime, prepTime, orderID)
 	return err
 }
 

@@ -1849,6 +1849,9 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			r.Patch("/{order_id}/distributed-products", ordersLifeCycleH.SetDistributedProducts)
 			r.Patch("/{order_id}/back-to-production", ordersLifeCycleH.BackToProduction)
 			r.Patch("/multiple-production-status", ordersLifeCycleH.UpdateProductionStatus)
+			// Heure cuisine manuelle, indépendante de l'heure de livraison
+			// (docs/order-lifecycle.md, « Heure cuisine manuelle »).
+			r.Patch("/{order_id}/production-ready-at", ordersLifeCycleH.SetProductionReadyAt)
 			// Suites : réclamer (envoi immédiat ou programmé) / annuler l'envoi
 			// programmé (docs/order-lifecycle.md, « Suites »).
 			r.Post("/{order_id}/courses/{course}/fire", ordersLifeCycleH.FireCourse)

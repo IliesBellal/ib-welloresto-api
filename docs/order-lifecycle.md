@@ -737,6 +737,47 @@ Envoi des plats d'une commande **sur place** (`IN`) en plusieurs temps : entrée
 
 ---
 
+## Heure cuisine manuelle
+
+Le personnel peut **avancer** l'heure cuisine d'une commande (`production_ready_at`) sans toucher à son heure de livraison : une livraison promise à 18h45 (5 min de trajet) peut être produite pour 18h15, avec les autres commandes de ce créneau. Migration 218, code dans `internal/modules/order_life_cycle/production_ready.go`.
+
+**Données** : `orders.production_ready_manual` (booléen) dit que `production_ready_at` est ce choix et non le calcul automatique (`resolveProductionReadyAt` : `estimated_ready - trajet` pour une commande programmée, `estimated_ready` sinon). `estimated_ready` et `delivery_arrival_at` ne bougent jamais.
+
+**Règles (v1)**
+
+- Uniquement **plus tôt** que l'heure calculée, d'au plus 12 h (borne qui refuse surtout une heure mise sur le mauvais jour au passage de minuit). Égale à l'heure calculée = retour à l'automatique.
+- À chaque création / modification, l'heure manuelle est gardée tant qu'elle reste valide face à la **nouvelle** heure calculée ; sinon (livraison avancée, trajet rallongé) elle retombe d'elle-même sur l'automatique.
+- Pas sur Uber Eats / Deliveroo (l'heure de retrait appartient à la plateforme).
+
+**Écritures**
+
+- `PATCH /orders/{order_id}/production-ready-at` `{ "production_ready_at": "2026-11-16T17:15:00Z" }` (ISO 8601 ; `null` = retour à l'automatique) : commande ouverte uniquement, 400 `invalid_input` hors bornes ou sur une plateforme. Purge le cache Redis et notifie `OrderUpdate` ; `last_update` n'est pas touché (il date les changements de contenu) et aucun ticket ne part.
+- Création / modification POS : `order.production_ready_override` (ISO 8601). **Champ absent = l'heure manuelle déjà enregistrée est gardée** (borne, Scan&Order, ancienne caisse) ; `""` = retour à l'automatique.
+- Acceptation Uber Eats (`UpdateOrderAccepted`) : `production_ready_at` suit désormais le nouvel `estimated_ready` (elle restait figée à la valeur de création).
+
+**Lecture** : `production_ready_manual` dans chaque commande, à côté de `production_ready_at`.
+
+---
+
+## Paiement attendu
+
+Un client qui commande par téléphone « paiera en espèces à la livraison » n'a encore rien payé. Avant la migration 219, la caisse enregistrait pourtant un paiement `ES`, signé dans la chaîne fiscale alors que l'argent n'était pas encaissé. Le paiement attendu porte désormais **l'intention**, sans paiement. Migration 219, code dans `internal/modules/order_life_cycle/expected_payment.go`.
+
+**Données** : `orders.expected_mop` (moyen annoncé, `models.HandCollectedMOPs` : ES, CB, TR…) et `orders.expected_tender_amount` (espèces seulement : montant que le client compte donner, en centimes, pour la monnaie à rendre). Informations de la commande **hors charge utile signée** : modifiables librement tant que la commande est ouverte. Disponible pour tout type de commande.
+
+**Règles**
+
+- Ce n'est **jamais un paiement** : rien n'est encaissé ni signé. Le statut « payé » reste dérivé de `payments` (reste dû à 0), jamais de ces colonnes.
+- Quand le client paie, la caisse crée le vrai paiement par le flux habituel (`AddPayment`). L'annonce n'est pas effacée : elle reste comme historique, et le paiement réel prime si le moyen diffère.
+- Un moyen inconnu ou non encaissable en main propre n'échoue pas la commande : il est traité comme « effacer ».
+- `expected_tender_amount` n'est gardé que pour les espèces, et seulement s'il est strictement positif.
+
+**Écritures** : `order.expected_payment` `{ "mop": "ES", "tender_amount": 5000 }` à la création et à la modification POS. **Champ absent = l'annonce déjà enregistrée est gardée** (borne, Scan&Order, plateformes, ancienne caisse) ; `{ "mop": "" }` = effacer.
+
+**Lecture** : `expected_payment` `{ mop, tender_amount }` dans chaque commande (`null` si rien d'annoncé), donc aussi dans les notifications temps réel.
+
+---
+
 ## Schéma récapitulatif
 
 ```

@@ -38,8 +38,8 @@ func TestUnitBasePrice(t *testing.T) {
 // FetchAndBuildOrders (cf. rows.Scan dans orders_fetcher_builder.go). Seules les
 // positions utiles au test sont renseignées, le reste reste NULL.
 const (
-	productColumns = 36
-	headerColumns  = 64
+	productColumns = 37
+	headerColumns  = 69 // dont expected_mop et expected_tender_amount (migration 219)
 
 	productColOrderID     = 0
 	productColQuantity    = 1
@@ -106,8 +106,8 @@ func TestFetchAndBuildOrders_ProductPriceContract(t *testing.T) {
 	header := make([]driver.Value, headerColumns)
 	header[0] = "order_1"
 	header[6] = "merchant_1"
-	header[24] = time.Unix(1_700_000_000, 0).UTC() // last_update (toujours renseigné en base)
-	header[27] = time.Unix(1_700_000_000, 0).UTC() // creation_date (idem)
+	header[25] = time.Unix(1_700_000_000, 0).UTC() // last_update (toujours renseigné en base)
+	header[28] = time.Unix(1_700_000_000, 0).UTC() // creation_date (idem)
 	mock.ExpectQuery(`o\.order_id, o\.order_num, o\.order_type`).WillReturnRows(mockRows(headerColumns, header))
 
 	expectSupportingQueries(mock)

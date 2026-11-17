@@ -42,11 +42,22 @@ type OrderRequest struct {
 	Responsible                 *string               `json:"responsible,omitempty"`
 	Comment                     *string               `json:"comment"`
 	Payments                    []PaymentPayload      `json:"payments"`
+	// ExpectedPayment : paiement annoncé à la livraison / au retrait, sans
+	// paiement enregistré (orders.expected_mop, migration 219). nil = champ
+	// absent : l'annonce déjà enregistrée est gardée (borne, Scan&Order,
+	// plateformes, caisse d'une version antérieure) ; MOP "" = effacer.
+	ExpectedPayment             *ExpectedPaymentPayload `json:"expected_payment,omitempty"`
 	Locations                   []OrderLocation       `json:"locations,omitempty"`
 	DeliveryFees                int                   `json:"delivery_fees"`
 	EstimatedReady              string                `json:"estimated_ready"`
 	DeliveryTravelSeconds       *int                  `json:"delivery_travel_seconds,omitempty"`
 	IsScheduled                 bool                  `json:"is_scheduled"`
+	// ProductionReadyOverride : heure cuisine choisie à la main (ISO 8601),
+	// plus tôt que l'heure calculée, sans toucher à l'heure de livraison
+	// (docs/order-lifecycle.md, « Heure cuisine manuelle »). nil = champ
+	// absent : l'heure manuelle déjà enregistrée est gardée ; "" = retour au
+	// calcul automatique.
+	ProductionReadyOverride     *string               `json:"production_ready_override,omitempty"`
 	UseCustomerTemporaryAddress bool                  `json:"use_customer_temporary_address"`
 	MerchantApproval            string                `json:"merchant_approval"`
 	BrandStatus                 string                `json:"brand_status"`
@@ -189,6 +200,17 @@ type OrderLocation struct {
 type PaymentPayload struct {
 	Amount int    `json:"amount"`
 	MOP    string `json:"mop"`
+}
+
+// ExpectedPaymentPayload : le moyen de paiement que le client a annoncé
+// (HandCollectedMOPs : ES, CB, TR…). C'est une information de la commande,
+// pas un paiement : rien n'est encaissé ni signé tant que le paiement réel
+// n'est pas saisi. MOP vide = effacer l'annonce.
+type ExpectedPaymentPayload struct {
+	MOP string `json:"mop"`
+	// TenderAmount : espèces seulement, montant que le client compte donner
+	// (centimes), pour la monnaie à rendre. Ignoré pour un autre moyen.
+	TenderAmount *int `json:"tender_amount,omitempty"`
 }
 
 type CreateOrderResult struct {

@@ -2312,21 +2312,25 @@ func (r *OrdersLifeCycleRepository) insertOrderBase(ctx context.Context, req *mo
 	estimatedReady := normalizeEstimatedReady(req.Order.EstimatedReady)
 	isScheduled := resolveIsScheduled(req.Order.IsScheduled, estimatedReady)
 	deliveryTravelSeconds := r.resolveDeliveryTravelSeconds(ctx, req)
-	productionReadyAt := resolveProductionReadyAt(estimatedReady, isScheduled, deliveryTravelSeconds)
+	productionReadyAt, productionReadyManual := resolveRequestProductionReadyAt(ctx, req,
+		resolveProductionReadyAt(estimatedReady, isScheduled, deliveryTravelSeconds), nil)
 	deliveryArrivalAt := resolveDeliveryArrivalAt(req.Order.OrderType, estimatedReady, isScheduled, deliveryTravelSeconds)
 	orderSource := resolveOrderSource(req.Order.Brand, req.Order.CreatedBy)
+	// Paiement annoncé : à la création, « absent » et « effacé » donnent le même
+	// résultat (NULL).
+	_, expectedMOP, expectedTender := resolveExpectedPayment(req.Order.ExpectedPayment)
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
 	lastID, err := db.InsertReturningID(ctx, `
 		INSERT INTO orders(public_id, brand, brand_order_id, brand_order_num, cash_register_id, merchant_id, customer_id, order_num, price, TVA, HT, merchant_approval, scheduled, creation_date,
-		                   last_update, responsible, created_by, delivery_fees, estimated_ready, delivery_travel_seconds, production_ready_at, delivery_arrival_at, use_customer_temporary_address,
-		                   brand_status, order_type, places_settings, pager_number, fulfillment_type, isPaid, brand_store_id, order_source)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+dbx.UTCNow()+`, `+dbx.UTCNow()+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                   last_update, responsible, created_by, delivery_fees, estimated_ready, delivery_travel_seconds, production_ready_at, production_ready_manual, delivery_arrival_at, use_customer_temporary_address,
+		                   brand_status, order_type, places_settings, pager_number, fulfillment_type, isPaid, brand_store_id, order_source, expected_mop, expected_tender_amount)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+dbx.UTCNow()+`, `+dbx.UTCNow()+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		"order_id",
 		PublicID, req.Order.Brand, req.Order.BrandOrderID, req.Order.BrandOrderNum, req.Order.CashRegisterId, req.MerchantID, customer_id, req.Order.OrderNum, req.Order.TTC, req.Order.TVA, req.Order.HT,
 		req.Order.MerchantApproval, isScheduled,
-		olcResponsible(req.Order.Responsible), req.Order.CreatedBy, req.Order.DeliveryFees, estimatedReady, deliveryTravelSeconds, productionReadyAt, deliveryArrivalAt,
+		olcResponsible(req.Order.Responsible), req.Order.CreatedBy, req.Order.DeliveryFees, estimatedReady, deliveryTravelSeconds, productionReadyAt, productionReadyManual, deliveryArrivalAt,
 		req.Order.UseCustomerTemporaryAddress, req.Order.BrandStatus, req.Order.OrderType, req.Order.PlacesSettings, req.Order.PagerNumber, req.Order.FulfillmentType, req.Order.IsPaid,
-		req.Order.BrandStoreID, orderSource,
+		req.Order.BrandStoreID, orderSource, expectedMOP, expectedTender,
 	)
 	if err != nil {
 		return "no_order_created", err
@@ -2646,10 +2650,45 @@ func (r *OrdersLifeCycleRepository) updateOrderBase(ctx context.Context, req *mo
 	estimatedReady := normalizeEstimatedReady(req.Order.EstimatedReady)
 	isScheduled := resolveIsScheduled(req.Order.IsScheduled, estimatedReady)
 	deliveryTravelSeconds := r.resolveDeliveryTravelSeconds(ctx, req)
-	productionReadyAt := resolveProductionReadyAt(estimatedReady, isScheduled, deliveryTravelSeconds)
+	// Heure cuisine manuelle déjà enregistrée : gardée si le payload ne la
+	// mentionne pas (caisse d'une version antérieure, borne, Scan&Order),
+	// tant qu'elle reste cohérente avec la nouvelle heure calculée.
+	existingManual, err := r.existingManualProductionReadyAt(ctx, req.Order.OrderID)
+	if err != nil {
+		return err
+	}
+	productionReadyAt, productionReadyManual := resolveRequestProductionReadyAt(ctx, req,
+		resolveProductionReadyAt(estimatedReady, isScheduled, deliveryTravelSeconds), existingManual)
 	deliveryArrivalAt := resolveDeliveryArrivalAt(req.Order.OrderType, estimatedReady, isScheduled, deliveryTravelSeconds)
 
+	// Paiement annoncé : réécrit seulement si le payload le mentionne (champ
+	// absent = annonce enregistrée conservée, cf. OrderRequest.ExpectedPayment).
+	expectedSQL := ""
+	var expectedArgs []interface{}
+	if write, expectedMOP, expectedTender := resolveExpectedPayment(req.Order.ExpectedPayment); write {
+		expectedSQL = ", expected_mop = ?, expected_tender_amount = ?"
+		expectedArgs = []interface{}{expectedMOP, expectedTender}
+	}
+
 	// default fields and estimated_ready handling simplified: use UTC_TIMESTAMP equivalent in SQL
+	args := []interface{}{
+		req.Order.TTC,
+		req.Order.TVA,
+		req.Order.HT,
+		req.Order.DeliveryFees,
+		req.Order.UseCustomerTemporaryAddress,
+		req.Order.OrderType,
+		isScheduled,
+		estimatedReady,
+		deliveryTravelSeconds,
+		productionReadyAt,
+		productionReadyManual,
+		deliveryArrivalAt,
+		req.Order.PlacesSettings,
+		customerID,
+	}
+	args = append(args, expectedArgs...)
+	args = append(args, req.Order.OrderID)
 	_, err = db.ExecContext(ctx, `
 		UPDATE orders
 			SET
@@ -2666,24 +2705,12 @@ func (r *OrdersLifeCycleRepository) updateOrderBase(ctx context.Context, req *mo
 				estimated_ready = ?,
 				delivery_travel_seconds = ?,
 				production_ready_at = ?,
+				production_ready_manual = ?,
 				delivery_arrival_at = ?,
 				places_settings = ?,
-				customer_id = ?
+				customer_id = ?`+expectedSQL+`
 			WHERE order_id = ?`,
-		req.Order.TTC,
-		req.Order.TVA,
-		req.Order.HT,
-		req.Order.DeliveryFees,
-		req.Order.UseCustomerTemporaryAddress,
-		req.Order.OrderType,
-		isScheduled,
-		estimatedReady,
-		deliveryTravelSeconds,
-		productionReadyAt,
-		deliveryArrivalAt,
-		req.Order.PlacesSettings,
-		customerID,
-		req.Order.OrderID,
+		args...,
 	)
 	if err != nil {
 		return err

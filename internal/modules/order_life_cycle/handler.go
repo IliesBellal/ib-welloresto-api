@@ -192,6 +192,32 @@ func (h *OrdersLifeCycleHandler) BackToProduction(w http.ResponseWriter, r *http
 	models.SendJSON(w, http.StatusOK, "order_life_cycle", "back_to_production", result)
 }
 
+// SetProductionReadyAt : PATCH /orders/{order_id}/production-ready-at
+// { "production_ready_at": "2026-11-16T17:15:00Z" } — avance l'heure cuisine
+// sans toucher à l'heure de livraison ; null = retour au calcul automatique.
+func (h *OrdersLifeCycleHandler) SetProductionReadyAt(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	orderID := chi.URLParam(r, "order_id")
+	if orderID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "set_production_ready_at", map[string]string{"error": "missing_parameter"})
+		return
+	}
+
+	var req SetProductionReadyAtRequest
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			models.SendJSON(w, http.StatusBadRequest, "order_life_cycle", "set_production_ready_at", map[string]string{"error": "invalid_body"})
+			return
+		}
+	}
+
+	if err := h.ordersLifeCycleService.SetProductionReadyAt(ctx, orderID, &req); err != nil {
+		models.SendErrorJSON(w, "order_life_cycle", "set_production_ready_at", err)
+		return
+	}
+	models.SendJSON(w, http.StatusOK, "order_life_cycle", "set_production_ready_at", map[string]string{"status": "1"})
+}
+
 // FireCourse : POST /orders/{order_id}/courses/{course}/fire
 // { "delay_seconds": 5 } — réclame la suite (et les précédentes en attente).
 func (h *OrdersLifeCycleHandler) FireCourse(w http.ResponseWriter, r *http.Request) {

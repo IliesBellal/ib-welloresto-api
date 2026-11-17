@@ -369,12 +369,19 @@ type Order struct {
 	EstimatedReady        *int             `json:"estimated_ready"`
 	DeliveryTravelSeconds *int             `json:"delivery_travel_seconds"`
 	ProductionReadyAt     *int             `json:"production_ready_at"`
+	// ProductionReadyManual : production_ready_at est une heure cuisine
+	// choisie à la main, pas le calcul automatique.
+	ProductionReadyManual bool             `json:"production_ready_manual"`
 	DeliveryArrivalAt     *int             `json:"delivery_arrival_at"`
 	MerchantApproval      string           `json:"merchant_approval"`
 	DeliveryFees          *int64           `json:"delivery_fees"`
 	Customer              *Customer        `json:"customer"`
 	Comment               *string          `json:"comment,omitempty"`
 	Payments              []Payment        `json:"payments"`
+	// ExpectedPayment : paiement annoncé (orders.expected_mop), nil si rien
+	// n'a été annoncé. Une intention, pas un paiement : le statut « payé »
+	// vient de Payments.
+	ExpectedPayment       *ExpectedPayment `json:"expected_payment"`
 	Responsible           *OrderUser       `json:"responsible"`
 	Location              []Location       `json:"location"`
 	Products              []ProductEntry   `json:"products"`
@@ -395,6 +402,15 @@ type Order struct {
 	// absent pour une commande sans suite. Les lignes portent leur numéro
 	// dans ProductEntry.Course.
 	Courses []OrderCourse `json:"courses,omitempty"`
+}
+
+// ExpectedPayment : moyen de paiement annoncé par le client à la commande
+// (orders.expected_mop / expected_tender_amount).
+type ExpectedPayment struct {
+	MOP string `json:"mop"`
+	// TenderAmount : espèces, montant que le client compte donner (centimes) ;
+	// nil si non précisé ou autre moyen.
+	TenderAmount *int `json:"tender_amount"`
 }
 
 // OrderCourse : état d'une suite (order_courses). Horodatages en secondes Unix.

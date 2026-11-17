@@ -769,12 +769,13 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 		o.brand, o.merchant_id, o.brand_status, o.brand_order_id, o.brand_order_num,
 		o.estimated_ready, o.delivery_travel_seconds, o.means_of_payement, o.price, o.TVA, o.HT,
 		o.monnaie, o.cutlery_notes,
-		o.isPaid, o.isDistributed, o.production_ready_at, o.delivery_arrival_at,
+		o.isPaid, o.isDistributed, o.production_ready_at, o.production_ready_manual, o.delivery_arrival_at,
 		o.merchant_approval, o.delivery_fees, o.last_update,
 		o.fulfillment_type,
 		CASE WHEN o.use_customer_temporary_address THEN 1 ELSE 0 END AS use_customer_temporary_address,
 		o.creation_date, o.places_settings, o.pager_number, o.public_id,
 		o.order_source, k.name AS kiosk_name,
+		o.expected_mop, o.expected_tender_amount,
 
 		c.customer_id, c.customer_name, c.customer_last_name, c.customer_first_name, c.customer_tel,
 		c.customer_lat, c.customer_lng,
@@ -811,7 +812,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			var ord models.Order
 
 			var customerNbOrders, useCustomerTemporaryAddress,
-				price, TVA, HT, deliveryFees, placesSettings, deliveryTravelSeconds sql.NullInt64
+				price, TVA, HT, deliveryFees, placesSettings, deliveryTravelSeconds, expectedTenderAmount sql.NullInt64
 
 			var customerID, orderID, orderNum, orderType, state,
 				brand, brandStatus, brandOrderID, brandOrderNum,
@@ -822,24 +823,25 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				customerTemporaryLng, userLat, userLng sql.NullFloat64
 
 			var lastUpdate, creationDate, estimatedReady, productionReadyAt, deliveryArrivalAt sql.NullTime
-			var scheduled, isPaid, isDistributed, cashRegisterClosed, advertisingConsent sql.NullBool
+			var scheduled, isPaid, isDistributed, productionReadyManual, cashRegisterClosed, advertisingConsent sql.NullBool
 
 			var cName, cLastName, cFirstName, cTel, cTempPhone, cTempPhoneCode, cZoneCode,
 				cAddr, cFloor, cDoor, cAddAddr, cBusName, cBirth,
 				cInfo, cTempAddr, cTempFloor, cTempDoor, cTempAddAddr sql.NullString
 
-			var delTel, delUserName, cashRegisterID, publicID, orderSource, kioskName sql.NullString
+			var delTel, delUserName, cashRegisterID, publicID, orderSource, kioskName, expectedMOP sql.NullString
 
 			if err := rows.Scan(
 				&orderID, &orderNum, &orderType, &state, &scheduled,
 				&brand, &merchantID, &brandStatus, &brandOrderID, &brandOrderNum,
 				&estimatedReady, &deliveryTravelSeconds, &meansOfPayment, &price, &TVA, &HT,
 				&monnaie, &cutleryNotes,
-				&isPaid, &isDistributed, &productionReadyAt, &deliveryArrivalAt,
+				&isPaid, &isDistributed, &productionReadyAt, &productionReadyManual, &deliveryArrivalAt,
 				&merchantApproval, &deliveryFees, &lastUpdate,
 				&fulfillmentType, &useCustomerTemporaryAddress,
 				&creationDate, &placesSettings, &pagerNumber, &publicID,
 				&orderSource, &kioskName,
+				&expectedMOP, &expectedTenderAmount,
 
 				&customerID, &cName, &cLastName, &cFirstName, &cTel, &customerLat, &customerLng,
 				&cTempPhone, &cTempPhoneCode, &customerNbOrders, &cZoneCode,
@@ -882,6 +884,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				ord.DeliveryTravelSeconds = &seconds
 			}
 			ord.ProductionReadyAt = helpers.NullTimeToNullUnixInt(productionReadyAt)
+			ord.ProductionReadyManual = productionReadyManual.Bool
 			ord.DeliveryArrivalAt = helpers.NullTimeToNullUnixInt(deliveryArrivalAt)
 			ord.MerchantApproval = merchantApproval.String
 			ord.DeliveryFees = helpers.NullInt64ToPtr(deliveryFees)
@@ -889,6 +892,13 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 			ord.FulfillmentType = helpers.NullStringToPtr(fulfillmentType)
 			ord.OrderSource = helpers.NullStringToPtr(orderSource)
 			ord.KioskName = helpers.NullStringToPtr(kioskName)
+			if expectedMOP.Valid && strings.TrimSpace(expectedMOP.String) != "" {
+				ord.ExpectedPayment = &models.ExpectedPayment{MOP: expectedMOP.String}
+				if expectedTenderAmount.Valid {
+					tender := int(expectedTenderAmount.Int64)
+					ord.ExpectedPayment.TenderAmount = &tender
+				}
+			}
 			ord.LastUpdate = helpers.NullTimePtr(lastUpdate).UTC().Unix()
 
 			// --- Delivery Session (ASSOCIATION TEMPORAIRE) ---
