@@ -1,0 +1,17 @@
+{{/* Relevé de compte client en pièce jointe (PDF), envoyé depuis la caisse ou le
+back-office (docs/customer-accounts.md). */}}
+{{ template "doc_start" (dict "Title" "Relevé de votre compte" "Pre" (printf "Relevé %s · %s" .PeriodLabel .BalanceLabel)) }}
+{{ template "head_merchant" .Brand }}
+{{ template "hero" (dict "Tone" "mut" "Pill" "Compte client" "Title" "Relevé de votre compte" "Sub" .PeriodLabel) }}
+{{ template "p_open" }}{{ if .CustomerName }}Bonjour {{ .CustomerName }},{{ else }}Bonjour,{{ end }}<br>
+vous trouverez en pièce jointe (PDF) le relevé de votre compte chez <strong style="color:#050817;">{{ .MerchantName }}</strong> : vos versements et les commandes réglées sur ce compte.{{ template "p_close" }}
+{{ template "facts_start" }}
+    {{ template "fact" (dict "K" "Solde" "V" .BalanceLabel "First" true) }}
+    {{ if .AmountDue }}{{ template "fact" (dict "K" "À régler" "V" .AmountDue) }}{{ end }}
+{{ template "facts_end" }}
+{{ if .PaymentURL }}
+{{ template "button" (dict "URL" .PaymentURL "Label" "Régler en ligne" "Color" .Brand.Color "TextColor" .Brand.TextColor) }}
+{{ end }}
+{{ template "sign" (dict "Hello" "Merci et à bientôt," "Name" .Brand.Name) }}
+{{ template "foot_merchant" (dict "Brand" .Brand "Mail" "customer_account_statement") }}
+{{ template "doc_end" }}

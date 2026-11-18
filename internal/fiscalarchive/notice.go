@@ -59,7 +59,14 @@ d'empreintes signée tenue par le logiciel.
   suppléments) telles qu'enregistrées, avec le taux de TVA figé à la vente.
 - paiements.csv : règlements enregistrés dans la période (moyen, montant, type
   vente ou remboursement, registre). Un paiement annulé reste présent
-  (« actif » = non) : son annulation est tracée dans journal.csv.
+  (« actif » = non) : son annulation est tracée dans journal.csv. Le moyen
+  ACCOUNT est une commande réglée sur le compte du client (« client_compte »),
+  sans argent encaissé.
+- comptes_clients.csv : mouvements des comptes clients hors ventes :
+  versement (DEPOSIT), remboursement du solde (REFUND), abandon de créance
+  (WRITE_OFF), avec moyen, motif et registre. Montant = effet sur le solde du
+  client. Un versement n'est pas une vente : il n'a ni ticket ni TVA, la TVA
+  est portée par les commandes réglées sur le compte.
 - journal.csv : traces de modification et de correction des commandes et des
   paiements (création, mise à jour, clôture, réouverture, annulation,
   remboursement, annulation de paiement), avec l'état avant et après.
@@ -67,7 +74,8 @@ d'empreintes signée tenue par le logiciel.
   le cas échéant, annuelle : totaux des ventes et des avoirs, TVA par taux,
   règlements, canaux, grand total de la période (depuis le 1er janvier) et
   total perpétuel (depuis l'origine, jamais remis à zéro). La clôture
-  journalière contient l'empreinte de chaque commande close ce jour-là.
+  journalière contient l'empreinte de chaque commande close ce jour-là, et
+  « comptes_clients_json » les mouvements de comptes clients du jour.
 - registres.csv : registres de caisse fermés dans la période (Z) : ouverture,
   fermeture, fonds de caisse et lignes du Z par moyen de paiement.
 - MANIFEST.json : établissement, période, version du logiciel, date de

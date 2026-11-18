@@ -35,6 +35,11 @@ const (
 	// ChainFiscalArchives : archives fiscales (lot D), chacune scellée sur la
 	// précédente. Écrite seule dans sa transaction, sans autre chaîne.
 	ChainFiscalArchives Chain = "fiscal_archives"
+	// ChainCustomerAccounts : mouvements de compte client (versements,
+	// remboursements du solde, abandons de créance ; docs/customer-accounts.md).
+	// Nom = table, comme les autres chaînes (la vérification s'en sert). Écrite
+	// seule dans sa transaction, sans autre chaîne.
+	ChainCustomerAccounts Chain = "customer_account_operations"
 )
 
 // Fingerprint est l'empreinte (non signée) d'une donnée scellée à l'intérieur

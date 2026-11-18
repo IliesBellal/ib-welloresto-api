@@ -22,15 +22,16 @@ const mopES = "ES"
 //   - MOP vide ou inconnu : write = true et mop/tender nil, l'annonce est
 //     effacée. Un moyen inconnu ne fait jamais échouer l'enregistrement de la
 //     commande : c'est une information, pas une règle de gestion ;
-//   - MOP encaissable en main propre (models.HandCollectedMOPs) : mop
-//     normalisé en majuscules ; tender renseigné pour les espèces seulement,
-//     et seulement s'il est strictement positif.
+//   - MOP encaissable en main propre (models.HandCollectedMOPs) ou compte
+//     client (models.AccountMOP : « sur compte », réglé à la clôture de la
+//     tournée sans argent) : mop normalisé en majuscules ; tender renseigné
+//     pour les espèces seulement, et seulement s'il est strictement positif.
 func resolveExpectedPayment(p *models.ExpectedPaymentPayload) (write bool, mop *string, tender *int) {
 	if p == nil {
 		return false, nil, nil
 	}
 	m := strings.ToUpper(strings.TrimSpace(p.MOP))
-	if !models.IsHandCollectedMOP(m) {
+	if !models.IsHandCollectedMOP(m) && m != models.AccountMOP {
 		return true, nil, nil
 	}
 	if m == mopES && p.TenderAmount != nil && *p.TenderAmount > 0 {

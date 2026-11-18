@@ -44,6 +44,8 @@ func SetupTasks(
 	// Un job par tâche : SkipIfStillRunning protège chaque tâche
 	// indépendamment et une tâche lente n'en retarde pas une autre.
 	add("@hourly", taskManager.CloseOrders)
+	// Relances des ardoises (compte client), à 10 h heure de l'établissement.
+	add("5 * * * *", taskManager.SendCustomerAccountReminders)
 	add("@every 1m", taskManager.DenyOrders)
 	add("@hourly", taskManager.SendLoyaltyProgrammReminder) // stub non implémenté (no-op)
 	add("@hourly", taskManager.CapturePayments)

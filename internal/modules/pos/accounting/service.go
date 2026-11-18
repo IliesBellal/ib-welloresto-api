@@ -186,8 +186,23 @@ func (s *AccountingService) generateAccountingExport(ctx context.Context, mercha
 		}, "", nil
 	}
 
+	// Comptes clients : versements, remboursements, commandes réglées sur le
+	// compte (mêmes commandes que la TVA), pour justifier l'écart entre TVA et
+	// argent encaissé (docs/customer-accounts.md).
+	accountScope := manualOrderScope()
+	if closingMode == cashregisters.ClosingModeAuto {
+		accountScope = orderScope{sources: sources}
+	}
+	accounts, err := s.accountSummary(ctx, merchantID, fromLocal, toExclusive, accountScope)
+	if err != nil {
+		return &ExportAccountingResponse{
+			Status: "0",
+			Error:  "Erreur lors de la récupération des comptes clients",
+		}, "", nil
+	}
+
 	// Construire le PDF
-	pdfBytes, err := s.buildPDFReport(year, month, header, tvaRows, payments, discounts, emptyMessage, fromLocal, toLocal, tzName)
+	pdfBytes, err := s.buildPDFReportWithAccounts(year, month, header, tvaRows, payments, discounts, accounts, emptyMessage, fromLocal, toLocal, tzName)
 	if err != nil {
 		return &ExportAccountingResponse{
 			Status: "0",
@@ -273,6 +288,12 @@ func filterExcludedPaymentLabels(payments []PaymentRow) []PaymentRow {
 // si aucune remise) ; emptyPaymentsMessage s'affiche quand aucun encaissement
 // n'est à lister (message propre à chaque mode de clôture).
 func (s *AccountingService) buildPDFReport(year, month int, header *MerchantHeader, tvaRows []TVARow, payments []PaymentRow, discounts DiscountSummary, emptyPaymentsMessage string, fromLocal, toLocal time.Time, tzName string) ([]byte, error) {
+	return s.buildPDFReportWithAccounts(year, month, header, tvaRows, payments, discounts, AccountSummary{}, emptyPaymentsMessage, fromLocal, toLocal, tzName)
+}
+
+// buildPDFReportWithAccounts : buildPDFReport, avec le bloc des comptes
+// clients sous les encaissements (absent sans mouvement).
+func (s *AccountingService) buildPDFReportWithAccounts(year, month int, header *MerchantHeader, tvaRows []TVARow, payments []PaymentRow, discounts DiscountSummary, accounts AccountSummary, emptyPaymentsMessage string, fromLocal, toLocal time.Time, tzName string) ([]byte, error) {
 	pdf := gofpdf.New("P", "mm", "A4", "")
 	translate := pdf.UnicodeTranslatorFromDescriptor("cp1252")
 	pdf.AddPage()
@@ -295,6 +316,7 @@ func (s *AccountingService) buildPDFReport(year, month int, header *MerchantHead
 	drawTVATable(pdf, translate, tvaRows, header.Currency)
 	drawDiscountSummary(pdf, translate, discounts, header.Currency)
 	drawPaymentsSection(pdf, translate, payments, header.Currency, emptyPaymentsMessage)
+	drawAccountSection(pdf, translate, accounts, header.Currency)
 
 	drawPDFFooter(pdf, translate)
 

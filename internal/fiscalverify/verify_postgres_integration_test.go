@@ -143,7 +143,7 @@ func TestVerify_Postgres(t *testing.T) {
 	payment := func(orderIdx, amount int, date time.Time, enabled bool) {
 		t.Helper()
 		oid := strconv.FormatInt(orderIDs[orderIdx], 10)
-		p, err := fiscal.NewPaymentPayload(merchantID, oid, amount, "CB", "SALE", date, "itest", nil)
+		p, err := fiscal.NewPaymentPayload(merchantID, oid, amount, "CB", "SALE", date, "itest", nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

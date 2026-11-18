@@ -84,7 +84,7 @@ func Build(ctx context.Context, database *sql.DB, merchantID string, start, end 
 	b.zw = zip.NewWriter(&buf)
 	b.generatedAt = generatedAt
 
-	steps := []func() error{b.tickets, b.orders, b.orderLines, b.payments, b.journal, b.closures, b.registers}
+	steps := []func() error{b.tickets, b.orders, b.orderLines, b.payments, b.accountOperations, b.journal, b.closures, b.registers}
 	for _, step := range steps {
 		if err := step(); err != nil {
 			return nil, err
@@ -443,11 +443,12 @@ func (b *builder) orderLines() error {
 func (b *builder) payments() error {
 	f := b.stream("paiements.csv", "paiement", "commande", "date_locale", "date_utc", "moyen", "montant_centimes",
 		"montant_euros", "type", "utilisateur", "registre", "actif", "empreinte_precedente", "empreinte", "signature",
-		"version_empreinte")
+		"version_empreinte", "client_compte")
 	rows, err := b.db.QueryContext(b.ctx, `
 		SELECT payment_id::text, COALESCE(order_id::text, ''), payment_date, COALESCE(mop, ''), COALESCE(amount, 0),
 		       COALESCE(operation_type, ''), COALESCE(user_id, ''), COALESCE(cash_register_id, ''), COALESCE(enabled, TRUE),
-		       COALESCE(previous_hash, ''), COALESCE(hash, ''), COALESCE(signature, ''), COALESCE(hash_version, 1)
+		       COALESCE(previous_hash, ''), COALESCE(hash, ''), COALESCE(signature, ''), COALESCE(hash_version, 1),
+		       COALESCE(customer_id::text, '')
 		FROM payments
 		WHERE merchant_id = ? AND payment_date >= ? AND payment_date < ?
 		ORDER BY payment_date, payment_id`, b.merchantID, b.from, b.to)
@@ -456,12 +457,12 @@ func (b *builder) payments() error {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id, order, mop, op, user, register, prev, hash, sig string
+		var id, order, mop, op, user, register, prev, hash, sig, customer string
 		var at sql.NullTime
 		var amount int64
 		var enabled bool
 		var hv int
-		if err := rows.Scan(&id, &order, &at, &mop, &amount, &op, &user, &register, &enabled, &prev, &hash, &sig, &hv); err != nil {
+		if err := rows.Scan(&id, &order, &at, &mop, &amount, &op, &user, &register, &enabled, &prev, &hash, &sig, &hv, &customer); err != nil {
 			return fmt.Errorf("fiscalarchive: payments: %w", err)
 		}
 		active := "oui"
@@ -472,7 +473,37 @@ func (b *builder) payments() error {
 		if at.Valid {
 			atUTC = utc(at.Time)
 		}
-		f.row(id, order, nullTime(b, at), atUTC, mop, cents(amount), euros(amount), op, user, register, active, prev, hash, sig, strconv.Itoa(hv))
+		f.row(id, order, nullTime(b, at), atUTC, mop, cents(amount), euros(amount), op, user, register, active, prev, hash, sig, strconv.Itoa(hv), customer)
+	}
+	return b.finish(rows.Err())
+}
+
+// accountOperations : mouvements de compte client de la période (versements,
+// remboursements du solde, abandons de créance ; docs/customer-accounts.md).
+func (b *builder) accountOperations() error {
+	f := b.stream("comptes_clients.csv", "mouvement", "client", "date_locale", "date_utc", "type", "moyen",
+		"montant_centimes", "montant_euros", "motif", "utilisateur", "registre", "empreinte_precedente", "empreinte",
+		"signature", "version_empreinte")
+	rows, err := b.db.QueryContext(b.ctx, `
+		SELECT operation_id::text, customer_id::text, operation_date, operation_type, COALESCE(mop, ''), amount,
+		       COALESCE(comment, ''), user_id, COALESCE(cash_register_id, ''),
+		       COALESCE(previous_hash, ''), COALESCE(hash, ''), COALESCE(signature, ''), COALESCE(hash_version, 1)
+		FROM customer_account_operations
+		WHERE merchant_id = ? AND operation_date >= ? AND operation_date < ?
+		ORDER BY operation_date, operation_id`, b.merchantID, b.from, b.to)
+	if err != nil {
+		return fmt.Errorf("fiscalarchive: account operations: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, customer, typ, mop, comment, user, register, prev, hash, sig string
+		var at time.Time
+		var amount int64
+		var hv int
+		if err := rows.Scan(&id, &customer, &at, &typ, &mop, &amount, &comment, &user, &register, &prev, &hash, &sig, &hv); err != nil {
+			return fmt.Errorf("fiscalarchive: account operations: %w", err)
+		}
+		f.row(id, customer, b.local(at), utc(at), typ, mop, cents(amount), euros(amount), text(comment), user, register, prev, hash, sig, strconv.Itoa(hv))
 	}
 	return b.finish(rows.Err())
 }
@@ -509,13 +540,14 @@ func (b *builder) closures() error {
 		"avoirs_ttc_centimes", "avoirs_ht_centimes", "net_ttc_centimes", "net_ht_centimes", "tickets", "premier_ticket",
 		"dernier_ticket", "commandes", "tva_par_taux_json", "reglements_json", "canaux_json", "commandes_json",
 		"ouverture_json", "grand_total_periode_centimes", "total_perpetuel_centimes", "empreinte_precedente", "empreinte",
-		"signature", "version_empreinte")
+		"signature", "version_empreinte", "comptes_clients_json")
 	rows, err := b.db.QueryContext(b.ctx, `
 		SELECT period_type, to_char(period_start, 'YYYY-MM-DD'), to_char(period_end, 'YYYY-MM-DD'), timezone, closed_at,
 		       sales_ttc, sales_ht, refunds_ttc, refunds_ht, net_ttc, net_ht, receipts_count,
 		       COALESCE(first_receipt_number, ''), COALESCE(last_receipt_number, ''), orders_count,
 		       vat_by_rate::text, payments_by_mop::text, by_channel::text, COALESCE(orders::text, ''), COALESCE(opening::text, ''),
-		       grand_total_period, perpetual_total, previous_hash, hash, signature, hash_version
+		       grand_total_period, perpetual_total, previous_hash, hash, signature, hash_version,
+		       COALESCE(account_operations::text, '')
 		FROM fiscal_closures
 		WHERE merchant_id = ?
 		  AND ((period_type = 'DAY' AND period_start BETWEEN ?::date AND ?::date)
@@ -527,18 +559,18 @@ func (b *builder) closures() error {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var typ, start, end, tz, first, last, vat, pays, channels, orders, opening, prev, hash, sig string
+		var typ, start, end, tz, first, last, vat, pays, channels, orders, opening, prev, hash, sig, accounts string
 		var closedAt time.Time
 		var salesTTC, salesHT, refundsTTC, refundsHT, netTTC, netHT, grand, perpetual int64
 		var receipts, ordersCount, hv int
 		if err := rows.Scan(&typ, &start, &end, &tz, &closedAt, &salesTTC, &salesHT, &refundsTTC, &refundsHT, &netTTC, &netHT,
 			&receipts, &first, &last, &ordersCount, &vat, &pays, &channels, &orders, &opening, &grand, &perpetual,
-			&prev, &hash, &sig, &hv); err != nil {
+			&prev, &hash, &sig, &hv, &accounts); err != nil {
 			return fmt.Errorf("fiscalarchive: closures: %w", err)
 		}
 		f.row(typ, start, end, tz, utc(closedAt), cents(salesTTC), cents(salesHT), cents(refundsTTC), cents(refundsHT),
 			cents(netTTC), cents(netHT), strconv.Itoa(receipts), first, last, strconv.Itoa(ordersCount), vat, pays, channels,
-			orders, opening, cents(grand), cents(perpetual), prev, hash, sig, strconv.Itoa(hv))
+			orders, opening, cents(grand), cents(perpetual), prev, hash, sig, strconv.Itoa(hv), accounts)
 	}
 	return b.finish(rows.Err())
 }

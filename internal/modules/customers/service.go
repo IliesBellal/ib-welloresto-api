@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
@@ -235,6 +236,9 @@ func (s *CustomersService) SearchCustomers(ctx context.Context, token, term, sor
 	if err != nil {
 		return nil, err
 	}
+	if err := s.withAccountBalances(ctx, user.MerchantID, customers); err != nil {
+		return nil, err
+	}
 
 	totalPages := 0
 	if totalItems > 0 {
@@ -279,6 +283,9 @@ func (s *CustomersService) GetFrequentCustomers(ctx context.Context, limit int) 
 	if err != nil {
 		return nil, err
 	}
+	if err := s.withAccountBalances(ctx, user.MerchantID, customers); err != nil {
+		return nil, err
+	}
 
 	return &CustomerListData{
 		Metadata: CustomerPaginationMetadata{
@@ -291,14 +298,43 @@ func (s *CustomersService) GetFrequentCustomers(ctx context.Context, limit int) 
 	}, nil
 }
 
-func (s *CustomersService) ListCustomers(ctx context.Context, token, sortField, sortDir string, page, pageSize int) (*CustomerListData, error) {
+// withAccountBalances renseigne le solde du compte client de chaque résultat.
+func (s *CustomersService) withAccountBalances(ctx context.Context, merchantID string, customers []CustomerSearchResult) error {
+	ids := make([]int64, 0, len(customers))
+	for _, c := range customers {
+		if id, err := strconv.ParseInt(c.CustomerID, 10, 64); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	balances, err := s.customerRepo.AccountBalances(ctx, merchantID, ids)
+	if err != nil {
+		return err
+	}
+	for i := range customers {
+		if id, err := strconv.ParseInt(customers[i].CustomerID, 10, 64); err == nil {
+			customers[i].AccountBalance = balances[id]
+		}
+	}
+	return nil
+}
+
+// ListCustomers : accountFilter = AccountFilterDebt ou AccountFilterCredit
+// pour ne lister que les clients avec ardoise ou avec avance ("" : tous).
+func (s *CustomersService) ListCustomers(ctx context.Context, token, sortField, sortDir string, page, pageSize int, accountFilter ...string) (*CustomerListData, error) {
 	user, err := middleware.UserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	customers, totalItems, err := s.customerRepo.ListCustomers(ctx, user.MerchantID, sortField, sortDir, page, pageSize)
+	filter := ""
+	if len(accountFilter) > 0 {
+		filter = accountFilter[0]
+	}
+	customers, totalItems, err := s.customerRepo.ListCustomersFiltered(ctx, user.MerchantID, sortField, sortDir, page, pageSize, filter)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.withAccountBalances(ctx, user.MerchantID, customers); err != nil {
 		return nil, err
 	}
 

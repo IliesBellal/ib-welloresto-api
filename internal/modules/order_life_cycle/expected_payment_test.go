@@ -19,6 +19,7 @@ func TestResolveExpectedPayment(t *testing.T) {
 		{name: "mop blanc : effacer", in: &models.ExpectedPaymentPayload{MOP: "  "}, wantWrite: true},
 		{name: "mop inconnu : effacé sans erreur", in: &models.ExpectedPaymentPayload{MOP: "BITCOIN"}, wantWrite: true},
 		{name: "mop non encaissable en main propre : effacé", in: &models.ExpectedPaymentPayload{MOP: "STRIPE"}, wantWrite: true},
+		{name: "sur compte client : gardé, sans montant remis", in: &models.ExpectedPaymentPayload{MOP: "account", TenderAmount: intPtr(5000)}, wantWrite: true, wantMOP: "ACCOUNT"},
 		{name: "carte", in: &models.ExpectedPaymentPayload{MOP: "CB"}, wantWrite: true, wantMOP: "CB"},
 		{name: "minuscules et espaces normalisés", in: &models.ExpectedPaymentPayload{MOP: " tr "}, wantWrite: true, wantMOP: "TR"},
 		{name: "espèces sans montant", in: &models.ExpectedPaymentPayload{MOP: "ES"}, wantWrite: true, wantMOP: "ES"},

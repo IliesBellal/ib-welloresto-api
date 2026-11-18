@@ -31,4 +31,7 @@ type Payment struct {
 	PaymentIntentID   *string `json:"payment_intent_id,omitempty"`
 	CheckoutSessionID *string `json:"checkout_session_id,omitempty"`
 	CustomerEmail     *string `json:"customer_email,omitempty"`
+	// AttachCustomerID : client à rattacher à la commande avant un paiement
+	// « Compte client » (jamais renvoyé).
+	AttachCustomerID int64 `json:"-"`
 }

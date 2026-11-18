@@ -353,7 +353,7 @@ func (e *fiscalTestEnv) verifyAll(t *testing.T) {
 		if comment.Valid {
 			c = &comment.String
 		}
-		p, err := fiscal.NewPaymentPayload(merchant, order, amount, mop, op, date, user, c)
+		p, err := fiscal.NewPaymentPayload(merchant, order, amount, mop, op, date, user, c, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

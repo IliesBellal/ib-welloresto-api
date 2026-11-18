@@ -285,6 +285,10 @@ type UserLoginRow struct {
 	// commentaire sur models.POSSettingsOrdering.
 	MobilePaymentEnabled bool
 
+	// StripeConnected : compte Stripe Connect actif (lecture séparée, cf.
+	// attachStripeAccount).
+	StripeConnected bool
+
 	// Subscription / Package
 	ScanNOrderReady   bool
 	StockManagement   int

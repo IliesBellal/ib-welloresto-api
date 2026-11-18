@@ -1837,6 +1837,12 @@ func (h *MenuHandler) SyncDeliverooMenu(w http.ResponseWriter, r *http.Request) 
 	result, err := h.service.SyncDeliverooMenu(ctx, token, locationID, confirm)
 	if err != nil {
 		if errors.Is(err, deliveroo.ErrConfirmationRequired) {
+			log.Warn("[WARN] SyncDeliverooMenu: confirmation_required (premier envoi sans confirm_replace=true)",
+				zap.String("location_id", locationID),
+				zap.Bool("confirm_replace", confirm),
+				zap.String("raw_query", r.URL.RawQuery),
+				zap.String("user_agent", r.UserAgent()),
+				zap.String("origin", r.Header.Get("Origin")))
 			models.SendJSON(w, http.StatusConflict, "menu", "sync_deliveroo_menu", map[string]string{"error": "confirmation_required"})
 			return
 		}

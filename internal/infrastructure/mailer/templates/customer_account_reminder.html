@@ -1,0 +1,14 @@
+{{/* Relance d'une ardoise (compte client débiteur), automatique ou depuis le
+back-office (docs/customer-accounts.md). */}}
+{{ template "doc_start" (dict "Title" "Votre ardoise" "Pre" (printf "%s à régler chez %s" .AmountDue .MerchantName)) }}
+{{ template "head_merchant" .Brand }}
+{{ template "hero" (dict "Tone" "mut" "Pill" "Rappel" "Title" "Votre ardoise" "Sub" (printf "%s à régler" .AmountDue)) }}
+{{ template "p_open" }}{{ if .CustomerName }}Bonjour {{ .CustomerName }},{{ else }}Bonjour,{{ end }}<br>
+petit rappel : votre compte chez <strong style="color:#050817;">{{ .MerchantName }}</strong> présente <strong style="color:#050817;">{{ .AmountDue }}</strong> à régler{{ if .SinceLabel }}, depuis le {{ .SinceLabel }}{{ end }}. Vous pouvez le régler lors de votre prochain passage{{ if .PaymentURL }} ou en ligne{{ end }}.{{ template "p_close" }}
+{{ if .PaymentURL }}
+{{ template "button" (dict "URL" .PaymentURL "Label" "Régler en ligne" "Color" .Brand.Color "TextColor" .Brand.TextColor) }}
+{{ end }}
+{{ template "p_open" }}Si vous avez déjà réglé, merci de ne pas tenir compte de ce message.{{ template "p_close" }}
+{{ template "sign" (dict "Hello" "Merci et à bientôt," "Name" .Brand.Name) }}
+{{ template "foot_merchant" (dict "Brand" .Brand "Mail" "customer_account_reminder") }}
+{{ template "doc_end" }}

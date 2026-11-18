@@ -89,7 +89,7 @@ func TestCollectorRepair_Postgres(t *testing.T) {
 	insertSealed := func(mop string, amount int) string {
 		t.Helper()
 		at := Now()
-		payload, err := NewPaymentPayload(merchantID, orderID, amount, mop, "SALE", at, cashier, nil)
+		payload, err := NewPaymentPayload(merchantID, orderID, amount, mop, "SALE", at, cashier, nil, nil)
 		if err != nil {
 			t.Fatalf("payload: %v", err)
 		}
@@ -111,7 +111,7 @@ func TestCollectorRepair_Postgres(t *testing.T) {
 	own := func() string {
 		t.Helper()
 		at := Now()
-		payload, _ := NewPaymentPayload(merchantID, orderID, 100, "CB", "SALE", at, driver, nil)
+		payload, _ := NewPaymentPayload(merchantID, orderID, 100, "CB", "SALE", at, driver, nil, nil)
 		hash, sig, _ := Seal(ChainPayments, GenesisHash, payload)
 		var id int64
 		if err := db.QueryRowContext(ctx, `

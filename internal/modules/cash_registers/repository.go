@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"welloresto-api/internal/customeraccount"
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/fiscal"
 	"welloresto-api/internal/helpers"
@@ -238,6 +239,15 @@ func (r *CashRegisterRepository) GetCashRegisterReport(ctx context.Context, cash
 		return nil, err
 	}
 
+	// Mouvements de compte client passés sur ce registre (versements,
+	// remboursements du solde ; docs/customer-accounts.md) : de l'argent entré
+	// ou sorti hors de toute vente, en lignes à part du Z (ACCOUNT_IN_ES…).
+	accountLines, err := customeraccount.RegisterLines(ctx, db, cashRegisterID)
+	if err != nil {
+		return nil, err
+	}
+	mopList = append(mopList, accountLines...)
+
 	var TTC_MOP int
 	for _, line := range mopList {
 		TTC_MOP += line.Amount
@@ -382,6 +392,14 @@ func (r *CashRegisterRepository) closeCashRegister(ctx context.Context, cashRegi
 		return true, nil
 	}
 
+	// Verrou du registre jusqu'au commit : un versement de compte client
+	// (customer_accounts) vérifie, sous verrou partagé de cette ligne, que le
+	// registre est ouvert ; il ne peut donc pas s'y ajouter entre le calcul du
+	// Z et la fermeture.
+	if _, err := db.ExecContext(ctx, `SELECT 1 FROM cash_registers WHERE cash_register_id = ? FOR UPDATE`, cashRegisterID); err != nil {
+		return false, err
+	}
+
 	// 1. Vérifier commandes encore ouvertes
 	var tmp string
 	err = db.QueryRowContext(ctx, fmt.Sprintf(`
@@ -463,6 +481,9 @@ func (r *CashRegisterRepository) closeCashRegister(ctx context.Context, cashRegi
 			cashSales += mopLine.Amount
 		}
 	}
+	// Espèces versées ou rendues sur un compte client : elles sont dans le
+	// tiroir comme les ventes.
+	cashSales += customeraccount.CashDelta(report.MOP)
 
 	// C. Calcul du fond de caisse final
 	calculatedFinalCash := initialCashFund + cashSales
@@ -667,6 +688,17 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 			cr.Discounts += int(math.Round(it.Amount))
 			continue
 		}
+		// Commandes réglées sur le compte client : une vente, pas un
+		// encaissement (rien dans le tiroir ni sur le TPE).
+		if it.MOP == models.AccountMOP {
+			cr.AccountPayments += int(math.Round(it.Amount))
+			continue
+		}
+		if it.Label == nil || strings.TrimSpace(*it.Label) == "" {
+			if label := models.AccountRegisterLabel(it.MOP); label != "" {
+				it.Label = &label
+			}
+		}
 		cr.Items = append(cr.Items, it)
 	}
 
@@ -793,7 +825,7 @@ func (r *CashRegisterRepository) GetCashRegisterSummary(ctx context.Context, cas
 		}
 
 		p.Currency = cr.Currency
-		if models.IsDiscountMOP(p.MOP) {
+		if models.IsDiscountMOP(p.MOP) || p.MOP == models.AccountMOP {
 			continue
 		}
 		cr.Payments = append(cr.Payments, p)
@@ -1276,9 +1308,20 @@ func (r *CashRegisterRepository) GetCashRegisterTVADetails(ctx context.Context, 
 	mops := make([]models.MOPLine, 0, len(allMops))
 	for _, m := range allMops {
 		if !models.IsDiscountMOP(m.MOP) {
+			if m.Label == "" {
+				m.Label = models.AccountRegisterLabel(m.MOP)
+			}
 			mops = append(mops, m)
 		}
 	}
+	// Mouvements de compte client (versements, remboursements du solde) :
+	// argent passé sur le registre hors de toute vente.
+	accountLines, err := customeraccount.RegisterLines(ctx, dbx.GetDB(ctx, r.database), cashRegisterID)
+	if err != nil {
+		log.Error(err.Error())
+		return nil, err
+	}
+	mops = append(mops, accountLines...)
 
 	// 4. Group by delivery_type like PHP
 	grouped := make(map[string]*models.CashReportDeliveryGroup)

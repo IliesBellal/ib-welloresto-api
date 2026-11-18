@@ -436,6 +436,11 @@ func (s *Service) syncDay(ctx context.Context, log *zap.Logger, p Provider, cred
 	if err := json.Unmarshal(c.PaymentsRaw, &sales.PaymentsByOp); err != nil {
 		return fail(fmt.Errorf("paiements de la clôture illisibles: %w", err)), ""
 	}
+	if len(c.AccountRaw) > 0 {
+		if err := json.Unmarshal(c.AccountRaw, &sales.AccountOperations); err != nil {
+			return fail(fmt.Errorf("comptes clients de la clôture illisibles: %w", err)), ""
+		}
+	}
 
 	entry, err := BuildEntry(sales, conn.Config)
 	if errors.Is(err, ErrNothingToPost) {

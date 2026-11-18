@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"welloresto-api/internal/customeraccount"
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/logger"
@@ -1234,6 +1235,23 @@ func buildCustomerOrderByClause(sortField, sortDir string) string {
 }
 
 func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID, sortField, sortDir string, page, pageSize int) ([]CustomerSearchResult, int, error) {
+	return r.ListCustomersFiltered(ctx, merchantID, sortField, sortDir, page, pageSize, "")
+}
+
+// Filtres de compte client de la liste des clients.
+const (
+	AccountFilterDebt   = "debt"   // avec ardoise
+	AccountFilterCredit = "credit" // avec avance
+)
+
+// AccountBalances renvoie le solde du compte de plusieurs clients.
+func (r *CustomersRepository) AccountBalances(ctx context.Context, merchantID string, customerIDs []int64) (map[int64]int64, error) {
+	return customeraccount.Balances(ctx, dbx.GetDB(ctx, r.database), merchantID, customerIDs)
+}
+
+// ListCustomersFiltered : ListCustomers, restreinte aux clients avec ardoise
+// (accountFilter = AccountFilterDebt) ou avec avance (AccountFilterCredit).
+func (r *CustomersRepository) ListCustomersFiltered(ctx context.Context, merchantID, sortField, sortDir string, page, pageSize int, accountFilter string) ([]CustomerSearchResult, int, error) {
 	db := dbx.GetDB(ctx, r.database)
 	var results []CustomerSearchResult
 
@@ -1251,10 +1269,21 @@ func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID, sor
       AND (c.enabled = true OR c.blocked_at IS NOT NULL)
       AND c.customer_brand NOT IN ('UBER_EATS', 'DELIVEROO')
 `
+	filterArgs := []any{merchantID}
+	switch accountFilter {
+	case AccountFilterDebt, AccountFilterCredit:
+		sign := "<"
+		if accountFilter == AccountFilterCredit {
+			sign = ">"
+		}
+		fromClause += `      AND c.customer_id IN (SELECT b.customer_id FROM (` + customeraccount.BalancesSQL + `) b WHERE b.balance ` + sign + ` 0)
+`
+		filterArgs = append(filterArgs, merchantID, merchantID)
+	}
 
 	var totalItems int
 	countQuery := `SELECT COUNT(*) ` + fromClause
-	if err := db.QueryRowContext(ctx, countQuery, merchantID).Scan(&totalItems); err != nil {
+	if err := db.QueryRowContext(ctx, countQuery, filterArgs...).Scan(&totalItems); err != nil {
 		return results, 0, err
 	}
 
@@ -1282,7 +1311,7 @@ func (r *CustomersRepository) ListCustomers(ctx context.Context, merchantID, sor
 	LIMIT ? OFFSET ?
 `
 
-	rows, err := db.QueryContext(ctx, query, merchantID, pageSize, offset)
+	rows, err := db.QueryContext(ctx, query, append(filterArgs, pageSize, offset)...)
 	if err != nil {
 		return results, 0, err
 	}
@@ -1444,8 +1473,8 @@ func (r *CustomersRepository) ReverseOrderFromCustomerStats(ctx context.Context,
 // (state IN ('CLOSED','DONE'), brand_status not deleted/canceled,
 // cross-channel) and cmd/backfill_customer_stats.
 type StatsReconciliationSample struct {
-	SampleSize          int
-	Mismatches          int
+	SampleSize           int
+	Mismatches           int
 	MaxNbOrdersDiff      int64
 	MaxTotalSpentDiffAbs int64 // centimes
 }

@@ -1,6 +1,7 @@
 package users
 
 import (
+	"welloresto-api/internal/customeraccount"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -626,6 +627,23 @@ func (r *UsersRepository) UpdateUserAvatar(ctx context.Context, userID, avatarUR
 
 	_, err := db.ExecContext(ctx, `UPDATE users SET profile_picture = ? WHERE user_id = ?`, avatarURL, userID)
 	return err
+}
+
+// CustomerAccountLimitAlerts compte les clients endettés proches de leur
+// plafond d'ardoise (80 % et plus) et ceux au-delà (docs/customer-accounts.md).
+func (r *UsersRepository) CustomerAccountLimitAlerts(ctx context.Context, merchantID string) (near, over int, err error) {
+	alerts, err := customeraccount.LimitAlerts(ctx, dbx.GetDB(ctx, r.database), merchantID)
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, a := range alerts {
+		if a.Over {
+			over++
+		} else {
+			near++
+		}
+	}
+	return near, over, nil
 }
 
 func (r *UsersRepository) GetOutOfStockComponents(ctx context.Context, merchantID string, maxNames int) (int, []string, error) {

@@ -134,6 +134,9 @@ func (v *verifier) dayClosures(ctx context.Context) error {
 				v.r.add(SeverityError, c.Check, "%s : paiements du jour différents de la clôture (scellé %s, recalculé %s)", label, a, b)
 			}
 		}
+		if a, b := jsonOf(stored.AccountOperations), jsonOf(got.AccountOperations); a != b {
+			v.r.add(SeverityError, c.Check, "%s : mouvements de compte client du jour différents de la clôture (scellé %s, recalculé %s)", label, a, b)
+		}
 		// Cumuls.
 		wantPerpetual, wantGrand := stored.NetTTC, stored.NetTTC
 		if prev == nil {

@@ -336,6 +336,24 @@ type InvoiceEmailData struct {
 	SupportEmail  string
 }
 
+// CustomerAccountEmailData : relevé de compte client ou relance d'ardoise
+// (docs/customer-accounts.md). Montants déjà formatés.
+type CustomerAccountEmailData struct {
+	Brand        MerchantBrand
+	MerchantName string
+	CustomerName string
+	// BalanceLabel : « Ardoise 35,00 € », « Avance 120,00 € » ou « Soldé ».
+	BalanceLabel string
+	// AmountDue : reste à régler (vide sans dette).
+	AmountDue string
+	// SinceLabel : date de la plus ancienne commande non réglée (relance).
+	SinceLabel string
+	// PeriodLabel : période du relevé (relevé seulement).
+	PeriodLabel string
+	// PaymentURL : lien de paiement en ligne (vide sans compte Stripe).
+	PaymentURL string
+}
+
 // WaitlistAvailableData pour la notification "une table s'est libérée"
 // envoyée au premier de la liste d'attente lors d'un no-show / expiration.
 type WaitlistAvailableData struct {

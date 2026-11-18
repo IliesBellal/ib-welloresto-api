@@ -53,6 +53,7 @@ import (
 	bookingsModule "welloresto-api/internal/modules/bookings"
 	cashregisterModule "welloresto-api/internal/modules/cash_registers"
 	companiesModule "welloresto-api/internal/modules/companies"
+	customerAccountsModule "welloresto-api/internal/modules/customer_accounts"
 	customersModule "welloresto-api/internal/modules/customers"
 	customersImporterModule "welloresto-api/internal/modules/customers/importer"
 	deliverooModule "welloresto-api/internal/modules/deliveroo"
@@ -510,6 +511,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	stripeWebhookService.SetMerchantSMS(merchantSMSService)
 	stripeWebhookService.SetBrandResolver(merchantBrands)
 	stripeWebhookService.SetScanNOrderBaseURL(cfg.ScanNOrder.SNORedirectBaseURL)
+	// Paiement par QR code de la caisse : page de retour du client, et client
+	// Stripe du webhook (frais du paiement, remboursement d'un trop-perçu).
+	ordersLifeCycleService.SetScanNOrderBaseURL(cfg.ScanNOrder.SNORedirectBaseURL)
+	stripeWebhookService.SetPOSQRStripe(stripeManager)
 	// Signature vérifiée en mode observation, voir StripeWebhookService.VerifySignature.
 	stripeWebhookService.SetSignatureSecrets(cfg.Stripe.WebhookSecret, cfg.Stripe.ConnectWebhookSecret)
 	stripeWebhookHandler := webhookstripe.NewHandler(stripeWebhookService)
@@ -768,6 +773,20 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	cashRegisterH := cashregisterModule.NewCashRegisterHandler(cashRegisterService)
 	bookingsH := bookingsModule.NewBookingsHandler(bookingsService)
 	customersH := customersModule.NewCustomersHandler(customersService)
+	// Compte client (avance et ardoise, docs/customer-accounts.md) : le
+	// registre ouvert de l'appareil est trouvé comme pour un paiement.
+	customerAccountsService := customerAccountsModule.NewService(
+		selectedDB, customerAccountsModule.NewRepository(selectedDB), ordersLifeCycleRepo.GetActiveCashRegisterID,
+		customerAccountsModule.Deps{
+			Mailer:        mailService,
+			SMS:           merchantSMSService,
+			Brand:         merchantBrands,
+			Payments:      customerAccountsModule.StripeCheckout{Manager: stripeManager},
+			PublicBaseURL: cfg.Reservation.PublicAPIBaseURL,
+		})
+	customerAccountsH := customerAccountsModule.NewHandler(customerAccountsService)
+	// Règlement en ligne d'une ardoise : le webhook Stripe enregistre le versement.
+	stripeWebhookService.SetCustomerAccountPayments(customerAccountsService)
 	// Import de clients : dépendances propres (lecture + écriture batchées +
 	// registry de providers + cache), volontairement disjointes de celles de
 	// CustomersService — même parti pris que l'import de produits. customersRepo
@@ -791,6 +810,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		fiscalArchiveStore = r2PrivateClient
 	}
 	taskManager := tasksPkg.NewTasksManager(selectedDB, &mailService, ordersLifeCycleService, stripeManager, bookingsService, aiCache, upsellRepo, dunningService, subscriptionsService, fiscalArchiveStore, log)
+	taskManager.CustomerAccounts = customerAccountsService
 	adminUpsellH := adminModule.NewAdminUpsellHandler(taskManager, log)
 
 	// Justificatifs de versement : le webhook payout.paid met les payouts en
@@ -1860,6 +1880,9 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			// Sous-route paiements (en écriture)
 			r.Route("/{order_id}/payments", func(r chi.Router) {
 				r.Post("/create", ordersLifeCycleH.AddPayment)
+				// Paiement par QR code : session Stripe Checkout d'une part de la
+				// commande ; le paiement n'existe qu'à la confirmation du webhook.
+				r.Post("/qr", ordersLifeCycleH.CreateQRPayment)
 				// Supprimer un paiement enregistré n'EST PAS bloqué, car est une opération qui peut être
 				// une correction d'une erreur de manipulation faite par un serveur. Elle doit être accessible par n'importe
 				// qui car elle annule un SALE et ne créé pas de REFUND. Pas de nécessité de restreindre avec un droit.
@@ -2091,6 +2114,35 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		r.Patch("/{customer_id}/loyalty/{loyalty_program_id}", customersH.UpdateLoyaltyProgress) // used by: back-office
 		r.Patch("/{customer_id}/rewards/{reward_id}", customersH.UpdateLoyaltyReward)            // used by: back-office
 	})
+
+	// --- COMPTES CLIENTS (avance et ardoise, docs/customer-accounts.md) ---
+	// Consulter et verser : saisie courante de la caisse, comme un paiement.
+	// Rendre de l'argent ou renoncer à une dette : pos.refund, comme le
+	// remboursement d'une commande. Plafond d'ardoise : settings.manage.
+	r.Route("/customer-accounts", func(r chi.Router) {
+		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
+
+		r.Get("/", customerAccountsH.List)
+		r.Get("/settings", customerAccountsH.GetSettings)
+		r.With(middleware.RequirePermission(permission.SettingsManage)).Put("/settings", customerAccountsH.UpdateSettings)
+		// Suivi des ardoises (balance âgée, totaux mensuels) : rapports financiers.
+		r.With(middleware.RequirePermission(permission.ReportsFinancialRead)).Get("/aging", customerAccountsH.Aging)
+		r.With(middleware.RequirePermission(permission.ReportsFinancialRead)).Get("/monthly", customerAccountsH.Monthly)
+		r.Get("/{customer_id}", customerAccountsH.Get)
+		r.With(middleware.RequirePermission(permission.CustomersManage)).Put("/{customer_id}/settings", customerAccountsH.UpdateCustomerSettings)
+		r.Get("/{customer_id}/statement", customerAccountsH.Statement)
+		r.Post("/{customer_id}/statement/send", customerAccountsH.SendStatement)
+		r.With(middleware.RequirePermission(permission.CustomersManage)).Post("/{customer_id}/remind", customerAccountsH.Remind)
+		r.Post("/{customer_id}/payment-link", customerAccountsH.PaymentLink)
+		r.Post("/{customer_id}/deposit", customerAccountsH.Deposit)
+		r.With(middleware.RequirePermission(permission.POSRefund)).Post("/{customer_id}/refund", customerAccountsH.Refund)
+		r.With(middleware.RequirePermission(permission.POSRefund)).Post("/{customer_id}/write-off", customerAccountsH.WriteOff)
+	})
+
+	// Lien de paiement en ligne d'une ardoise (public : le jeton fait foi).
+	r.Get("/pay/account/{token}", customerAccountsH.PayOnline)
+	r.Get("/pay/account/{token}/done", customerAccountsH.PayOnlineDone)
 
 	// --- CASH REGISTER ---
 	r.Route("/cash_register", func(r chi.Router) {

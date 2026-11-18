@@ -232,7 +232,8 @@ func (r *sqlRepository) MerchantTimezone(ctx context.Context, merchantID string)
 func (r *sqlRepository) PendingClosures(ctx context.Context, merchantID, provider string, from time.Time, maxAttempts, limit int) ([]Closure, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT f.id, to_char(f.period_start, 'YYYY-MM-DD'), f.hash,
-		       f.vat_by_rate::text, f.payments_by_mop::text, COALESCE(i.attempts, 0)
+		       f.vat_by_rate::text, f.payments_by_mop::text, COALESCE(i.attempts, 0),
+		       COALESCE(f.account_operations::text, '')
 		FROM fiscal_closures f
 		LEFT JOIN accounting_sync_items i
 		       ON i.merchant_id = f.merchant_id AND i.provider = $2 AND i.period_start = f.period_start
@@ -247,11 +248,14 @@ func (r *sqlRepository) PendingClosures(ctx context.Context, merchantID, provide
 	var out []Closure
 	for rows.Next() {
 		var c Closure
-		var vat, pay string
-		if err := rows.Scan(&c.ID, &c.Date, &c.Hash, &vat, &pay, &c.Attempts); err != nil {
+		var vat, pay, account string
+		if err := rows.Scan(&c.ID, &c.Date, &c.Hash, &vat, &pay, &c.Attempts, &account); err != nil {
 			return nil, err
 		}
 		c.VATRaw, c.PaymentsRaw = []byte(vat), []byte(pay)
+		if account != "" {
+			c.AccountRaw = []byte(account)
+		}
 		out = append(out, c)
 	}
 	return out, rows.Err()

@@ -101,7 +101,7 @@ func Run(ctx context.Context, database *sql.DB, opts Options) (*Report, error) {
 	}
 
 	for _, step := range []func(context.Context) error{
-		v.payments, v.receipts, v.cashRegisters, v.auditLogs, v.closureChain, v.archives, v.ordersChain,
+		v.payments, v.customerAccounts, v.receipts, v.cashRegisters, v.auditLogs, v.closureChain, v.archives, v.ordersChain,
 		v.numbering, v.dayClosures, v.aggregateClosures, v.ordersVsReceipts,
 	} {
 		if err := step(ctx); err != nil {

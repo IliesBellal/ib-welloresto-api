@@ -50,6 +50,10 @@ func invoicePaymentLabel(mop string) string {
 	switch strings.ToUpper(strings.TrimSpace(mop)) {
 	case models.StripeMOP, "STRIPE_WEB_HOOK":
 		return "En ligne"
+	case models.AccountMOP:
+		// Réglée sur le compte du client (avance ou ardoise,
+		// docs/customer-accounts.md).
+		return "Compte client"
 	}
 	return mop
 }

@@ -58,7 +58,7 @@ func TestCanonical_Numbers(t *testing.T) {
 func TestSeal_DeterministicAndBound(t *testing.T) {
 	t.Setenv("FISCAL_SIGNING_KEY", "unit-test-key")
 	at := time.Date(2026, 10, 7, 12, 30, 0, 123456789, time.UTC)
-	p, err := NewPaymentPayload("42", "1001", 1500, "ES", "SALE", at, "u1", nil)
+	p, err := NewPaymentPayload("42", "1001", 1500, "ES", "SALE", at, "u1", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

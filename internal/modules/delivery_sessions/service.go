@@ -524,5 +524,17 @@ func (s *DeliverySessionsService) CancelDeliverySession(ctx context.Context, tok
 	}
 	s.invalidateOrderCache(ctx, session.MerchantID, canceledOrderIDs...)
 
+	// UPDATE_DELIVERY_SESSION ne porte que la tournée : sans UPDATE_ORDER, les
+	// autres POS gardent la commande « en livraison » (EN_ROUTE_TO_DROPOFF) et
+	// ne peuvent plus la re-dispatcher tant qu'ils ne rechargent pas la liste.
+	// Seules les commandes effectivement remises en attente sont notifiées : les
+	// arrets deja livres, echoues ou annules gardent leur statut.
+	for _, o := range fullSession.Orders {
+		if o.BrandStatus == nil || *o.BrandStatus != "READY_FOR_HANDOFF" {
+			continue
+		}
+		_ = s.notificationsService.SendNotificationAsync(session.MerchantID, o.OrderID, notification.NotificationTypeOrderUpdate)
+	}
+
 	return fullSession, nil
 }

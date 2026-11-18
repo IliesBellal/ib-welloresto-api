@@ -11,7 +11,7 @@ func TestSealedPayment_SealedWith(t *testing.T) {
 	at := Now()
 	comment := "ticket 12"
 	sealed := func(userID string) sealedPayment {
-		payload, err := NewPaymentPayload("212", "9001", 500, "ES", "SALE", at, userID, &comment)
+		payload, err := NewPaymentPayload("212", "9001", 500, "ES", "SALE", at, userID, &comment, nil)
 		if err != nil {
 			t.Fatalf("payload: %v", err)
 		}

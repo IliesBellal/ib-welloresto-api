@@ -346,7 +346,8 @@ func (h *CustomersHandler) ListCustomers(w http.ResponseWriter, r *http.Request)
 		pageSize = 10
 	}
 
-	customerData, err := h.svc.ListCustomers(ctx, token, sortField, sortDir, page, pageSize)
+	// account=debt : clients avec ardoise ; account=credit : avec avance.
+	customerData, err := h.svc.ListCustomers(ctx, token, sortField, sortDir, page, pageSize, r.URL.Query().Get("account"))
 	if err != nil {
 		models.SendErrorJSON(w, "customers", "list", err)
 		return

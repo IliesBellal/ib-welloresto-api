@@ -35,6 +35,9 @@ import (
 )
 
 type StripeWebhookService struct {
+	// customerAccounts : règlements en ligne des comptes clients (optionnel).
+	customerAccounts CustomerAccountPayments
+
 	repo           Repository
 	stripeKey      string
 	email          mailer.Service
@@ -76,6 +79,10 @@ type StripeWebhookService struct {
 	// signatureSecrets : secrets whsec_ connus, essayés dans l'ordre par
 	// VerifySignature (cf. SetSignatureSecrets).
 	signatureSecrets []signatureSecret
+	// posQRLifecycle et posQRStripe : paiement par QR code de la caisse
+	// (cf. pos_qr.go).
+	posQRLifecycle posQRLifecycle
+	posQRStripe    posQRStripe
 }
 
 type signatureSecret struct {
@@ -141,6 +148,7 @@ func NewStripeWebhookService(repo Repository, stripeKey string, email mailer.Ser
 		email:          email,
 		smsService:     smsService,
 		orderlifecycle: lifecycle,
+		posQRLifecycle: lifecycle,
 		notification:   notification,
 		redis:          redis,
 		db:             db,
@@ -188,7 +196,78 @@ func (s *StripeWebhookService) ProcessEvent(ctx context.Context, event StripeEve
 	return s.dispatchEvent(ctx, event)
 }
 
+// CustomerAccountPayments enregistre le règlement en ligne d'un compte client
+// (customer_accounts.Service.HandleOnlinePaymentCompleted).
+type CustomerAccountPayments interface {
+	HandleOnlinePaymentCompleted(ctx context.Context, sessionID, paymentIntentID string, metadata map[string]string, amount int64, paid bool) error
+	// HandleOnlinePaymentRefunded répercute un remboursement (cumul remboursé
+	// du paiement) sur le compte du client.
+	HandleOnlinePaymentRefunded(ctx context.Context, paymentIntentID string, totalRefunded int64) error
+}
+
+// customerAccountChannel : métadonnée « channel » des paiements de compte
+// client (customer_accounts.OnlinePaymentChannel).
+const customerAccountChannel = "customer_account"
+
+// SetCustomerAccountPayments branche le règlement en ligne des comptes clients.
+func (s *StripeWebhookService) SetCustomerAccountPayments(h CustomerAccountPayments) {
+	s.customerAccounts = h
+}
+
+// customerAccountEvent : l'objet de l'événement porte channel=customer_account
+// (session Checkout, PaymentIntent ou charge d'un règlement de compte client).
+func customerAccountEvent(data json.RawMessage) bool {
+	var obj struct {
+		Metadata map[string]string `json:"metadata"`
+	}
+	return json.Unmarshal(data, &obj) == nil && obj.Metadata["channel"] == customerAccountChannel
+}
+
 func (s *StripeWebhookService) dispatchEvent(ctx context.Context, event StripeEvent) error {
+	// Paiement par QR code de la caisse (pos_qr.go) : la session payée enregistre
+	// le paiement. Sa session expirée ne doit surtout pas refuser la commande
+	// (HandleCheckoutSessionCanceled) : la caisse l'a peut-être réglée autrement.
+	// Les événements PaymentIntent et charge suivent le flux habituel (statut,
+	// remboursement).
+	if (event.Type == "checkout.session.completed" || event.Type == "checkout.session.expired") && posQREvent(event.Data.Object) {
+		if event.Type == "checkout.session.completed" {
+			return s.HandlePOSQRCheckoutCompleted(ctx, event.Data.Object, event.Account)
+		}
+		return nil
+	}
+
+	// Règlement en ligne d'un compte client (docs/customer-accounts.md) : seuls
+	// la session payée et les remboursements comptent ; les autres événements
+	// (PaymentIntent, charge) ne concernent aucune commande et sont ignorés.
+	if customerAccountEvent(event.Data.Object) {
+		if s.customerAccounts == nil {
+			return nil
+		}
+		switch event.Type {
+		case "checkout.session.completed":
+			var session stripe.CheckoutSession
+			if err := json.Unmarshal(event.Data.Object, &session); err != nil {
+				return fmt.Errorf("unmarshal session: %w", err)
+			}
+			piID := ""
+			if session.PaymentIntent != nil {
+				piID = session.PaymentIntent.ID
+			}
+			return s.customerAccounts.HandleOnlinePaymentCompleted(ctx, session.ID, piID, session.Metadata, session.AmountTotal,
+				session.PaymentStatus == stripe.CheckoutSessionPaymentStatusPaid)
+		case "charge.refunded":
+			var charge stripe.Charge
+			if err := json.Unmarshal(event.Data.Object, &charge); err != nil {
+				return fmt.Errorf("unmarshal charge: %w", err)
+			}
+			if charge.PaymentIntent == nil {
+				return nil
+			}
+			return s.customerAccounts.HandleOnlinePaymentRefunded(ctx, charge.PaymentIntent.ID, charge.AmountRefunded)
+		}
+		return nil
+	}
+
 	switch event.Type {
 
 	case "checkout.session.completed":

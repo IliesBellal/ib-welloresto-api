@@ -74,6 +74,9 @@ type OrdersLifeCycleService struct {
 	// Envoi automatique des factures des commandes en ligne (cf. SetOnlineInvoices).
 	invoiceOutbound invoiceOutboundRecorder
 	invoiceBrands   invoiceBrandResolver
+	// scannorderBaseURL : page de retour du client après un paiement par QR code
+	// de la caisse (cf. SetScanNOrderBaseURL).
+	scannorderBaseURL string
 }
 
 func NewOrdersLifeCycleService(ordersRepo *OrdersLifeCycleRepository, stripeSvc *stripeclient.StripeManager, uberSvc *ubereats.UberEatsService, deliverooSvc *deliveroo.DeliverooService, deliverySessionsRepo *delivery_sessions.DeliverySessionsRepository, log *zap.Logger, notificationsService *notification.NotificationService, customersService *customers.CustomersService, redis *redis.Client, auditService audit.AuditService, orders orderFetcher, receiptService receipt.ReceiptService, db *sql.DB, stocksRepo *stocks.StocksRepository, upsellTracker *upsell.Tracker, accountingRepo merchantHeaderProvider, mailerService mailer.Service, bookingsSvc bookingAutoTransitioner) *OrdersLifeCycleService {
@@ -496,6 +499,9 @@ func (s *OrdersLifeCycleService) AddPayment(ctx context.Context, orderID string,
 		OperationType:  models.OperationTypeSale,
 		Comment:        &req.Comment,
 		Code:           &req.Code,
+	}
+	if req.CustomerID != nil && *req.CustomerID > 0 {
+		payment.AttachCustomerID = *req.CustomerID
 	}
 
 	paymentID, err := s.CreatePaymentAndReturnID(ctx, payment)
@@ -1289,6 +1295,10 @@ func (s *OrdersLifeCycleService) PrepareUpdateOrder(ctx context.Context, req *mo
 		return err
 	}
 
+	// Avant le test d'ouverture : la notification de commande déjà close en a
+	// besoin pour atteindre les appareils de l'établissement.
+	req.MerchantID = user.MerchantID
+
 	orderStillOpen, err := s.ordersLifeCycleRepo.OrderStillOpen(ctx, *req.Order.OrderID)
 	if err != nil {
 		return err
@@ -1298,7 +1308,6 @@ func (s *OrdersLifeCycleService) PrepareUpdateOrder(ctx context.Context, req *mo
 		return nil
 	}
 
-	req.MerchantID = user.MerchantID
 	req.Order.CreatedBy = &user.UserID
 
 	// ttc, ht, tva, err := s.ordersLifeCycleRepo.computeOrderTotals(ctx, req.MerchantID, req.Order.OrderType, req.Order.Products, req.Order.DeliveryFees)

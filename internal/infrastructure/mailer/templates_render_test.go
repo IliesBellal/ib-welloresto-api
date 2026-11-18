@@ -41,6 +41,14 @@ func templateFixtures() map[string]interface{} {
 			ReceiptURL: "https://pay.stripe.com/receipts/abc",
 		},
 		"invoice_email.html": InvoiceEmailData{Brand: brand, MerchantName: brand.Name, CustomerName: "Camille", ReceiptNumber: "F-2026-0042", OrderNumber: "1042"},
+		"customer_account_statement.html": CustomerAccountEmailData{
+			Brand: brand, MerchantName: brand.Name, CustomerName: "Camille", BalanceLabel: "Ardoise 35,00 €",
+			AmountDue: "35,00 €", PeriodLabel: "du 01/09/2026 au 17/11/2026", PaymentURL: "https://api.welloresto.fr/pay/account/abc",
+		},
+		"customer_account_reminder.html": CustomerAccountEmailData{
+			Brand: brand, MerchantName: brand.Name, CustomerName: "Camille", BalanceLabel: "Ardoise 35,00 €",
+			AmountDue: "35,00 €", SinceLabel: "12/10/2026", PaymentURL: "https://api.welloresto.fr/pay/account/abc",
+		},
 		"payout_notification.html": PayoutData{
 			Establishment: est, MerchantName: est.Name, Amount: "1284.60 €", ArrivalDate: "23/10/2026", PayoutID: "po_1Q8xK2",
 		},

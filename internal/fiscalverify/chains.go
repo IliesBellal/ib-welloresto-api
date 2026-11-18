@@ -132,7 +132,7 @@ func (v *verifier) payments(ctx context.Context) error {
 	c := v.r.check(s.check, s.label)
 	rows, err := v.db.QueryContext(ctx, `
 		SELECT payment_id::text, order_id::text, amount, COALESCE(mop, ''), COALESCE(operation_type, ''), payment_date,
-		       COALESCE(user_id, ''), comment, COALESCE(previous_hash, ''), hash, COALESCE(signature, ''), hash_version
+		       COALESCE(user_id, ''), comment, customer_id, COALESCE(previous_hash, ''), hash, COALESCE(signature, ''), hash_version
 		FROM payments
 		WHERE merchant_id = ? AND hash IS NOT NULL AND hash <> '' AND payment_date >= ? AND payment_date < ?
 		ORDER BY payment_date, payment_id`, v.merchant, v.from, v.to)
@@ -145,7 +145,8 @@ func (v *verifier) payments(ctx context.Context) error {
 		var orderID, mop, op, user string
 		var amount int
 		var comment sql.NullString
-		if err := rows.Scan(&l.id, &orderID, &amount, &mop, &op, &l.at, &user, &comment, &l.prev, &l.hash, &l.sig, &l.version); err != nil {
+		var customer sql.NullInt64
+		if err := rows.Scan(&l.id, &orderID, &amount, &mop, &op, &l.at, &user, &comment, &customer, &l.prev, &l.hash, &l.sig, &l.version); err != nil {
 			rows.Close()
 			return fmt.Errorf("fiscalverify: payments: %w", err)
 		}
@@ -155,7 +156,11 @@ func (v *verifier) payments(ctx context.Context) error {
 			if comment.Valid {
 				cm = &comment.String
 			}
-			p, err := fiscal.NewPaymentPayload(v.merchant, orderID, amount, mop, op, l.at, user, cm)
+			var cust *int64
+			if customer.Valid {
+				cust = &customer.Int64
+			}
+			p, err := fiscal.NewPaymentPayload(v.merchant, orderID, amount, mop, op, l.at, user, cm, cust)
 			v.recomputed(s, l, p, err)
 		}
 		links = append(links, l)
@@ -166,6 +171,54 @@ func (v *verifier) payments(ctx context.Context) error {
 	}
 	c.Checked = len(links)
 	return v.linkage(ctx, s, links)
+}
+
+// customerAccounts vérifie la chaîne des mouvements de compte client
+// (versements, remboursements du solde, abandons de créance).
+func (v *verifier) customerAccounts(ctx context.Context) error {
+	s := chainSpec{check: "comptes_clients", label: "Chaîne des mouvements de compte client", table: "customer_account_operations", dateExpr: "operation_date"}
+	c := v.r.check(s.check, s.label)
+	rows, err := v.db.QueryContext(ctx, `
+		SELECT operation_id::text, customer_id, operation_type, amount, mop, comment, user_id, cash_register_id,
+		       operation_date, COALESCE(previous_hash, ''), hash, COALESCE(signature, ''), COALESCE(hash_version, 0)
+		FROM customer_account_operations
+		WHERE merchant_id = ? AND hash IS NOT NULL AND hash <> '' AND operation_date >= ? AND operation_date < ?
+		ORDER BY operation_date, operation_id`, v.merchant, v.from, v.to)
+	if err != nil {
+		return fmt.Errorf("fiscalverify: customer account operations: %w", err)
+	}
+	var links []link
+	for rows.Next() {
+		var l link
+		var p fiscal.AccountOperationPayload
+		var mop, comment, register sql.NullString
+		if err := rows.Scan(&l.id, &p.CustomerID, &p.OperationType, &p.Amount, &mop, &comment, &p.UserID, &register,
+			&l.at, &l.prev, &l.hash, &l.sig, &l.version); err != nil {
+			rows.Close()
+			return fmt.Errorf("fiscalverify: customer account operations: %w", err)
+		}
+		l.id = "mouvement de compte " + l.id
+		p.MerchantID = v.merchant
+		p.MOP = nullableString(mop)
+		p.Comment = nullableString(comment)
+		p.CashRegisterID = nullableString(register)
+		p.OperationDate = fiscal.FormatTime(l.at)
+		v.recomputed(s, l, p, nil)
+		links = append(links, l)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("fiscalverify: customer account operations: %w", err)
+	}
+	c.Checked = len(links)
+	return v.linkage(ctx, s, links)
+}
+
+func nullableString(s sql.NullString) *string {
+	if !s.Valid {
+		return nil
+	}
+	return &s.String
 }
 
 func (v *verifier) receipts(ctx context.Context) error {

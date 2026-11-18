@@ -54,7 +54,7 @@ type sealedPayment struct {
 // sealedWith indique si l'empreinte stockée du paiement se recalcule avec
 // userID comme saisisseur.
 func (r sealedPayment) sealedWith(userID string) (bool, error) {
-	p, err := NewPaymentPayload(r.MerchantID, r.OrderID, r.amount, r.MOP, r.op, r.at, userID, r.comment)
+	p, err := NewPaymentPayload(r.MerchantID, r.OrderID, r.amount, r.MOP, r.op, r.at, userID, r.comment, nil)
 	if err != nil {
 		return false, err
 	}

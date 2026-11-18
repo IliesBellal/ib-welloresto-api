@@ -99,7 +99,7 @@ func TestVerifyPerf_Postgres(t *testing.T) {
 			rVals = append(rVals, fmt.Sprintf("($%d, $%d, $%d::int, $%d, 2500, 2273, $%d::jsonb, '[]', '[]', $%d, $%d, $%d, $%d, 2)", k+1, k+2, k+3, k+4, k+5, k+6, k+7, k+8, k+9))
 			rArgs = append(rArgs, "itest-vperf-"+number, merchantID, o.id, number, tax, o.at, prevR, rh, rs)
 			prevR = rh
-			pp, _ := fiscal.NewPaymentPayload(merchantID, o.id, 2500, "CB", "SALE", o.at, "itest", nil)
+			pp, _ := fiscal.NewPaymentPayload(merchantID, o.id, 2500, "CB", "SALE", o.at, "itest", nil, nil)
 			ph, ps, _ := fiscal.Seal(fiscal.ChainPayments, prevP, pp)
 			k = len(pArgs)
 			pVals = append(pVals, fmt.Sprintf("($%d, $%d::int, 2500, 2500, 'CB', $%d, 'itest', 'SALE', TRUE, $%d, $%d, $%d, 2)", k+1, k+2, k+3, k+4, k+5, k+6))

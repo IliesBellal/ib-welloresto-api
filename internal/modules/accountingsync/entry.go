@@ -31,7 +31,10 @@ type Mapping struct {
 	VATAccounts map[string]string `json:"vat_accounts"`
 	// PaymentAccounts : compte d'encaissement (531 caisse, 511 CB à encaisser,
 	// 4xx plateformes…) par code du moyen de paiement (payments.mop : "ES",
-	// "CB", "TR", "STRIPE", "UBER_EATS"…).
+	// "CB", "TR", "STRIPE", "UBER_EATS"…). Compte client
+	// (docs/customer-accounts.md) : "ACCOUNT" = compte des soldes clients
+	// (4191 avances / 411 ardoises), "WRITE_OFF" = charge des abandons de
+	// créance (654) ; sans eux, le compte d'écart.
 	PaymentAccounts map[string]string `json:"payment_accounts"`
 	// DifferenceAccount : absorbe l'écart entre ventes et encaissements du jour
 	// (commande non réglée, arrondi), pour que l'écriture soit toujours équilibrée.
@@ -137,6 +140,25 @@ type DailySales struct {
 	ClosureHash  string
 	VATByRate    []fiscal.VATTotal
 	PaymentsByOp []fiscal.PaymentTotal
+	// AccountOperations : versements, remboursements de solde et abandons de
+	// créance du jour (compte client).
+	AccountOperations []fiscal.AccountOperationTotal
+}
+
+// Clés de PaymentAccounts propres au compte client.
+const (
+	AccountKey  = "ACCOUNT"
+	WriteOffKey = "WRITE_OFF"
+)
+
+// specialAccount : compte d'une clé du compte client, ou le compte d'écart
+// si l'établissement ne l'a pas renseignée (jamais le compte par défaut des
+// encaissements, qui ferait passer une avance pour de l'argent en caisse).
+func specialAccount(m Mapping, key string) string {
+	if v := strings.TrimSpace(m.PaymentAccounts[key]); v != "" {
+		return v
+	}
+	return m.DifferenceAccount
 }
 
 // EntryLine est une ligne d'écriture ; montants en centimes, positifs, un seul
@@ -243,7 +265,13 @@ func BuildEntry(sales DailySales, m Mapping) (Entry, error) {
 		if amount == 0 {
 			continue
 		}
-		account := pick(m.PaymentAccounts, strings.ToUpper(strings.TrimSpace(p.MOP)))
+		mop := strings.ToUpper(strings.TrimSpace(p.MOP))
+		account := pick(m.PaymentAccounts, mop)
+		if mop == AccountKey {
+			// Commande réglée sur le compte client : débit du compte des
+			// soldes clients (l'avance diminue, ou l'ardoise augmente).
+			account = specialAccount(m, AccountKey)
+		}
 		if a, ok := debits[account]; ok {
 			a.cents += amount
 		} else {
@@ -251,6 +279,36 @@ func BuildEntry(sales DailySales, m Mapping) (Entry, error) {
 			debitOrder = append(debitOrder, account)
 		}
 		totalPaid += amount
+	}
+
+	// Mouvements de compte client : écritures équilibrées par elles-mêmes, sans
+	// effet sur l'écart ventes / encaissements.
+	//   versement      débit moyen de paiement  / crédit compte client
+	//   remboursement  inverse (montant négatif)
+	//   abandon        débit charge (WRITE_OFF) / crédit compte client
+	addDebit := func(account, label string, cents int64) {
+		if cents == 0 {
+			return
+		}
+		if a, ok := debits[account]; ok {
+			a.cents += cents
+			return
+		}
+		debits[account] = &acc{label: label, cents: cents}
+		debitOrder = append(debitOrder, account)
+	}
+	for _, op := range sales.AccountOperations {
+		accountAcc := specialAccount(m, AccountKey)
+		switch op.OperationType {
+		case models.AccountOperationDeposit, models.AccountOperationRefund:
+			mop := strings.ToUpper(strings.TrimSpace(op.MOP))
+			addDebit(pick(m.PaymentAccounts, mop), "Encaissements "+mop, op.Amount)
+		case models.AccountOperationWriteOff:
+			addDebit(specialAccount(m, WriteOffKey), "Abandons de créance clients", op.Amount)
+		default:
+			continue
+		}
+		addCredit(accountAcc, "Comptes clients", op.Amount)
 	}
 
 	var lines []EntryLine

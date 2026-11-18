@@ -176,6 +176,8 @@ type LoginCapabilityIntegrationsResponse struct {
 	UberDirect bool `json:"uber_direct"`
 	Deliveroo  bool `json:"deliveroo"`
 	ScanNOrder bool `json:"scannorder"`
+	// Stripe : compte Stripe Connect actif (paiement par QR code de la caisse).
+	Stripe bool `json:"stripe"`
 }
 
 type LoginIntegrationsResponse struct {

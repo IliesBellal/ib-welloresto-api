@@ -25,6 +25,10 @@ import (
 
 // TasksManager centralise toutes les dépendances nécessaires aux tâches CRON
 type TasksManager struct {
+	// CustomerAccounts : relances des ardoises (SendCustomerAccountReminders).
+	// Nil tant que SetupRoutes ne l'a pas branché.
+	CustomerAccounts CustomerAccountReminderRunner
+
 	DB             *sql.DB
 	EmailService   *mailer.Service
 	OrderService   *order_life_cycle.OrdersLifeCycleService

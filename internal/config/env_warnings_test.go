@@ -16,6 +16,7 @@ func setAllOptionalEnv(t *testing.T) {
 	}
 	t.Setenv("DB_DIALECT", "postgres")
 	t.Setenv("PUBLIC_RESERVATION_BASE_URL", "https://rsv.example")
+	t.Setenv("PUBLIC_API_BASE_URL", "https://api.example")
 }
 
 func warningVars(ws []EnvWarning) []string {

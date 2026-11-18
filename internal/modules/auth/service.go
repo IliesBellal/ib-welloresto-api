@@ -562,6 +562,7 @@ func buildLoginResponse(user *UserLoginRow, merchants []MerchantRow) *LoginRespo
 			UberDirect: user.UDCustomerID.Valid && user.UDCustomerID.String != "",
 			Deliveroo:  user.DrooLocationID.Valid && user.DrooLocationID.String != "",
 			ScanNOrder: user.SNOActivated && user.ScanNOrderEnabled,
+			Stripe:     user.StripeConnected,
 		},
 	}
 

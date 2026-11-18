@@ -63,6 +63,16 @@ type PaymentTotal struct {
 	Count         int64  `json:"count"`
 }
 
+// AccountOperationTotal est le total d'une période des mouvements de compte
+// client (docs/customer-accounts.md) par type et moyen (centimes, effet sur
+// le solde : versement > 0, remboursement < 0, abandon de créance > 0).
+type AccountOperationTotal struct {
+	OperationType string `json:"operation_type"`
+	MOP           string `json:"mop"` // vide pour un abandon de créance
+	Amount        int64  `json:"amount"`
+	Count         int64  `json:"count"`
+}
+
 // ChannelTotal est le chiffre d'affaires net TTC d'une période par canal
 // (orders.order_source de la commande du ticket).
 type ChannelTotal struct {
@@ -112,6 +122,10 @@ type ClosurePayload struct {
 	Opening            *ClosureOpening    `json:"opening"` // première clôture seulement
 	GrandTotalPeriod   int64              `json:"grand_total_period"`
 	PerpetualTotal     int64              `json:"perpetual_total"`
+	// AccountOperations : mouvements de compte client de la période (hors
+	// ventes). Absent sans mouvement, ce qui garde l'empreinte des clôtures
+	// antérieures au compte client.
+	AccountOperations []AccountOperationTotal `json:"account_operations,omitempty"`
 }
 
 // ErrInvalidTimezone : fuseau d'établissement illisible ; ses clôtures sont
@@ -348,6 +362,11 @@ func ComputeDayClosure(ctx context.Context, d *dbx.DB, merchantID, timezone stri
 		return p, fmt.Errorf("load day payments: %w", err)
 	}
 
+	// Mouvements de compte client du jour.
+	if p.AccountOperations, err = loadAccountOperationTotals(ctx, d, merchantID, from, to); err != nil {
+		return p, err
+	}
+
 	// Commandes closes ce jour-là : empreinte de chacune.
 	orders, err := loadDayOrderClosures(ctx, d, merchantID, from, to)
 	if err != nil {
@@ -362,6 +381,62 @@ func ComputeDayClosure(ctx context.Context, d *dbx.DB, merchantID, timezone stri
 	}
 	p.OrdersCount = int64(len(p.Orders))
 	return p, nil
+}
+
+// loadAccountOperationTotals totalise les mouvements de compte client de
+// [from, to[ par type et moyen ; nil sans mouvement.
+func loadAccountOperationTotals(ctx context.Context, d *dbx.DB, merchantID string, from, to time.Time) ([]AccountOperationTotal, error) {
+	rows, err := d.QueryContext(ctx, `
+		SELECT operation_type, COALESCE(mop, ''), SUM(amount), COUNT(*)
+		FROM customer_account_operations
+		WHERE merchant_id = ? AND operation_date >= ? AND operation_date < ?
+		GROUP BY operation_type, COALESCE(mop, '')
+		ORDER BY operation_type, COALESCE(mop, '')`, merchantID, from.UTC(), to.UTC())
+	if err != nil {
+		return nil, fmt.Errorf("load day account operations: %w", err)
+	}
+	defer rows.Close()
+	var out []AccountOperationTotal
+	for rows.Next() {
+		var t AccountOperationTotal
+		if err := rows.Scan(&t.OperationType, &t.MOP, &t.Amount, &t.Count); err != nil {
+			return nil, fmt.Errorf("scan day account operation: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// sumAccountOperations ajoute des totaux de mouvements à ceux d'une période.
+func sumAccountOperations(acc map[string]*AccountOperationTotal, in []AccountOperationTotal) {
+	for _, t := range in {
+		key := t.OperationType + "|" + t.MOP
+		a := acc[key]
+		if a == nil {
+			a = &AccountOperationTotal{OperationType: t.OperationType, MOP: t.MOP}
+			acc[key] = a
+		}
+		a.Amount += t.Amount
+		a.Count += t.Count
+	}
+}
+
+// sortedAccountOperations : nil si vide (champ absent de la charge).
+func sortedAccountOperations(acc map[string]*AccountOperationTotal) []AccountOperationTotal {
+	if len(acc) == 0 {
+		return nil
+	}
+	out := make([]AccountOperationTotal, 0, len(acc))
+	for _, a := range acc {
+		out = append(out, *a)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].OperationType != out[j].OperationType {
+			return out[i].OperationType < out[j].OperationType
+		}
+		return out[i].MOP < out[j].MOP
+	})
+	return out
 }
 
 type dayOrder struct {
@@ -478,7 +553,7 @@ func ComputeAggregateClosure(ctx context.Context, d *dbx.DB, merchantID, timezon
 		SELECT sales_ttc, sales_ht, refunds_ttc, refunds_ht, net_ttc, net_ht,
 		       vat_by_rate::text, payments_by_mop::text, by_channel::text,
 		       receipts_count, first_receipt_number, last_receipt_number, orders_count,
-		       grand_total_period, perpetual_total
+		       grand_total_period, perpetual_total, account_operations::text
 		FROM fiscal_closures
 		WHERE merchant_id = ? AND period_type = 'DAY'
 		  AND period_start >= CAST(? AS date) AND period_start <= CAST(? AS date)
@@ -494,13 +569,14 @@ func ComputeAggregateClosure(ctx context.Context, d *dbx.DB, merchantID, timezon
 	vat := map[float64]*VATTotal{}
 	pays := map[string]*PaymentTotal{}
 	channels := map[string]int64{}
+	accountOps := map[string]*AccountOperationTotal{}
 	for rows.Next() {
 		var vatRaw, payRaw, chRaw string
-		var first, last sql.NullString
+		var first, last, accountRaw sql.NullString
 		var receipts, orders, grand, perpetual int64
 		var s ClosurePayload
 		if err := rows.Scan(&s.SalesTTC, &s.SalesHT, &s.RefundsTTC, &s.RefundsHT, &s.NetTTC, &s.NetHT,
-			&vatRaw, &payRaw, &chRaw, &receipts, &first, &last, &orders, &grand, &perpetual); err != nil {
+			&vatRaw, &payRaw, &chRaw, &receipts, &first, &last, &orders, &grand, &perpetual, &accountRaw); err != nil {
 			return ClosurePayload{}, fmt.Errorf("scan %s day: %w", periodType, err)
 		}
 		p.SalesTTC += s.SalesTTC
@@ -556,12 +632,20 @@ func ComputeAggregateClosure(ctx context.Context, d *dbx.DB, merchantID, timezon
 		for _, c := range dayCh {
 			channels[c.Source] += c.NetTTC
 		}
+		if accountRaw.Valid {
+			var dayAccount []AccountOperationTotal
+			if err := json.Unmarshal([]byte(accountRaw.String), &dayAccount); err != nil {
+				return ClosurePayload{}, fmt.Errorf("decode day account operations: %w", err)
+			}
+			sumAccountOperations(accountOps, dayAccount)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return ClosurePayload{}, fmt.Errorf("load %s days: %w", periodType, err)
 	}
 	p.VATByRate = sortedVAT(vat)
 	p.ByChannel = sortedChannels(channels)
+	p.AccountOperations = sortedAccountOperations(accountOps)
 	p.PaymentsByMOP = make([]PaymentTotal, 0, len(pays))
 	for _, t := range pays {
 		p.PaymentsByMOP = append(p.PaymentsByMOP, *t)
@@ -599,7 +683,10 @@ func insertClosure(ctx context.Context, d *dbx.DB, p ClosurePayload) error {
 	vatJSON, _ := json.Marshal(p.VATByRate)
 	payJSON, _ := json.Marshal(p.PaymentsByMOP)
 	chJSON, _ := json.Marshal(p.ByChannel)
-	var ordersJSON, openingJSON []byte
+	var ordersJSON, openingJSON, accountJSON []byte
+	if len(p.AccountOperations) > 0 {
+		accountJSON, _ = json.Marshal(p.AccountOperations)
+	}
 	if p.Orders != nil {
 		ordersJSON, _ = json.Marshal(p.Orders)
 	}
@@ -612,13 +699,13 @@ func insertClosure(ctx context.Context, d *dbx.DB, p ClosurePayload) error {
 		 sales_ttc, sales_ht, refunds_ttc, refunds_ht, net_ttc, net_ht,
 		 vat_by_rate, payments_by_mop, by_channel,
 		 receipts_count, first_receipt_number, last_receipt_number, orders_count, orders, opening,
-		 grand_total_period, perpetual_total, previous_hash, hash, signature, hash_version)
-		VALUES (?, ?, CAST(? AS date), CAST(? AS date), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 grand_total_period, perpetual_total, previous_hash, hash, signature, hash_version, account_operations)
+		VALUES (?, ?, CAST(? AS date), CAST(? AS date), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.MerchantID, p.PeriodType, p.PeriodStart, p.PeriodEnd, p.Timezone, closedAt,
 		p.SalesTTC, p.SalesHT, p.RefundsTTC, p.RefundsHT, p.NetTTC, p.NetHT,
 		vatJSON, payJSON, chJSON,
 		p.ReceiptsCount, p.FirstReceiptNumber, p.LastReceiptNumber, p.OrdersCount, nullJSON(ordersJSON), nullJSON(openingJSON),
-		p.GrandTotalPeriod, p.PerpetualTotal, prev, hash, signature, HashVersion); err != nil {
+		p.GrandTotalPeriod, p.PerpetualTotal, prev, hash, signature, HashVersion, nullJSON(accountJSON)); err != nil {
 		return fmt.Errorf("insert %s closure: %w", strings.ToLower(p.PeriodType), err)
 	}
 	return nil
@@ -695,6 +782,7 @@ func LoadClosure(ctx context.Context, d *dbx.DB, id int64) (StoredClosure, error
 		closedAt                  time.Time
 		vatRaw, payRaw, chRaw     string
 		ordersRaw, openingRaw     sql.NullString
+		accountRaw                sql.NullString
 		firstReceipt, lastReceipt sql.NullString
 	)
 	err := d.QueryRowContext(ctx, `
@@ -702,13 +790,13 @@ func LoadClosure(ctx context.Context, d *dbx.DB, id int64) (StoredClosure, error
 		       sales_ttc, sales_ht, refunds_ttc, refunds_ht, net_ttc, net_ht,
 		       vat_by_rate::text, payments_by_mop::text, by_channel::text,
 		       receipts_count, first_receipt_number, last_receipt_number, orders_count, orders::text, opening::text,
-		       grand_total_period, perpetual_total, previous_hash, hash, signature, hash_version
+		       grand_total_period, perpetual_total, previous_hash, hash, signature, hash_version, account_operations::text
 		FROM fiscal_closures WHERE id = ?`, id).Scan(
 		&s.ID, &p.MerchantID, &p.PeriodType, &p.PeriodStart, &p.PeriodEnd, &p.Timezone, &closedAt,
 		&p.SalesTTC, &p.SalesHT, &p.RefundsTTC, &p.RefundsHT, &p.NetTTC, &p.NetHT,
 		&vatRaw, &payRaw, &chRaw,
 		&p.ReceiptsCount, &firstReceipt, &lastReceipt, &p.OrdersCount, &ordersRaw, &openingRaw,
-		&p.GrandTotalPeriod, &p.PerpetualTotal, &s.Prev, &s.Hash, &s.Signature, &s.Version)
+		&p.GrandTotalPeriod, &p.PerpetualTotal, &s.Prev, &s.Hash, &s.Signature, &s.Version, &accountRaw)
 	if err != nil {
 		return s, fmt.Errorf("fiscal: load closure %d: %w", id, err)
 	}
@@ -736,6 +824,11 @@ func LoadClosure(ctx context.Context, d *dbx.DB, id int64) (StoredClosure, error
 		p.Opening = &ClosureOpening{}
 		if err := json.Unmarshal([]byte(openingRaw.String), p.Opening); err != nil {
 			return s, fmt.Errorf("fiscal: decode closure %d opening: %w", id, err)
+		}
+	}
+	if accountRaw.Valid {
+		if err := json.Unmarshal([]byte(accountRaw.String), &p.AccountOperations); err != nil {
+			return s, fmt.Errorf("fiscal: decode closure %d account operations: %w", id, err)
 		}
 	}
 	s.Payload = p

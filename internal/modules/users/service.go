@@ -386,5 +386,46 @@ func (s *UsersService) GetNotifications(ctx context.Context) (*UserNotifications
 		})
 	}
 
+	// Ardoises proches du plafond ou au-delà (compte client). Une erreur ne
+	// prive pas des autres notifications.
+	if near, over, err := s.userRepo.CustomerAccountLimitAlerts(ctx, user.MerchantID); err == nil {
+		if n := customerAccountLimitNotification(near, over); n != nil {
+			notifications = append(notifications, *n)
+		}
+	}
+
 	return &UserNotificationsData{Notifications: notifications}, nil
+}
+
+// customerAccountLimitNotification : notification des ardoises proches de
+// leur plafond (80 %) ou au-delà ; nil s'il n'y en a pas.
+func customerAccountLimitNotification(near, over int) *UserNotification {
+	if near+over == 0 {
+		return nil
+	}
+	plural := func(n int, one, many string) string {
+		if n == 1 {
+			return "1 " + one
+		}
+		return fmt.Sprintf("%d %s", n, many)
+	}
+	var parts []string
+	if over > 0 {
+		parts = append(parts, plural(over, "client au-delà de son plafond", "clients au-delà de leur plafond"))
+	}
+	if near > 0 {
+		parts = append(parts, plural(near, "client proche de son plafond", "clients proches de leur plafond"))
+	}
+	severity := "warning"
+	if over > 0 {
+		severity = "danger"
+	}
+	return &UserNotification{
+		ID:          "customer_account_limit",
+		Type:        "CUSTOMER_ACCOUNT_LIMIT",
+		Title:       "Ardoises à surveiller",
+		Description: strings.Join(parts, ", "),
+		Severity:    severity,
+		ActionLabel: "Voir les comptes",
+	}
 }

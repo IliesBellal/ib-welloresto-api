@@ -137,6 +137,26 @@ func (s *Service) SendOrderTrackingSMS(
 	return err
 }
 
+// SendTransactional envoie un SMS de service à un client de l'établissement
+// (relance d'ardoise : docs/customer-accounts.md), avec l'expéditeur de
+// l'établissement, compté sur sa consommation. Refusé si les SMS ne sont pas
+// activés pour l'établissement.
+func (s *Service) SendTransactional(ctx context.Context, merchantID, phone, message string) error {
+	settings, err := s.repo.GetMarketingSettings(ctx, merchantID)
+	if err != nil {
+		return err
+	}
+	if !settings.SMSEnabled {
+		return errors.New("merchantsms: SMS disabled for this merchant")
+	}
+	normalized := helpers.NormalizePhoneNumber(phone, "FR")
+	if !internationalPhonePattern.MatchString(normalized) {
+		return fmt.Errorf("invalid phone")
+	}
+	_, err = s.Send(ctx, merchantID, senderName(settings.SMSSenderName), normalized, message)
+	return err
+}
+
 func (s *Service) recordSent(ctx context.Context, merchantID string) {
 	if strings.TrimSpace(merchantID) == "" {
 		s.log.Warn("merchantsms: SMS sent without merchant, not counted")

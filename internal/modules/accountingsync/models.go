@@ -70,6 +70,9 @@ type Closure struct {
 	Hash        string
 	VATRaw      []byte
 	PaymentsRaw []byte
+	// AccountRaw : mouvements de compte client de la clôture (vide sans
+	// mouvement).
+	AccountRaw []byte
 	// Attempts : tentatives déjà faites (0 si jamais tentée).
 	Attempts int
 }

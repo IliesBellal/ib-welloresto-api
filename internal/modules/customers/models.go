@@ -181,6 +181,10 @@ type CustomerSearchResult struct {
 	BlockedAt       *string `json:"blocked_at"`
 	BlockedReasonID *string `json:"blocked_reason_id"`
 	BlockedComment  *string `json:"blocked_comment"`
+
+	// AccountBalance : solde du compte client (centimes ; > 0 avance, < 0
+	// ardoise ; docs/customer-accounts.md). 0 sans mouvement.
+	AccountBalance int64 `json:"account_balance"`
 }
 
 type Customer struct {

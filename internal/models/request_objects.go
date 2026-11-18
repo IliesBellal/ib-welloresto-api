@@ -15,6 +15,9 @@ type PaymentRequest struct {
 	StatusCheck    string        `json:"status_check"`
 	Code           string        `json:"tr_code"`
 	CashRegisterID *string       `json:"cash_register_id"`
+	// CustomerID : paiement « Compte client » d'une commande sans client, le
+	// client choisi à la caisse est rattaché à la commande dans la même opération.
+	CustomerID *int64 `json:"customer_id,omitempty"`
 }
 
 // La requête envoyée par ton Front-end / TPE
@@ -71,6 +74,11 @@ type CashRegisterSummary struct {
 	// (Items / CustomItems / Payments n'en contiennent plus) — information,
 	// présentation Square / Lightspeed.
 	Discounts int `json:"discounts"`
+	// AccountPayments : commandes réglées sur le compte client (mop ACCOUNT),
+	// hors encaissements (aucun argent n'entre dans le tiroir) — information,
+	// comme Discounts. Les versements et remboursements de compte, eux, sont de
+	// l'argent : ils restent dans Items (ACCOUNT_IN_… / ACCOUNT_OUT_…).
+	AccountPayments int `json:"account_payments"`
 }
 
 type CashDeskInfo struct {

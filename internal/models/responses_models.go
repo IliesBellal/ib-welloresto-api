@@ -318,6 +318,13 @@ var (
 	ErrPaymentRegisterClosed      = errors.New("payment_register_closed")
 	ErrOrderPaymentRegisterClosed = errors.New("order_payment_register_closed")
 
+	// Paiement par QR code depuis la caisse (docs/pos-qr-payment.md) : pas de
+	// compte Stripe actif, montant hors bornes (0,50 € minimum Stripe, au plus
+	// le reste à payer). Commande close et caisse fermée : ErrOrderClosed et
+	// ErrNoCashRegisterOpen.
+	ErrQRPaymentUnavailable   = errors.New("qr_payment_unavailable")
+	ErrQRPaymentInvalidAmount = errors.New("qr_payment_invalid_amount")
+
 	// Réouverture refusée (conformité caisse, lot C, R1) : la journée de la
 	// commande est clôturée (clôture journalière écrite), ou l'un de ses
 	// paiements a été encaissé sur un registre déjà fermé.
@@ -1362,6 +1369,108 @@ func SendErrorJSON(w http.ResponseWriter, module string, fnName string, err erro
 		errorStatus = "reopen_payment_register_closed"
 		errorMsg = "cannot reopen an order with a payment recorded in a closed cash register"
 		userMessage = "Cette commande ne peut plus être rouverte : un de ses paiements a été encaissé sur un registre déjà fermé. Pour la corriger, faites un remboursement."
+
+	case errors.Is(err, ErrAccountCustomerRequired):
+		status = http.StatusConflict
+		errorStatus = "account_customer_required"
+		errorMsg = "an identified customer is required to pay with the customer account"
+		userMessage = "Associez d'abord un client à la commande pour la régler sur son compte."
+
+	case errors.Is(err, ErrAccountOrderHasOtherCustomer):
+		status = http.StatusConflict
+		errorStatus = "account_order_has_other_customer"
+		errorMsg = "the order already belongs to another customer"
+		userMessage = "Cette commande est déjà rattachée à un autre client : réglez-la sur son compte."
+
+	case errors.Is(err, ErrAccountInsufficientBalance):
+		status = http.StatusConflict
+		errorStatus = "account_insufficient_balance"
+		errorMsg = "the customer account balance is insufficient"
+		userMessage = "Solde du compte client insuffisant : faites un versement ou réglez le reste avec un autre moyen de paiement."
+
+	case errors.Is(err, ErrAccountRefundExceedsBalance):
+		status = http.StatusConflict
+		errorStatus = "account_refund_exceeds_balance"
+		errorMsg = "refund exceeds the customer account credit"
+		userMessage = "Le remboursement dépasse le solde créditeur du client."
+
+	case errors.Is(err, ErrAccountWriteOffExceedsDebt):
+		status = http.StatusConflict
+		errorStatus = "account_write_off_exceeds_debt"
+		errorMsg = "write-off exceeds the customer debt"
+		userMessage = "L'abandon de créance dépasse la dette du client."
+
+	case errors.Is(err, ErrAccountInvalidMOP):
+		status = http.StatusBadRequest
+		errorStatus = "account_invalid_mop"
+		errorMsg = "unsupported payment method for a customer account operation"
+		userMessage = "Moyen de paiement non accepté : espèces, carte, chèque ou virement."
+
+	case errors.Is(err, ErrAccountInvalidAmount):
+		status = http.StatusBadRequest
+		errorStatus = "account_invalid_amount"
+		errorMsg = "invalid amount"
+		userMessage = "Montant invalide."
+
+	case errors.Is(err, ErrAccountCashLimit):
+		status = http.StatusBadRequest
+		errorStatus = "account_cash_limit"
+		errorMsg = "cash deposits are limited to 1000 EUR"
+		userMessage = "Un paiement en espèces à un professionnel est limité à 1 000 € : réglez le reste par carte, chèque ou virement."
+
+	case errors.Is(err, ErrAccountCashConfirmationRequired):
+		status = http.StatusConflict
+		errorStatus = "account_cash_confirmation_required"
+		errorMsg = "cash deposits above 1000 EUR require a non-resident confirmation"
+		userMessage = "Au-delà de 1 000 € en espèces, confirmez que le client n'a pas son domicile fiscal en France."
+
+	case errors.Is(err, ErrAccountCashNonResidentLimit):
+		status = http.StatusBadRequest
+		errorStatus = "account_cash_non_resident_limit"
+		errorMsg = "cash deposits are limited to 15000 EUR"
+		userMessage = "Même pour un client non-résident, un paiement en espèces est limité à 15 000 €."
+
+	case errors.Is(err, ErrAccountCreditBlocked):
+		status = http.StatusConflict
+		errorStatus = "account_credit_blocked"
+		errorMsg = "credit is blocked for this customer"
+		userMessage = "L'ardoise est interdite pour ce client : seule son avance peut être utilisée."
+
+	case errors.Is(err, ErrAccountNothingDue):
+		status = http.StatusConflict
+		errorStatus = "account_nothing_due"
+		errorMsg = "the customer owes nothing"
+		userMessage = "Ce client n'a rien à régler."
+
+	case errors.Is(err, ErrQRPaymentUnavailable):
+		status = http.StatusConflict
+		errorStatus = "qr_payment_unavailable"
+		errorMsg = "QR code payment requires an active Stripe account"
+		userMessage = "Le paiement par QR code demande un compte Stripe actif (paiement en ligne ScanNOrder)."
+
+	case errors.Is(err, ErrQRPaymentInvalidAmount):
+		status = http.StatusBadRequest
+		errorStatus = "qr_payment_invalid_amount"
+		errorMsg = "amount must be at least 0.50 and at most the remaining amount"
+		userMessage = "Le montant doit être d'au moins 0,50 € et ne pas dépasser le reste à payer."
+
+	case errors.Is(err, ErrAccountOnlinePaymentUnavailable):
+		status = http.StatusConflict
+		errorStatus = "account_online_payment_unavailable"
+		errorMsg = "online payment requires an active Stripe account"
+		userMessage = "Le paiement en ligne demande un compte Stripe actif (paiement en ligne ScanNOrder)."
+
+	case errors.Is(err, ErrAccountNoContact):
+		status = http.StatusConflict
+		errorStatus = "account_no_contact"
+		errorMsg = "the customer has no email or phone"
+		userMessage = "Ce client n'a ni email ni téléphone pour le relancer."
+
+	case errors.Is(err, ErrAccountReasonRequired):
+		status = http.StatusBadRequest
+		errorStatus = "account_reason_required"
+		errorMsg = "a reason is required"
+		userMessage = "Indiquez le motif de l'opération."
 
 	case errors.Is(err, ErrFiscalPeriodInvalid):
 		status = http.StatusBadRequest

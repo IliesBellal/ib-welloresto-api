@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"welloresto-api/internal/customeraccount"
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/diagnostics"
 	"welloresto-api/internal/fiscal"
@@ -181,6 +182,33 @@ func (r *OrdersLifeCycleRepository) addPaymentAndReturnID(ctx context.Context, p
 		}
 	}
 
+	// 1bis. Paiement sur le compte client (docs/customer-accounts.md) : le
+	// client de la commande est débité (recrédité pour un remboursement,
+	// montant négatif). Le verrou de son compte est pris avant la chaîne des
+	// paiements ; un débit ne doit pas dépasser son solde disponible (avance +
+	// plafond d'ardoise).
+	var accountCustomer *int64
+	if payment.MOP == models.AccountMOP {
+		if payment.AttachCustomerID > 0 {
+			if err := customeraccount.AttachOrderCustomer(ctx, db, payment.MerchantID, payment.OrderID, payment.AttachCustomerID); err != nil {
+				return 0, err
+			}
+		}
+		customerID, err := customeraccount.OrderCustomer(ctx, db, payment.MerchantID, payment.OrderID)
+		if err != nil {
+			return 0, err
+		}
+		if err := customeraccount.Lock(ctx, payment.MerchantID, customerID); err != nil {
+			return 0, err
+		}
+		if payment.Amount > 0 {
+			if err := customeraccount.CheckDebit(ctx, db, payment.MerchantID, customerID, int64(payment.Amount)); err != nil {
+				return 0, err
+			}
+		}
+		accountCustomer = &customerID
+	}
+
 	// 2. Chaînage fiscal (lot A conformité caisse) : verrou de l'établissement,
 	// puis dernier paiement chaîné. Les paiements sans empreinte (antérieurs à
 	// la chaîne) sont ignorés : ils faisaient redémarrer la chaîne à vide.
@@ -199,7 +227,7 @@ func (r *OrdersLifeCycleRepository) addPaymentAndReturnID(ctx context.Context, p
 
 	now := fiscal.Now()
 	sealed, err := fiscal.NewPaymentPayload(payment.MerchantID, payment.OrderID, payment.Amount, payment.MOP,
-		string(payment.OperationType), now, payment.UserID, payment.Comment)
+		string(payment.OperationType), now, payment.UserID, payment.Comment, accountCustomer)
 	if err != nil {
 		return 0, err
 	}
@@ -221,9 +249,9 @@ func (r *OrdersLifeCycleRepository) addPaymentAndReturnID(ctx context.Context, p
 	// 3. Insérer le paiement avec son hash
 	paymentID, err := db.InsertReturningID(ctx, `
 	INSERT INTO payments
-	(merchant_id, cash_register_id, order_id, amount, net_amount, mop, comment, payment_date, user_id, status_check, previous_hash, hash, signature, operation_type, hash_version)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, "payment_id", payment.MerchantID, cashRegisterID, payment.OrderID, payment.Amount, payment.Amount, payment.MOP, payment.Comment, now, payment.UserID, payment.StatusCheck, prev, newHash, signature, payment.OperationType, fiscal.HashVersion)
+	(merchant_id, cash_register_id, order_id, amount, net_amount, mop, comment, payment_date, user_id, status_check, previous_hash, hash, signature, operation_type, hash_version, customer_id)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, "payment_id", payment.MerchantID, cashRegisterID, payment.OrderID, payment.Amount, payment.Amount, payment.MOP, payment.Comment, now, payment.UserID, payment.StatusCheck, prev, newHash, signature, payment.OperationType, fiscal.HashVersion, accountCustomer)
 
 	if err != nil {
 		log.Error("Error inserting payment: " + err.Error())

@@ -114,7 +114,7 @@ func TestBuildInvoicePDF_StripePaymentPrintedAsOnline(t *testing.T) {
 }
 
 func TestInvoicePaymentLabel(t *testing.T) {
-	cases := map[string]string{"STRIPE": "En ligne", "stripe": "En ligne", "STRIPE_WEB_HOOK": "En ligne", "CB": "CB", "ES": "ES", "": ""}
+	cases := map[string]string{"STRIPE": "En ligne", "stripe": "En ligne", "STRIPE_WEB_HOOK": "En ligne", "ACCOUNT": "Compte client", "CB": "CB", "ES": "ES", "": ""}
 	for mop, want := range cases {
 		if got := invoicePaymentLabel(mop); got != want {
 			t.Errorf("invoicePaymentLabel(%q) = %q, want %q", mop, got, want)

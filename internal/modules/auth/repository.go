@@ -158,7 +158,7 @@ LIMIT 1;
 	if err != nil || data == nil {
 		return data, err
 	}
-	if err := r.attachRolePermissions(ctx, data); err != nil {
+	if err := r.attachSessionExtras(ctx, data); err != nil {
 		return nil, err
 	}
 	return data, nil
@@ -426,7 +426,7 @@ LIMIT 1;
 		}
 	}
 
-	if err := r.attachRolePermissions(ctx, data); err != nil {
+	if err := r.attachSessionExtras(ctx, data); err != nil {
 		return nil, err
 	}
 
@@ -472,6 +472,32 @@ WHERE (UPPER(u.name)=UPPER(?) AND u.name <> '' AND u.name IS NOT NULL)
 		return models.ErrNoActiveMerchant
 	}
 	return nil
+}
+
+// attachSessionExtras complète la ligne de session par des lectures séparées de
+// la requête principale : droits du rôle, puis compte Stripe de l'établissement.
+func (r *AuthRepository) attachSessionExtras(ctx context.Context, data *UserLoginRow) error {
+	if err := r.attachRolePermissions(ctx, data); err != nil {
+		return err
+	}
+	r.attachStripeAccount(ctx, data)
+	return nil
+}
+
+// attachStripeAccount renseigne StripeConnected : l'établissement a un compte
+// Stripe Connect actif (paiement par QR code de la caisse). Au mieux : un échec
+// de lecture ne doit pas bloquer la connexion, il masque seulement le bouton.
+func (r *AuthRepository) attachStripeAccount(ctx context.Context, data *UserLoginRow) {
+	if data == nil || data.MerchantID == "" {
+		return
+	}
+	db := dbx.GetDB(ctx, r.database)
+	if err := db.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM stripe_accounts WHERE merchant_id = ? AND COALESCE(account_id, '') <> '')`,
+		data.MerchantID).Scan(&data.StripeConnected); err != nil {
+		data.StripeConnected = false
+		logger.FromContext(ctx).Warn("auth: stripe account lookup failed: " + err.Error())
+	}
 }
 
 // attachRolePermissions loads role_permissions.permission_key for data's role
@@ -862,7 +888,7 @@ LIMIT 1;
 	if err != nil || data == nil {
 		return data, err
 	}
-	if err := r.attachRolePermissions(ctx, data); err != nil {
+	if err := r.attachSessionExtras(ctx, data); err != nil {
 		return nil, err
 	}
 	return data, nil

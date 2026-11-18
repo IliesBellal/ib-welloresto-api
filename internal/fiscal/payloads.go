@@ -37,9 +37,15 @@ type PaymentPayload struct {
 	PaymentDate   string  `json:"payment_date"`
 	UserID        string  `json:"user_id"`
 	Comment       *string `json:"comment"`
+	// CustomerID : client débité par un paiement sur son compte (mop
+	// ACCOUNT). Absent de la charge des autres paiements, dont l'empreinte
+	// reste ainsi celle d'avant le compte client.
+	CustomerID *int64 `json:"customer_id,omitempty"`
 }
 
-func NewPaymentPayload(merchantID, orderID string, amount int, mop, operationType string, paymentDate time.Time, userID string, comment *string) (PaymentPayload, error) {
+// NewPaymentPayload : customerID ne sert qu'aux paiements sur le compte client
+// (nil sinon).
+func NewPaymentPayload(merchantID, orderID string, amount int, mop, operationType string, paymentDate time.Time, userID string, comment *string, customerID *int64) (PaymentPayload, error) {
 	oid, err := parseID("order_id", orderID)
 	if err != nil {
 		return PaymentPayload{}, err
@@ -47,7 +53,23 @@ func NewPaymentPayload(merchantID, orderID string, amount int, mop, operationTyp
 	return PaymentPayload{
 		MerchantID: merchantID, OrderID: oid, Amount: int64(amount), MOP: mop,
 		OperationType: operationType, PaymentDate: FormatTime(paymentDate), UserID: userID, Comment: comment,
+		CustomerID: customerID,
 	}, nil
+}
+
+// AccountOperationPayload scelle un mouvement de compte client à son
+// insertion (chaîne customer_account_operations). Comme pour un paiement,
+// l'identifiant (attribué par la base à l'insertion) n'en fait pas partie.
+type AccountOperationPayload struct {
+	MerchantID     string  `json:"merchant_id"`
+	CustomerID     int64   `json:"customer_id"`
+	OperationType  string  `json:"operation_type"`
+	Amount         int64   `json:"amount"`
+	MOP            *string `json:"mop"`
+	Comment        *string `json:"comment"`
+	UserID         string  `json:"user_id"`
+	CashRegisterID *string `json:"cash_register_id"`
+	OperationDate  string  `json:"operation_date"`
 }
 
 // ReceiptPayload scelle un ticket ou un avoir, détail compris.

@@ -71,6 +71,11 @@ func EnvWarnings(cfg *AppConfig) []EnvWarning {
 		warnings = append(warnings, EnvWarning{"PUBLIC_RESERVATION_BASE_URL", "non définie : défaut staging (" + cfg.Reservation.PublicBaseURL + ") utilisé pour les liens de réservation"})
 	}
 
+	// Même défaut staging pour les liens de paiement des comptes clients.
+	if _, ok := os.LookupEnv("PUBLIC_API_BASE_URL"); !ok {
+		warnings = append(warnings, EnvWarning{"PUBLIC_API_BASE_URL", "non définie : défaut staging (" + cfg.Reservation.PublicAPIBaseURL + ") utilisé pour les liens de paiement des comptes clients"})
+	}
+
 	// Clé d'un fournisseur IA absente alors qu'une tâche active l'utilise.
 	keyVar := map[string]string{"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
 	tasksByProvider := map[string][]string{}

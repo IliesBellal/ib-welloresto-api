@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"welloresto-api/internal/customeraccount"
 	"welloresto-api/internal/database/dbx"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/models"
@@ -641,6 +642,18 @@ func (r *AccountingRepository) filterTrustedRegisterIDs(ctx context.Context, mer
 	if err := liveRows.Err(); err != nil {
 		log.Error(fmt.Sprintf("Error iterating live register totals: %v", err))
 		return nil, err
+	}
+
+	// Lignes de compte client du Z (versements, remboursements du solde :
+	// customeraccount.RegisterLines), recalculées de même.
+	for _, id := range candidateIDs {
+		lines, err := customeraccount.RegisterLines(ctx, db, strconv.FormatInt(id, 10))
+		if err != nil {
+			return nil, err
+		}
+		for _, l := range lines {
+			live[registerMOPKey{registerID: id, mop: l.MOP}] = int64(l.Amount)
+		}
 	}
 
 	// Un registre est "de confiance" seulement si toutes ses paires
