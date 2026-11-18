@@ -741,7 +741,13 @@ Envoi des plats d'une commande **sur place** (`IN`) en plusieurs temps : entrée
 
 Le personnel peut **avancer** l'heure cuisine d'une commande (`production_ready_at`) sans toucher à son heure de livraison : une livraison promise à 18h45 (5 min de trajet) peut être produite pour 18h15, avec les autres commandes de ce créneau. Migration 218, code dans `internal/modules/order_life_cycle/production_ready.go`.
 
-**Données** : `orders.production_ready_manual` (booléen) dit que `production_ready_at` est ce choix et non le calcul automatique (`resolveProductionReadyAt` : `estimated_ready - trajet` pour une commande programmée, `estimated_ready` sinon). `estimated_ready` et `delivery_arrival_at` ne bougent jamais.
+**Données** : `orders.production_ready_manual` (booléen) dit que `production_ready_at` est ce choix et non le calcul automatique (`resolveProductionReadyAt` : `estimated_ready - tampon - trajet` pour une commande programmée, `estimated_ready` sinon). `estimated_ready` et `delivery_arrival_at` ne bougent jamais.
+
+**Tampon de mise en assiette** (2026-11-18) : pour une commande **programmée**, la deadline cuisine est avancée de `platingBuffer` = **4 min**, en dur et identique pour toutes (livraison, emporter, sur place) : mise en assiette, packaging, préparation de la livraison, que le trajet ne contient pas. Décisions :
+- **Programmées seulement.** Pour une commande « dès que possible », `estimated_ready` est le temps de préparation lui-même : y retirer 4 min enlèverait du temps à la cuisine sans rien promettre de plus. Étendre le tampon à ces commandes suppose d'allonger aussi l'heure promise au client là où elle est estimée (non fait).
+- 4 min plutôt que 3 : la livraison (sac scellé, remise au livreur) fixe le minimum ; la minute en trop sur place est négligeable.
+- Les commandes déjà ouvertes gardent leur `production_ready_at` jusqu'à leur prochain recalcul (modification de la commande ou PATCH), où elles reculent de 4 min.
+- Une heure manuelle déjà saisie est comparée à la nouvelle heure calculée (plus tôt de 4 min) : si elle devient trop tardive, elle retombe sur l'automatique.
 
 **Règles (v1)**
 

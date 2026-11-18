@@ -2526,13 +2526,22 @@ func (r *OrdersLifeCycleRepository) resolveDeliveryTravelSeconds(ctx context.Con
 // tel quel si programmée mais trajet pas encore connu (commande non-livrée,
 // ou adresse sans moyenne merchant disponible) : c'est la meilleure valeur
 // disponible, jamais nil tant qu'une date existe.
+//
+// Commande programmée : on retire aussi platingBuffer (mise en assiette,
+// packaging, préparation de la livraison), identique pour toutes — le trajet
+// ne les contient pas. Commande non programmée : inchangée (estimated_ready y
+// est déjà le temps de préparation, pas une promesse à rattraper).
 func resolveProductionReadyAt(estimatedReady interface{}, scheduled bool, travelSeconds *int) interface{} {
 	t, ok := estimatedReady.(time.Time)
 	if !ok {
 		return nil
 	}
-	if scheduled && travelSeconds != nil {
-		return t.Add(-time.Duration(*travelSeconds) * time.Second)
+	if !scheduled {
+		return t
+	}
+	t = t.Add(-platingBuffer)
+	if travelSeconds != nil {
+		t = t.Add(-time.Duration(*travelSeconds) * time.Second)
 	}
 	return t
 }

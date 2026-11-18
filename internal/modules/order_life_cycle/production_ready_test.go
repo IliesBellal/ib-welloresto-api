@@ -47,6 +47,40 @@ func TestApplyManualProductionReadyAt(t *testing.T) {
 	}
 }
 
+func TestResolveProductionReadyAt(t *testing.T) {
+	ready := time.Date(2026, 11, 18, 19, 0, 0, 0, time.UTC)
+	travel := 20 * 60
+	at := func(h, m int) time.Time { return time.Date(2026, 11, 18, h, m, 0, 0, time.UTC) }
+
+	cases := []struct {
+		name      string
+		ready     interface{}
+		scheduled bool
+		travel    *int
+		want      interface{}
+	}{
+		{"programmée livrée : tampon + trajet", ready, true, &travel, at(18, 36)},
+		{"programmée sans trajet (emporter, sur place) : tampon seul", ready, true, nil, at(18, 56)},
+		{"non programmée : inchangée", ready, false, nil, ready},
+		{"non programmée avec trajet : inchangée", ready, false, &travel, ready},
+		{"sans heure : nil", nil, true, &travel, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := resolveProductionReadyAt(c.ready, c.scheduled, c.travel)
+			if c.want == nil {
+				if got != nil {
+					t.Fatalf("got %v, want nil", got)
+				}
+				return
+			}
+			if !got.(time.Time).Equal(c.want.(time.Time)) {
+				t.Fatalf("got %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
 func TestApplyManualProductionReadyAtWithoutAuto(t *testing.T) {
 	manual := time.Date(2026, 11, 16, 18, 0, 0, 0, time.UTC)
 	got, isManual := applyManualProductionReadyAt(nil, &manual)

@@ -27,6 +27,15 @@ import (
 // qui retarderait la livraison), et pas sur une commande Uber Eats / Deliveroo
 // (l'heure de retrait y appartient à la plateforme).
 
+// platingBuffer : durée tampon, en dur et identique pour toutes les commandes
+// programmées, entre la fin de cuisson (production_ready_at) et l'heure
+// promise (estimated_ready) : mise en assiette, packaging emporter,
+// préparation de la livraison. Quatre minutes : la livraison (sac scellé,
+// remise au livreur) fixe le minimum, la minute en trop sur place est
+// négligeable. Ne s'applique pas aux commandes « dès que possible »
+// (resolveProductionReadyAt).
+const platingBuffer = 4 * time.Minute
+
 // maxProductionReadyAdvance borne l'avance possible. Bien au-delà de tout
 // regroupement réel : sert surtout à refuser une heure tombée sur le mauvais
 // jour (passage de minuit mal géré par un client : 23h45 envoyé pour le
