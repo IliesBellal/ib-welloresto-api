@@ -2451,14 +2451,13 @@ func (r *OrdersLifeCycleRepository) setOrderDefaults(ctx context.Context, req *m
 		req.Order.Brand = models.BrandWelloResto
 	}
 
-	var totalPaid int = 0
-	if req.Order.Payments != nil {
-		for _, payment := range req.Order.Payments {
-			totalPaid += payment.Amount
-		}
-	}
-
-	req.Order.IsPaid = totalPaid == req.Order.TTC
+	// « Payée » ne se déduit plus des paiements annoncés dans la requête : ils
+	// sont insérés après la commande (insertPayments) et peuvent échouer
+	// (verrou fiscal, débit de compte client refusé…), ce qui laissait une
+	// commande payée sans aucun paiement (commande 54523). AddPaymentAndReturnID
+	// recalcule isPaid à partir des paiements réellement enregistrés ; seule une
+	// commande à 0 € est payée d'emblée.
+	req.Order.IsPaid = req.Order.TTC <= 0
 
 	// PHP: $brand_status = ... ?? (($online_payment) ? "ONLINE_PAYMENT_PENDING" : "PENDING");
 	if req.Order.BrandStatus == "" {
