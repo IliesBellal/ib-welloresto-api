@@ -21,6 +21,7 @@ func SetCORSHeaders(w http.ResponseWriter, r *http.Request) {
 
 		"https://wello-resto-scannorder-staging.onrender.com": true,
 		"https://wello-resto-scannorder-prod.onrender.com":    true,
+		"https://wello-resto-scannorder.onrender.com":         true,
 		"https://scannorder.welloresto.fr":                    true,
 
 		"https://welloresto.fr":     true,
@@ -72,6 +73,7 @@ func CORSMiddleware() *cors.Cors {
 			"https://scannorder.welloresto.fr",
 			"https://wello-resto-scannorder-staging.onrender.com",
 			"https://wello-resto-scannorder-prod.onrender.com",
+			"https://wello-resto-scannorder.onrender.com",
 			"https://my.welloresto.fr",
 
 			// Vitrine (LOT A — tunnel de création de compte)
