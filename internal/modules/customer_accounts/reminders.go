@@ -167,6 +167,12 @@ func (s *Service) runMerchantReminders(ctx context.Context, merchantID string) e
 	}
 	for _, aging := range customeraccount.AgeDebts(ledger, now) {
 		customerID := aging.CustomerSummary.CustomerID
+		// Client exclu des relances automatiques (réglage de sa fiche).
+		if cs, err := customeraccount.LoadCustomerSettings(ctx, db, merchantID, customerID); err != nil {
+			return err
+		} else if cs.RemindersDisabled {
+			continue
+		}
 		oldest := time.Unix(aging.OldestUnpaid, 0)
 		sent, last, err := s.repo.RemindersSince(ctx, merchantID, customerID, oldest)
 		if err != nil {

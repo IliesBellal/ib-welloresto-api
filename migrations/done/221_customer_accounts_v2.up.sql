@@ -11,12 +11,14 @@ CREATE TABLE IF NOT EXISTS customer_account_settings (
   customer_id    integer     NOT NULL,
   credit_limit   integer,
   credit_blocked boolean     NOT NULL DEFAULT false,
+  -- Pas de relance automatique pour ce client (la relance manuelle reste possible).
+  reminders_disabled boolean NOT NULL DEFAULT false,
   updated_at     timestamptz NOT NULL DEFAULT now(),
   updated_by     varchar(64),
   PRIMARY KEY (merchant_id, customer_id),
   CONSTRAINT customer_account_settings_limit_chk CHECK (credit_limit IS NULL OR credit_limit >= 0)
 );
-COMMENT ON TABLE customer_account_settings IS 'Compte client : plafond d''ardoise propre au client (NULL = plafond de l''établissement) et ardoise interdite.';
+COMMENT ON TABLE customer_account_settings IS 'Compte client : plafond d''ardoise propre au client (NULL = plafond de l''établissement), ardoise interdite et relances automatiques désactivées.';
 
 -- 2. Réglages de l'établissement.
 --   customer_account_cash_mode : versement en espèces au-delà de 1 000 €

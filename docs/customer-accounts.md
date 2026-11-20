@@ -100,7 +100,7 @@ rapport comptable le montre.
 | `POST /customer-accounts/{customer_id}/refund` | `pos.refund` | idem, motif obligatoire, ≤ solde créditeur |
 | `POST /customer-accounts/{customer_id}/write-off` | `pos.refund` | `{amount, comment}`, ≤ dette |
 | `GET` / `PUT /customer-accounts/settings` | `PUT` : `settings.manage` | `{credit_limit}` (centimes) |
-| `POST /orders/{id}/payments/create` | — | `mop: "ACCOUNT"` : commande avec client identifié, montant ≤ disponible |
+| `POST /orders/{id}/payments/create` | — | `mop: "ACCOUNT"` : commande avec client identifié, montant ≤ disponible. `customer_id` (facultatif) : client choisi à la caisse pour une commande **sans** client, rattaché à la commande dans la même transaction (`customeraccount.AttachOrderCustomer`) ; refus `account_order_has_other_customer` si elle en a déjà un autre, `account_customer_required` si le client n'est pas un client actif de l'établissement ou si la commande vient d'une plateforme |
 
 Moyens d'un versement ou d'un remboursement : `ES`, `CB`, `CHEQUE`,
 `TRANSFER`. Erreurs (`message` en français pour la caisse) :
@@ -120,7 +120,7 @@ paiement en ligne (établissements avec Stripe). Écartés :
 | Sujet | Mise en œuvre |
 |---|---|
 | Espèces au-delà de 1 000 € | `merchant_parameters.customer_account_cash_mode` : `BLOCK` (défaut, refus) ou `WARN` (accepté jusqu'à 15 000 € si la caisse envoie `non_resident_confirmed` ; mention ajoutée au motif scellé). CMF D112-3. |
-| Plafond par client | `customer_account_settings` : plafond propre (NULL = celui de l'établissement) et ardoise interdite (avance utilisable). `CheckDebit` prend le plafond effectif ; refus `account_credit_blocked`. |
+| Plafond par client | `customer_account_settings` : plafond propre (NULL = celui de l'établissement), ardoise interdite (avance utilisable) et `reminders_disabled` (aucune relance automatique, la relance manuelle reste possible). `CheckDebit` prend le plafond effectif ; refus `account_credit_blocked`. |
 | Badge / filtre | `account_balance` dans `/customers/search`, `/frequent`, `/list` ; `/customers/list?account=debt|credit`. |
 | Balance âgée | `GET /customer-accounts/aging` (`reports.financial.read`) : chaque crédit solde d'abord les dettes les plus anciennes (`customeraccount.AgeDebts`). |
 | Totaux mensuels | `GET /customer-accounts/monthly?year=` (`reports.financial.read`) : versements, consommé, remboursé, abandonné, variation, avances (4191) et ardoises (411) de fin de mois. |

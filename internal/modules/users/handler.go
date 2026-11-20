@@ -97,15 +97,24 @@ func (h *UsersHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 
 	newToken, err := h.svc.UpdatePassword(ctx, token, req.OldPassword, req.NewPassword)
 	if err != nil {
-		models.SendJSON(w, http.StatusInternalServerError, "user", "update_password", map[string]string{"error": err.Error()})
+		switch {
+		case errors.Is(err, ErrInvalidOldPassword):
+			// 400 et non 401/403 : les clients traitent ces deux statuts comme
+			// une session expirée ou un droit manquant.
+			models.SendJSON(w, http.StatusBadRequest, "user", "update_password", map[string]string{"error": "invalid_old_password"})
+		case errors.Is(err, models.ErrInvalidInputPasswordTooShort):
+			models.SendJSON(w, http.StatusBadRequest, "user", "update_password", map[string]string{"error": "password_too_short"})
+		default:
+			models.SendErrorJSON(w, "user", "update_password", err)
+		}
 		return
 	}
 
+	// Une seule enveloppe : {id, data:{status, token}}. Le token est celui de
+	// la session courante, pivoté par le changement de mot de passe : le client
+	// doit le remplacer.
 	models.SendJSON(w, http.StatusOK, "user", "update_password",
-		models.HandlerDefaultResponse{
-			ID:   "users.reset-password",
-			Data: map[string]string{"status": "success", "token": newToken},
-		})
+		map[string]string{"status": "success", "token": newToken})
 }
 
 func (h *UsersHandler) GetProfile(w http.ResponseWriter, r *http.Request) {

@@ -44,6 +44,12 @@ func (s *UsersService) SetOnboardingService(o *onboarding.Service) {
 
 var ErrInvalidPhoneFormat = errors.New("invalid_phone_format")
 
+// ErrInvalidOldPassword : l'ancien mot de passe fourni à PATCH
+// /users/reset-password ne correspond pas à celui du compte. Un compte sans
+// mot de passe (Google seul) tombe aussi ici : il passe par
+// POST /auth/password/set.
+var ErrInvalidOldPassword = errors.New("invalid_old_password")
+
 // byocLocationShareThrottle is the minimum delay between two location shares sent to
 // Uber Eats for the same order, to avoid hammering their API on closely-spaced GPS pings.
 const byocLocationShareThrottle = 8 * time.Second
@@ -244,27 +250,25 @@ func (s *UsersService) UpdatePassword(ctx context.Context, token string, oldPass
 		return "", models.ErrUnauthorized
 	}
 
-	// 2. Validate new password
+	// 2. Compare old password. Sans cette vérification, un token volé suffirait
+	// à changer le mot de passe du compte. Tous les mots de passe stockés sont
+	// des hash bcrypt (voir helpers.PasswordMatches).
+	if !helpers.PasswordMatches(oldPass, user.Password) {
+		return "", ErrInvalidOldPassword
+	}
+
+	// 3. Validate new password
 	if err := validateNewPassword(newPass); err != nil {
 		return "", err
 	}
 
-	// 3. Hash password
+	// 4. Hash password
 	hash, err := HashPassword(newPass)
 	if err != nil {
 		return "", err
 	}
 
-	// 2. Compare old password
-	// Nécessite que tous les passwords soient des hash
-	// désactivé pour le moment
-	/*
-		if !CheckPasswordHash(oldPass, user.Password) {
-			return fmt.Errorf("invalid_old_password")
-		}
-	*/
-
-	// 4. Save
+	// 5. Save
 	newToken, err := s.userRepo.UpdatePassword(ctx, user.UserID, user.MerchantID, hash)
 	if err != nil {
 		return "", err

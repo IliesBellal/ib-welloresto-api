@@ -14,6 +14,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -165,12 +166,12 @@ func OrderCustomer(ctx context.Context, db *dbx.DB, merchantID, orderID string) 
 // si elle en a un autre, models.ErrAccountCustomerRequired si le client n'est pas
 // un client actif de l'établissement ou si la commande vient d'une plateforme.
 func AttachOrderCustomer(ctx context.Context, db *dbx.DB, merchantID, orderID string, customerID int64) error {
-	var current sql.NullInt64
-	var brand sql.NullString
+	// Lu en texte : une commande anonyme porte NULL (voire une chaîne vide).
+	var currentRaw, brand sql.NullString
 	err := db.QueryRowContext(ctx, `
 		SELECT customer_id, brand FROM orders
 		WHERE order_id = ? AND merchant_id = ?
-		FOR UPDATE`, orderID, merchantID).Scan(&current, &brand)
+		FOR UPDATE`, orderID, merchantID).Scan(&currentRaw, &brand)
 	if err == sql.ErrNoRows {
 		return models.ErrNotFound
 	}
@@ -180,8 +181,8 @@ func AttachOrderCustomer(ctx context.Context, db *dbx.DB, merchantID, orderID st
 	if brand.Valid && brand.String != models.BrandWelloResto {
 		return models.ErrAccountCustomerRequired
 	}
-	if current.Valid && current.Int64 > 0 {
-		if current.Int64 == customerID {
+	if current, perr := strconv.ParseInt(strings.TrimSpace(currentRaw.String), 10, 64); perr == nil && current > 0 {
+		if current == customerID {
 			return nil
 		}
 		return models.ErrAccountOrderHasOtherCustomer

@@ -62,7 +62,8 @@ func (h *Handler) Refund(w http.ResponseWriter, r *http.Request) {
 	h.operation(w, r, "refund", h.svc.Refund)
 }
 
-// WriteOff POST /customer-accounts/{customer_id}/write-off (pos.refund).
+// WriteOff POST /customer-accounts/{customer_id}/write-off (pos.refund, et
+// rôle administrateur : voir Service.WriteOff).
 func (h *Handler) WriteOff(w http.ResponseWriter, r *http.Request) {
 	h.operation(w, r, "write_off", h.svc.WriteOff)
 }

@@ -130,8 +130,18 @@ func (s *Service) Refund(ctx context.Context, customerID int64, req models.Custo
 	return s.apply(ctx, customerID, req, models.AccountOperationRefund)
 }
 
-// WriteOff abandonne tout ou partie de l'ardoise d'un client.
+// WriteOff abandonne tout ou partie de l'ardoise d'un client. Réservé aux
+// administrateurs (rôle administrateur de l'établissement) : renoncer à une
+// créance est une décision de gestion, pas un geste de caisse. Le droit
+// pos.refund de la route ne suffit pas.
 func (s *Service) WriteOff(ctx context.Context, customerID int64, req models.CustomerAccountOperationRequest) (*OperationResult, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+	if !user.HasAdminRole() {
+		return nil, models.ErrForbidden
+	}
 	return s.apply(ctx, customerID, req, models.AccountOperationWriteOff)
 }
 

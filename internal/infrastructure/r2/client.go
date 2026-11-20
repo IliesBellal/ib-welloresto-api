@@ -169,13 +169,18 @@ func (c *Client) CopyFile(ctx context.Context, srcKey, dstKey string) (string, e
 
 // GetKeyFromURL extrait la clé R2 depuis une URL publique. La query string
 // (ex: cache-buster ?v=...) est ignorée pour retrouver la clé d'objet réelle.
-func (c *Client) GetKeyFromURL(url string) string {
-	if idx := strings.Index(url, "?"); idx != -1 {
-		url = url[:idx]
+// Les URLs historiques en pub-….r2.dev sont reconnues en plus du domaine
+// public courant : les lignes déjà en base peuvent encore les porter.
+func (c *Client) GetKeyFromURL(rawURL string) string {
+	if idx := strings.Index(rawURL, "?"); idx != -1 {
+		rawURL = rawURL[:idx]
 	}
 	baseURL := strings.TrimRight(c.publicBaseURL, "/")
-	if strings.HasPrefix(url, baseURL+"/") {
-		return strings.TrimPrefix(url, baseURL+"/")
+	if baseURL != "" && strings.HasPrefix(rawURL, baseURL+"/") {
+		return strings.TrimPrefix(rawURL, baseURL+"/")
+	}
+	if u, err := url.Parse(rawURL); err == nil && u.Scheme == "https" && strings.HasSuffix(u.Hostname(), ".r2.dev") {
+		return strings.TrimPrefix(u.Path, "/")
 	}
 	return ""
 }

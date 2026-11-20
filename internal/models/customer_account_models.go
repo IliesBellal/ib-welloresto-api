@@ -230,6 +230,9 @@ type CustomerAccountCustomerSettings struct {
 	CreditLimit *int64 `json:"credit_limit"`
 	// CreditBlocked : ardoise interdite (son avance reste utilisable).
 	CreditBlocked bool `json:"credit_blocked"`
+	// RemindersDisabled : aucune relance automatique pour ce client (la relance
+	// manuelle du back-office reste possible).
+	RemindersDisabled bool `json:"reminders_disabled"`
 }
 
 // CustomerAccountAging : ancienneté de l'ardoise d'un client (centimes).

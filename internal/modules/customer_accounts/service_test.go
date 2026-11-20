@@ -1,10 +1,13 @@
 package customer_accounts
 
 import (
+	"context"
 	"errors"
 	"testing"
 
+	"welloresto-api/internal/middleware"
 	"welloresto-api/internal/models"
+	"welloresto-api/internal/modules/auth"
 )
 
 func TestBuildOperation(t *testing.T) {
@@ -76,5 +79,20 @@ func TestWithBalances(t *testing.T) {
 		if e.Date != wantDates[i] || e.BalanceAfter != wantBalances[i] {
 			t.Fatalf("entry %d = date %d balance %d ; want %d / %d", i, e.Date, e.BalanceAfter, wantDates[i], wantBalances[i])
 		}
+	}
+}
+
+// L'abandon de créance est réservé aux administrateurs : refusé avant tout
+// accès à la base pour un utilisateur sans rôle administrateur, même s'il a
+// le droit de rembourser.
+func TestWriteOff_AdminOnly(t *testing.T) {
+	nonAdmin := &auth.UserLoginRow{UserID: "u1", MerchantID: "m1"}
+	ctx := middleware.WithUser(context.Background(), nonAdmin)
+	req := models.CustomerAccountOperationRequest{Amount: 1000, Comment: "Client parti"}
+	if _, err := (&Service{}).WriteOff(ctx, 7, req); !errors.Is(err, models.ErrForbidden) {
+		t.Fatalf("non-admin write-off = %v, want ErrForbidden", err)
+	}
+	if _, err := (&Service{}).WriteOff(context.Background(), 7, req); !errors.Is(err, models.ErrUnauthorized) {
+		t.Fatalf("anonymous write-off = %v, want ErrUnauthorized", err)
 	}
 }

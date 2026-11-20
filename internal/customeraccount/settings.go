@@ -88,8 +88,8 @@ func LoadCustomerSettings(ctx context.Context, db *dbx.DB, merchantID string, cu
 	var s models.CustomerAccountCustomerSettings
 	var limit sql.NullInt64
 	err := db.QueryRowContext(ctx, `
-		SELECT credit_limit, credit_blocked FROM customer_account_settings
-		WHERE merchant_id = ? AND customer_id = ?`, merchantID, customerID).Scan(&limit, &s.CreditBlocked)
+		SELECT credit_limit, credit_blocked, reminders_disabled FROM customer_account_settings
+		WHERE merchant_id = ? AND customer_id = ?`, merchantID, customerID).Scan(&limit, &s.CreditBlocked, &s.RemindersDisabled)
 	if err == sql.ErrNoRows {
 		return s, nil
 	}
@@ -109,12 +109,13 @@ func SaveCustomerSettings(ctx context.Context, db *dbx.DB, merchantID string, cu
 		return models.ErrAccountInvalidAmount
 	}
 	_, err := db.ExecContext(ctx, `
-		INSERT INTO customer_account_settings (merchant_id, customer_id, credit_limit, credit_blocked, updated_at, updated_by)
-		VALUES (?, ?, ?, ?, now(), ?)
+		INSERT INTO customer_account_settings (merchant_id, customer_id, credit_limit, credit_blocked, reminders_disabled, updated_at, updated_by)
+		VALUES (?, ?, ?, ?, ?, now(), ?)
 		ON CONFLICT (merchant_id, customer_id) DO UPDATE
 		SET credit_limit = EXCLUDED.credit_limit, credit_blocked = EXCLUDED.credit_blocked,
+		    reminders_disabled = EXCLUDED.reminders_disabled,
 		    updated_at = now(), updated_by = EXCLUDED.updated_by`,
-		merchantID, customerID, s.CreditLimit, s.CreditBlocked, userID)
+		merchantID, customerID, s.CreditLimit, s.CreditBlocked, s.RemindersDisabled, userID)
 	if err != nil {
 		return fmt.Errorf("customeraccount: save customer settings: %w", err)
 	}
