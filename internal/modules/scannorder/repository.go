@@ -285,7 +285,7 @@ func (r *Repository) GetMerchantIDAndTZFromMerchantID(ctx context.Context, merch
 // snoMainQRCondition : QR principal du merchant (ni table ni serveur), même
 // définition que integrations / kiosk.getMerchantSlug. alias = alias de qrcodes.
 func snoMainQRCondition(alias string) string {
-	return fmt.Sprintf(`%[1]s.location_id IS NULL AND %[1]s.user_id IS NULL AND %[1]s.deleted = false AND %[1]s.enabled = true`, alias)
+	return fmt.Sprintf(`%[1]s.location_id IS NULL AND %[1]s.user_id IS NULL AND %[1]s.deleted = false AND %[1]s.enabled = true AND COALESCE(%[1]s.mywelloresto_flag, false) = false`, alias)
 }
 
 // snoSubscriptionBlocked : vrai quand l'abonnement du merchant coupe ou retire
