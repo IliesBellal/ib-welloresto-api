@@ -26,6 +26,8 @@ import (
 	"welloresto-api/internal/modules/receipt"
 	"welloresto-api/internal/modules/reservation"
 	"welloresto-api/internal/modules/scannorder"
+	scannorderSEOModule "welloresto-api/internal/modules/scannorderseo"
+	"welloresto-api/internal/infrastructure/indexnow"
 	tasksPkg "welloresto-api/internal/tasks"
 	"welloresto-api/internal/version"
 	"welloresto-api/internal/webhook/deliveroo_menu"
@@ -754,6 +756,16 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	menuCompositionAIH := menuModule.NewCompositionAIHandler(menuModule.NewCompositionAIService(
 		menuAIDrafts, menuRepoLegacy, menuAIRegistry, log.Named("menu_composition_ai"), cfg.ImportAI.DefaultCredits,
 	))
+	// Référencement de la page ScanNOrder (docs/scannorder-seo.md) : réglages
+	// édités dans le back-office, suggestion par la tâche IA seo_profile
+	// (fermée par défaut).
+	var scannSEORegistry scannorderSEOModule.AITaskRegistry
+	if menuAIRegistry != nil {
+		scannSEORegistry = menuAIRegistry
+	}
+	scannSEOH := scannorderSEOModule.NewHandler(scannorderSEOModule.NewService(
+		scannorderSEOModule.NewRepository(selectedDB), menuService, scannSEORegistry, log.Named("scannorder_seo"),
+	))
 	allergensH := allergensModule.NewHandler(allergensService)
 	tagsH := tagsModule.NewHandler(tagsService)
 
@@ -859,6 +871,26 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	taskManager.AccountingSyncService = accountingSyncService
 	taskManager.DeliverooService = deliverooService
 	taskManager.UberEatsService = uberService
+	// IndexNow (docs/scannorder-seo.md) : actif seulement avec INDEXNOW_KEY et
+	// SCANNORDER_BASE_URL en https.
+	var indexNowClient *indexnow.Client
+	if key := cfg.ScanNOrder.IndexNowKey; key != "" {
+		c, err := indexnow.New(key, cfg.ScanNOrder.SNORedirectBaseURL)
+		if err != nil {
+			log.Error("IndexNow désactivé : configuration invalide", zap.Error(err))
+		} else {
+			indexNowClient = c
+		}
+	}
+	if indexNowClient != nil {
+		// Sans Redis, la date du dernier passage reste en mémoire (nil
+		// explicite : un pointeur nil dans l'interface ne serait pas vu absent).
+		var indexNowState scannorder.IndexNowState
+		if redisClient != nil {
+			indexNowState = redisClient
+		}
+		taskManager.IndexNow = scannorder.NewIndexNowNotifier(scannRepo, indexNowClient, indexNowState, cfg.ScanNOrder.SNORedirectBaseURL, log.Named("indexnow"))
+	}
 	accountingSyncH := accountingSyncModule.NewHandler(accountingSyncService, cfg.Accounting.ReturnURL)
 
 	// Attestations individuelles de l'éditeur (conformité caisse lot F).
@@ -2284,6 +2316,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			r.Get("/deliveroo/accounts", integrationsHandler.ListDeliverooAccounts)
 			r.Get("/deliveroo/syncs", deliverooHandler.ListMenuSyncs)
 			r.Get("/scannorder", integrationsHandler.GetScanNOrder)
+			r.Get("/scannorder/seo", scannSEOH.GetSettings)
 			r.Get("/stripe/status", integrationsHandler.GetStripeStatus)
 			r.Get("/stripe/bank-accounts", integrationsHandler.GetStripeBankAccounts)
 			// RBAC lot 8 : solde Stripe — donnée financière, reports.financial.read.
@@ -2311,6 +2344,10 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 				r.Patch("/deliveroo", integrationsHandler.UpdateDeliveroo)
 				r.Patch("/deliveroo/disable", integrationsHandler.DisableDeliveroo)
 				r.Patch("/scannorder", integrationsHandler.UpdateScanNOrder)
+				r.Patch("/scannorder/seo", scannSEOH.UpdateSettings)
+				// Suggestion IA (appel payant) : 10 par heure et par établissement.
+				r.With(httprate.LimitBy(10, time.Hour, scannorderSEOModule.MerchantRateKey)).
+					Post("/scannorder/seo/suggest", scannSEOH.Suggest)
 				r.Post("/scannorder/onboarding", integrationsHandler.CreateScanNOrderOnboarding)
 				r.Patch("/global/close-temporary", integrationsHandler.CloseTemporaryGlobal)
 				r.Patch("/global/wait-time", integrationsHandler.SetWaitTimeGlobal)

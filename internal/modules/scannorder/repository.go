@@ -300,7 +300,8 @@ func snoSubscriptionBlocked(merchantIDExpr string) string {
 }
 
 // GetMerchantSEOInfo lit les données de référencement d'un merchant : adresse
-// découpée, champs seo_* de scannorder_settings, activation, blocage par
+// découpée, champs seo_* de scannorder_settings, site web, réservation en
+// ligne (même règle que GetFranchiseHub), activation, blocage par
 // l'abonnement et code du QR principal.
 func (r *Repository) GetMerchantSEOInfo(ctx context.Context, merchantID string) (*MerchantSEORow, error) {
 	db := dbx.GetDB(ctx, r.database)
@@ -308,6 +309,13 @@ func (r *Repository) GetMerchantSEOInfo(ctx context.Context, merchantID string) 
 	query := fmt.Sprintf(`
 	SELECT m.city, m.zip_code, m.country,
 	       snos.seo_title, snos.seo_description, snos.seo_cuisine_type,
+	       COALESCE(snos.seo_links, ''), COALESCE(m.web_site, ''),
+	       (SELECT bs.code FROM bookings_settings bs
+	         LEFT JOIN subscriptions sub ON sub.merchant_id = bs.merchant_id
+	         LEFT JOIN packages p ON p.id = sub.package_id
+	         WHERE bs.merchant_id = snos.merchant_id AND bs.enabled = TRUE
+	           AND COALESCE(sub.bookings_enabled, p.bookings_enabled, TRUE)
+	         LIMIT 1),
 	       snos.storefront_enabled,
 	       %[2]s,
 	       (SELECT qr.code FROM qrcodes qr
@@ -321,10 +329,11 @@ func (r *Repository) GetMerchantSEOInfo(ctx context.Context, merchantID string) 
 	WHERE m.id = ?`, snoMerchantJoinCast(), snoSubscriptionBlocked("snos.merchant_id"), snoMainQRCondition("qr"))
 
 	row := MerchantSEORow{}
-	var mainSlug sql.NullString
+	var mainSlug, reservationCode sql.NullString
 	err := db.QueryRowContext(ctx, query, merchantID).Scan(
 		&row.City, &row.ZipCode, &row.Country,
 		&row.SEOTitle, &row.SEODescription, &row.SEOCuisineType,
+		&row.SEOLinks, &row.WebSite, &reservationCode,
 		&row.StorefrontEnabled, &row.Blocked, &mainSlug,
 		&row.FranchiseName, &row.FranchiseSlug,
 	)
@@ -334,6 +343,10 @@ func (r *Repository) GetMerchantSEOInfo(ctx context.Context, merchantID string) 
 	if mainSlug.Valid {
 		row.MainSlug = &mainSlug.String
 	}
+	if reservationCode.Valid && strings.TrimSpace(reservationCode.String) != "" {
+		code := reservationCode.String
+		row.ReservationCode = &code
+	}
 	return &row, nil
 }
 
@@ -342,8 +355,11 @@ func (r *Repository) GetMerchantSEOInfo(ctx context.Context, merchantID string) 
 func (r *Repository) GetSitemapEntries(ctx context.Context) ([]SitemapEntry, error) {
 	db := dbx.GetDB(ctx, r.database)
 
+	// lastmod : la plus récente des deux dates, l'une ou l'autre pouvant être
+	// NULL (COALESCE croisé : GREATEST ne traite pas NULL pareil partout).
 	query := fmt.Sprintf(`
-	SELECT qr.code, mp.last_menu_update
+	SELECT qr.code,
+	       GREATEST(COALESCE(mp.last_menu_update, snos.seo_updated_at), COALESCE(snos.seo_updated_at, mp.last_menu_update))
 	FROM qrcodes qr
 	INNER JOIN scannorder_settings snos ON snos.merchant_id = qr.merchant_id
 	LEFT JOIN merchant_parameters mp ON mp.merchant_id = qr.merchant_id

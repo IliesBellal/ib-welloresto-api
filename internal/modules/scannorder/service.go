@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -280,7 +281,7 @@ func (s *Service) computeGetMerchant(ctx context.Context, qr string) (*MerchantR
 	if seo, err := s.repo.GetMerchantSEOInfo(ctx, row.MerchantID); err != nil {
 		logger.FromContext(ctx).Warn("GetMerchantSEOInfo failed", zap.Error(err))
 	} else {
-		applyMerchantSEO(resp.Merchant, seo)
+		applyMerchantSEO(resp.Merchant, seo, s.cfg.ReservationBaseURL)
 	}
 
 	return resp, nil
@@ -288,12 +289,24 @@ func (s *Service) computeGetMerchant(ctx context.Context, qr string) (*MerchantR
 
 // applyMerchantSEO reporte sur la réponse merchant l'adresse découpée et les
 // champs de référencement. Les champs texte vides restent nil.
-func applyMerchantSEO(m *MerchantData, seo *MerchantSEORow) {
+func applyMerchantSEO(m *MerchantData, seo *MerchantSEORow, reservationBaseURL string) {
 	m.Address.City = seo.City
 	m.Address.ZipCode = seo.ZipCode
 	m.Address.Country = seo.Country
 	m.Description = nonEmpty(seo.SEODescription)
-	m.CuisineType = nonEmpty(seo.SEOCuisineType)
+	m.Cuisines = helpers.ParseScanNOrderCuisines(seo.SEOCuisineType)
+	if len(m.Cuisines) > 0 {
+		labels := make([]string, len(m.Cuisines))
+		for i, c := range m.Cuisines {
+			labels[i] = c.Label
+		}
+		m.CuisineType = nonEmpty(strings.Join(labels, ", "))
+	}
+	m.SameAs = helpers.ScanNOrderSameAs(seo.SEOLinks, seo.WebSite)
+	if seo.ReservationCode != nil && reservationBaseURL != "" {
+		reservationURL := strings.TrimRight(reservationBaseURL, "/") + "/restaurant/" + url.PathEscape(*seo.ReservationCode)
+		m.ReservationURL = &reservationURL
+	}
 	m.SEO = &MerchantSEO{
 		Title:         nonEmpty(seo.SEOTitle),
 		CanonicalSlug: seo.MainSlug,

@@ -61,7 +61,10 @@ type TasksManager struct {
 	// UberEatsService — réveils par compte (RunUberEatsWakeups). Nil tant que
 	// SetupRoutes ne l'a pas branché.
 	UberEatsService *ubereatsModule.UberEatsService
-	Logger        *zap.Logger
+	// IndexNow — signalement des pages ScanNOrder modifiées (RunIndexNow).
+	// Nil tant que SetupRoutes ne l'a pas branché.
+	IndexNow IndexNowRunner
+	Logger   *zap.Logger
 }
 
 // NewTasksManager crée une nouvelle instance du gestionnaire avec les dépendances injectées

@@ -71,6 +71,19 @@ func loadAIConfig() ai.AIConfig {
 				// Fermé par défaut, comme menu_ocr.
 				Enabled: parseBool(os.Getenv("AI_TASK_MENU_COMPOSITION_ENABLED"), false),
 			},
+			// Suggestion de la description et des types de cuisine de la page
+			// ScanNOrder à partir de la carte (back-office, Référencement) : un
+			// appel texte par clic, limité à 10 par heure et par établissement,
+			// sans crédit. Voir docs/scannorder-seo.md.
+			"seo_profile": {
+				Provider:  getEnv("AI_TASK_SEO_PROFILE_PROVIDER", "anthropic"),
+				Model:     getEnv("AI_TASK_SEO_PROFILE_MODEL", "claude-opus-5-5"),
+				Effort:    parseEffort(getEnv("AI_TASK_SEO_PROFILE_EFFORT", "low")),
+				MaxTokens: parseInt(os.Getenv("AI_TASK_SEO_PROFILE_MAX_TOKENS"), 8000),
+				Timeout:   parseDuration(os.Getenv("AI_TASK_SEO_PROFILE_TIMEOUT_MS"), 60*time.Second),
+				// Fermé par défaut, comme les autres tâches payantes.
+				Enabled: parseBool(os.Getenv("AI_TASK_SEO_PROFILE_ENABLED"), false),
+			},
 		},
 	}
 }

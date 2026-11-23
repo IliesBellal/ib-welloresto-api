@@ -172,6 +172,12 @@ func SetupTasks(
 	// Mesure d'audience ScanNOrder : conservation 25 mois (CNIL, exemption de consentement).
 	add("45 5 * * *", taskManager.CleanupOldAudienceEvents)
 
+	// ── Référencement ScanNOrder ─────────────────────────────────────────────
+	// Pages établissement et hubs modifiés (carte, référencement) signalés aux
+	// moteurs IndexNow — Bing, Yahoo… (docs/scannorder-seo.md). Sans
+	// INDEXNOW_KEY (staging), ne fait rien.
+	add("@every 15m", taskManager.RunIndexNow)
+
 	// Démarrage du Cron en arrière-plan
 	c.Start()
 	log.Info("✅ Système CRON démarré (toutes tâches actives, protégées par SkipIfStillRunning + Recover)")

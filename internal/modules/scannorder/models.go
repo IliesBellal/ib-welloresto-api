@@ -2,6 +2,8 @@ package scannorder
 
 import (
 	"time"
+
+	"welloresto-api/internal/helpers"
 	"welloresto-api/internal/models"
 )
 
@@ -56,11 +58,22 @@ type MerchantData struct {
 	AverageDeliverySeconds *int            `json:"average_delivery_seconds,omitempty"`
 	MinimumOrderAmount     float64         `json:"minimum_order_amount"`
 
-	// Description / CuisineType : scannorder_settings.seo_description /
-	// seo_cuisine_type, nil quand vides.
-	Description *string      `json:"description,omitempty"`
-	CuisineType *string      `json:"cuisine_type,omitempty"`
-	SEO         *MerchantSEO `json:"seo,omitempty"`
+	// Description : scannorder_settings.seo_description, nil quand vide.
+	Description *string `json:"description,omitempty"`
+	// Cuisines : types de cuisine choisis dans le back-office
+	// (scannorder_settings.seo_cuisine_type, liste fermée
+	// helpers.ScanNOrderCuisines), dans l'ordre ; le premier est le type
+	// principal. CuisineType : leurs libellés joints par « , », nil sans
+	// cuisine (champ antérieur, gardé pour les fronts déjà déployés).
+	Cuisines    []helpers.ScanNOrderCuisine `json:"cuisines,omitempty"`
+	CuisineType *string                     `json:"cuisine_type,omitempty"`
+	// SameAs : pages publiques de l'établissement (seo_links puis site web de
+	// la fiche merchant), publiées en sameAs par le front.
+	SameAs []string `json:"same_as,omitempty"`
+	// ReservationURL : page de réservation en ligne, nil si l'établissement ne
+	// prend pas de réservation (même règle que le hub de franchise).
+	ReservationURL *string      `json:"reservation_url,omitempty"`
+	SEO            *MerchantSEO `json:"seo,omitempty"`
 	// Franchise : nil si l'établissement n'est dans aucune franchise ou masqué
 	// sur son hub.
 	Franchise *MerchantFranchise `json:"franchise"`
@@ -109,12 +122,18 @@ type MerchantSEO struct {
 
 // MerchantSEORow : lecture brute de GetMerchantSEOInfo.
 type MerchantSEORow struct {
-	City              string
-	ZipCode           string
-	Country           string
-	SEOTitle          string
-	SEODescription    string
-	SEOCuisineType    string
+	City           string
+	ZipCode        string
+	Country        string
+	SEOTitle       string
+	SEODescription string
+	SEOCuisineType string
+	// SEOLinks : scannorder_settings.seo_links brut (tableau JSON), vide si NULL.
+	SEOLinks string
+	// WebSite : merchant.web_site, saisi à l'inscription (souvent vide).
+	WebSite string
+	// ReservationCode : code public de réservation, nil sans réservation active.
+	ReservationCode   *string
 	StorefrontEnabled bool // scannorder_settings.storefront_enabled : carte affichée (indépendant de la commande en ligne)
 	Blocked           bool
 	MainSlug          *string
@@ -127,7 +146,9 @@ type MerchantSEORow struct {
 // SitemapEntry : une page établissement référençable.
 type SitemapEntry struct {
 	Slug string `json:"slug"`
-	// UpdatedAt : merchant_parameters.last_menu_update.
+	// UpdatedAt : dernière modification de la carte
+	// (merchant_parameters.last_menu_update) ou du référencement
+	// (scannorder_settings.seo_updated_at), la plus récente des deux.
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
