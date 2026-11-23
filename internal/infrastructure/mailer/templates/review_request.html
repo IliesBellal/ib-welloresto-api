@@ -1,0 +1,15 @@
+{{/* Demande d'avis Google après une commande ScanNOrder close
+(docs/scannorder-seo.md, « Fiche Google et demandes d'avis »). Règles Google
+sur les avis : aucune contrepartie, aucun tri des clients selon leur
+satisfaction. Lien de désinscription propre à l'établissement. */}}
+{{ template "doc_start" (dict "Title" "Votre avis compte" "Pre" (printf "Comment s'est passée votre commande chez %s ?" .MerchantName)) }}
+{{ template "head_merchant" .Brand }}
+{{ template "notice" .TestNotice }}
+{{ $title := "Merci pour votre commande" }}{{ if .CustomerName }}{{ $title = printf "Merci pour votre commande, %s" .CustomerName }}{{ end }}
+{{ template "hero" (dict "Title" $title "Sub" "Votre avis compte") }}
+{{ template "p_open" }}Nous espérons que votre commande chez <strong style="color:#050817;">{{ .MerchantName }}</strong> vous a plu. Pourriez-vous partager votre avis sur Google ? Cela ne prend qu'une minute et aide d'autres clients à nous découvrir.{{ template "p_close" }}
+{{ template "button" (dict "URL" .ReviewURL "Label" "Laisser un avis sur Google" "Color" .Brand.Color "TextColor" .Brand.TextColor) }}
+{{ template "sign" (dict "Hello" "Merci et à bientôt," "Name" .Brand.Name) }}
+{{ template "small_open" }}Vous ne souhaitez plus recevoir de demande d'avis de {{ .MerchantName }} ? <a href="{{ .UnsubscribeURL }}" target="_blank" style="color:#5b6680; text-decoration:underline;">Ne plus recevoir ces e-mails</a>.{{ template "p_close" }}
+{{ template "foot_merchant" (dict "Brand" .Brand "Mail" "review_request") }}
+{{ template "doc_end" }}

@@ -24,13 +24,14 @@ func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
 }
 
-// MerchantRateKey : clé de limitation par établissement, pour la suggestion
-// IA (appel payant). La route est derrière l'authentification.
+// MerchantRateKey : clé de limitation par établissement, pour les appels
+// payants (suggestion IA, recherche Google). La route est derrière
+// l'authentification ; httprate sépare déjà les compteurs par route.
 func MerchantRateKey(r *http.Request) (string, error) {
 	if user := middleware.GetUser(r); user != nil {
-		return "seo-suggest:" + user.MerchantID, nil
+		return "seo:" + user.MerchantID, nil
 	}
-	return "seo-suggest:anonymous", nil
+	return "seo:anonymous", nil
 }
 
 // GetSettings handles GET /integrations/scannorder/seo
@@ -86,5 +87,21 @@ func (h *Handler) Suggest(w http.ResponseWriter, r *http.Request) {
 		models.SendErrorJSON(w, module, "suggest", err)
 	default:
 		models.SendJSON(w, http.StatusOK, module, "suggest", suggestion)
+	}
+}
+
+// SearchGoogle handles POST /integrations/scannorder/seo/google-search : fiches
+// Google correspondant au nom et à l'adresse de l'établissement.
+func (h *Handler) SearchGoogle(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+
+	candidates, err := h.svc.SearchGoogle(r.Context(), user.MerchantID)
+	switch {
+	case errors.Is(err, ErrGoogleSearchUnavailable):
+		models.SendJSON(w, http.StatusServiceUnavailable, module, "google_search", map[string]string{"error": ErrGoogleSearchUnavailable.Error()})
+	case err != nil:
+		models.SendErrorJSON(w, module, "google_search", err)
+	default:
+		models.SendJSON(w, http.StatusOK, module, "google_search", map[string]any{"candidates": candidates})
 	}
 }

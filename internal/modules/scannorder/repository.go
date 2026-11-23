@@ -309,7 +309,7 @@ func (r *Repository) GetMerchantSEOInfo(ctx context.Context, merchantID string) 
 	query := fmt.Sprintf(`
 	SELECT m.city, m.zip_code, m.country,
 	       snos.seo_title, snos.seo_description, snos.seo_cuisine_type,
-	       COALESCE(snos.seo_links, ''), COALESCE(m.web_site, ''),
+	       COALESCE(snos.seo_links, ''), COALESCE(snos.google_maps_url, ''), COALESCE(m.web_site, ''),
 	       (SELECT bs.code FROM bookings_settings bs
 	         LEFT JOIN subscriptions sub ON sub.merchant_id = bs.merchant_id
 	         LEFT JOIN packages p ON p.id = sub.package_id
@@ -333,7 +333,7 @@ func (r *Repository) GetMerchantSEOInfo(ctx context.Context, merchantID string) 
 	err := db.QueryRowContext(ctx, query, merchantID).Scan(
 		&row.City, &row.ZipCode, &row.Country,
 		&row.SEOTitle, &row.SEODescription, &row.SEOCuisineType,
-		&row.SEOLinks, &row.WebSite, &reservationCode,
+		&row.SEOLinks, &row.GoogleMapsURL, &row.WebSite, &reservationCode,
 		&row.StorefrontEnabled, &row.Blocked, &mainSlug,
 		&row.FranchiseName, &row.FranchiseSlug,
 	)

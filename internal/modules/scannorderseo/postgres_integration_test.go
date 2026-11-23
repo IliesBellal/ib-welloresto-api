@@ -123,6 +123,30 @@ func TestScanNOrderSEO_Postgres(t *testing.T) {
 		t.Fatalf("réservation désactivée : %+v, %v", info, err)
 	}
 
+	// Fiche Google : écrite, relue par le back-office et par la page publique.
+	on := true
+	u, err = validateUpdate(&UpdateRequest{
+		GooglePlaceID: strp("ChIJN1t_tDeuEmsRUsoyG83frY4"), GoogleMapsURL: strp("https://www.google.com/maps/place/?q=place_id:ChIJN1t_tDeuEmsRUsoyG83frY4"),
+		GoogleReviewURL: strp("https://search.google.com/local/writereview?placeid=ChIJN1t_tDeuEmsRUsoyG83frY4"), ReviewRequestEnabled: &on,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpdateSettings(ctx, mid, u, seoUpdate.Add(2*time.Hour)); err != nil {
+		t.Fatalf("UpdateSettings (Google): %v", err)
+	}
+	row, err = repo.GetSettings(ctx, mid)
+	if err != nil || row.GooglePlaceID != "ChIJN1t_tDeuEmsRUsoyG83frY4" || !row.ReviewRequestEnabled ||
+		row.GoogleReviewURL != "https://search.google.com/local/writereview?placeid=ChIJN1t_tDeuEmsRUsoyG83frY4" || row.ReviewRequestsSent != 0 {
+		t.Fatalf("GetSettings (Google) = %+v, %v", row, err)
+	}
+	if info, err := sno.GetMerchantSEOInfo(ctx, mid); err != nil || info.GoogleMapsURL != "https://www.google.com/maps/place/?q=place_id:ChIJN1t_tDeuEmsRUsoyG83frY4" {
+		t.Fatalf("GetMerchantSEOInfo (Google) = %+v, %v", info, err)
+	}
+	if q, err := repo.GetPlaceQuery(ctx, mid); err != nil || q.Name != "Da Mario" || q.City != "Metz" || q.ZipCode != "57000" || q.Lat == 0 {
+		t.Fatalf("GetPlaceQuery = %+v, %v", q, err)
+	}
+
 	// Identité pour l'invite IA ; merchant inconnu.
 	if name, city, err := repo.GetMerchantIdentity(ctx, mid); err != nil || name != "Da Mario" || city != "Metz" {
 		t.Fatalf("GetMerchantIdentity = %q, %q, %v", name, city, err)

@@ -36,6 +36,34 @@ type Settings struct {
 	SuggestAvailable bool `json:"suggest_available"`
 	// UpdatedAt : dernière modification (seo_updated_at), nil si jamais.
 	UpdatedAt *time.Time `json:"updated_at"`
+
+	// Google : fiche Google de l'établissement.
+	Google GoogleProfile `json:"google"`
+	// GoogleSearchAvailable : la recherche de la fiche par l'API Google est
+	// configurée (GOOGLE_API_KEY) ; sinon le back-office ne propose que la saisie.
+	GoogleSearchAvailable bool `json:"google_search_available"`
+	// ReviewRequestEnabled : demande d'avis par e-mail après chaque commande
+	// ScanNOrder close (docs/scannorder-seo.md).
+	ReviewRequestEnabled bool `json:"review_request_enabled"`
+	// ReviewRequestsSent30d : demandes envoyées ces 30 derniers jours.
+	ReviewRequestsSent30d int `json:"review_requests_sent_30d"`
+}
+
+// GoogleProfile : fiche Google. Chaînes vides si non renseignées.
+type GoogleProfile struct {
+	PlaceID   string `json:"place_id"`
+	MapsURL   string `json:"maps_url"`
+	ReviewURL string `json:"review_url"`
+}
+
+// GoogleCandidate : fiche trouvée par la recherche, à confirmer par le
+// restaurateur.
+type GoogleCandidate struct {
+	PlaceID   string `json:"place_id"`
+	Name      string `json:"name"`
+	Address   string `json:"address"`
+	MapsURL   string `json:"maps_url"`
+	ReviewURL string `json:"review_url"`
 }
 
 type Limits struct {
@@ -52,6 +80,11 @@ type UpdateRequest struct {
 	Description  *string   `json:"description"`
 	CuisineTypes *[]string `json:"cuisine_types"`
 	Links        *[]string `json:"links"`
+
+	GooglePlaceID        *string `json:"google_place_id"`
+	GoogleMapsURL        *string `json:"google_maps_url"`
+	GoogleReviewURL      *string `json:"google_review_url"`
+	ReviewRequestEnabled *bool   `json:"review_request_enabled"`
 }
 
 // Suggestion : proposition de l'IA, jamais enregistrée par l'API — le
@@ -68,6 +101,18 @@ type settingsRow struct {
 	Cuisines    string
 	Links       string
 	UpdatedAt   *time.Time
+
+	GooglePlaceID        string
+	GoogleMapsURL        string
+	GoogleReviewURL      string
+	ReviewRequestEnabled bool
+	ReviewRequestsSent   int // envoyées ces 30 derniers jours
+}
+
+// placeQuery : ce qui sert à chercher la fiche Google de l'établissement.
+type placeQuery struct {
+	Name, Address, ZipCode, City string
+	Lat, Lng                     float64
 }
 
 // update : valeurs validées à écrire (nil = colonne inchangée).
@@ -76,6 +121,11 @@ type update struct {
 	Description *string
 	Cuisines    *string // codes joints par des virgules
 	Links       *string // tableau JSON, "" pour NULL
+
+	GooglePlaceID        *string // "" pour NULL
+	GoogleMapsURL        *string // "" pour NULL
+	GoogleReviewURL      *string // "" pour NULL
+	ReviewRequestEnabled *bool
 }
 
 // FieldError : champ refusé par la validation, rendu en 400 avec le champ et
@@ -96,4 +146,7 @@ var (
 	ErrMenuTooSmall = errors.New("menu_too_small")
 	// ErrSuggestFailed : l'IA n'a pas rendu de proposition exploitable.
 	ErrSuggestFailed = errors.New("seo_suggest_failed")
+	// ErrGoogleSearchUnavailable : recherche Google non configurée ou refusée
+	// (clé absente, API Places non activée, quota) : saisie manuelle.
+	ErrGoogleSearchUnavailable = errors.New("google_search_unavailable")
 )

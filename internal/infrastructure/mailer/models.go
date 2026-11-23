@@ -336,6 +336,17 @@ type InvoiceEmailData struct {
 	SupportEmail  string
 }
 
+// ReviewRequestEmailData : demande d'avis Google après une commande
+// ScanNOrder (docs/scannorder-seo.md).
+type ReviewRequestEmailData struct {
+	Brand          MerchantBrand
+	MerchantName   string
+	CustomerName   string // prénom, vide si inconnu
+	ReviewURL      string // formulaire d'avis Google de l'établissement
+	UnsubscribeURL string // page ScanNOrder « ne plus recevoir »
+	TestNotice     string // envoi de test depuis le back-office, vide sinon
+}
+
 // CustomerAccountEmailData : relevé de compte client ou relance d'ardoise
 // (docs/customer-accounts.md). Montants déjà formatés.
 type CustomerAccountEmailData struct {

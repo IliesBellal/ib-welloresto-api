@@ -6,9 +6,11 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"go.uber.org/zap"
+	"golang.org/x/text/unicode/norm"
 
 	"welloresto-api/internal/ai"
 	"welloresto-api/internal/helpers"
@@ -31,18 +33,20 @@ type store interface {
 	GetSettings(ctx context.Context, merchantID string) (*settingsRow, error)
 	UpdateSettings(ctx context.Context, merchantID string, u update, now time.Time) error
 	GetMerchantIdentity(ctx context.Context, merchantID string) (name, city string, err error)
+	GetPlaceQuery(ctx context.Context, merchantID string) (*placeQuery, error)
 }
 
 type Service struct {
 	repo     store
 	menu     MenuReader
 	registry AITaskRegistry
+	places   PlaceFinder // nil : recherche de la fiche Google indisponible
 	log      *zap.Logger
 	now      func() time.Time
 }
 
-func NewService(repo *Repository, menu MenuReader, registry AITaskRegistry, log *zap.Logger) *Service {
-	return &Service{repo: repo, menu: menu, registry: registry, log: log, now: time.Now}
+func NewService(repo *Repository, menu MenuReader, registry AITaskRegistry, places PlaceFinder, log *zap.Logger) *Service {
+	return &Service{repo: repo, menu: menu, registry: registry, places: places, log: log, now: time.Now}
 }
 
 // GetSettings rend les réglages enregistrés, la liste fermée des cuisines et
@@ -66,6 +70,14 @@ func (s *Service) GetSettings(ctx context.Context, merchantID string) (*Settings
 		},
 		SuggestAvailable: s.suggestAvailable(),
 		UpdatedAt:        row.UpdatedAt,
+		Google: GoogleProfile{
+			PlaceID:   row.GooglePlaceID,
+			MapsURL:   row.GoogleMapsURL,
+			ReviewURL: row.GoogleReviewURL,
+		},
+		GoogleSearchAvailable: s.places != nil,
+		ReviewRequestEnabled:  row.ReviewRequestEnabled,
+		ReviewRequestsSent30d: row.ReviewRequestsSent,
 	}
 	if out.Links == nil {
 		out.Links = []string{}
@@ -86,10 +98,42 @@ func (s *Service) UpdateSettings(ctx context.Context, merchantID string, req *Up
 	if err != nil {
 		return nil, err
 	}
+	if err := s.checkReviewRequest(ctx, merchantID, &u); err != nil {
+		return nil, err
+	}
 	if err := s.repo.UpdateSettings(ctx, merchantID, u, s.now()); err != nil {
 		return nil, err
 	}
 	return s.GetSettings(ctx, merchantID)
+}
+
+// checkReviewRequest : la demande d'avis par e-mail suppose un lien d'avis.
+// L'activer sans lien est refusé ; effacer le lien d'une demande active la
+// coupe.
+func (s *Service) checkReviewRequest(ctx context.Context, merchantID string, u *update) error {
+	if u.ReviewRequestEnabled == nil && u.GoogleReviewURL == nil {
+		return nil
+	}
+	row, err := s.repo.GetSettings(ctx, merchantID)
+	if err != nil {
+		return err
+	}
+	reviewURL, enabled := row.GoogleReviewURL, row.ReviewRequestEnabled
+	if u.GoogleReviewURL != nil {
+		reviewURL = *u.GoogleReviewURL
+	}
+	if u.ReviewRequestEnabled != nil {
+		enabled = *u.ReviewRequestEnabled
+	}
+	if !enabled || reviewURL != "" {
+		return nil
+	}
+	if u.ReviewRequestEnabled != nil {
+		return &FieldError{Field: "review_request_enabled", Reason: "missing_review_url"}
+	}
+	off := false
+	u.ReviewRequestEnabled = &off
+	return nil
 }
 
 // validateUpdate normalise la saisie : espaces repliés, cuisines connues sans
@@ -165,7 +209,97 @@ func validateUpdate(req *UpdateRequest) (update, error) {
 		}
 		u.Links = &stored
 	}
+	if req.GooglePlaceID != nil {
+		id := strings.TrimSpace(*req.GooglePlaceID)
+		if id != "" && !helpers.ValidGooglePlaceID(id) {
+			return u, &FieldError{Field: "google_place_id", Reason: "invalid", Value: *req.GooglePlaceID}
+		}
+		u.GooglePlaceID = &id
+	}
+	googleLink := func(field string, raw *string) (*string, error) {
+		if raw == nil {
+			return nil, nil
+		}
+		v := strings.TrimSpace(*raw)
+		if v == "" {
+			return &v, nil
+		}
+		n, err := helpers.NormalizeGoogleLink(v)
+		if err != nil {
+			return nil, &FieldError{Field: field, Reason: "invalid_google_link", Value: *raw}
+		}
+		return &n, nil
+	}
+	var err error
+	if u.GoogleMapsURL, err = googleLink("google_maps_url", req.GoogleMapsURL); err != nil {
+		return u, err
+	}
+	if u.GoogleReviewURL, err = googleLink("google_review_url", req.GoogleReviewURL); err != nil {
+		return u, err
+	}
+	u.ReviewRequestEnabled = req.ReviewRequestEnabled
 	return u, nil
+}
+
+// SearchGoogle cherche la fiche Google de l'établissement d'après son nom et
+// son adresse. Le restaurateur confirme la bonne fiche, puis enregistre.
+func (s *Service) SearchGoogle(ctx context.Context, merchantID string) ([]GoogleCandidate, error) {
+	if s.places == nil {
+		return nil, ErrGoogleSearchUnavailable
+	}
+	q, err := s.repo.GetPlaceQuery(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	name := oneLine(q.Name)
+	address := oneLine(q.Address)
+	locality := oneLine(strings.TrimSpace(q.ZipCode + " " + q.City))
+	text := name
+	if address != "" {
+		text += ", " + address
+	}
+	if locality != "" && !strings.Contains(fold(address), fold(q.City)) {
+		text += ", " + locality
+	}
+
+	found, err := s.places.FindPlaces(ctx, text, q.Lat, q.Lng)
+	if err == nil && len(found) == 0 && q.City != "" {
+		// Adresse mal saisie ou différente de celle de Google : nom et ville.
+		found, err = s.places.FindPlaces(ctx, name+" "+oneLine(q.City), q.Lat, q.Lng)
+	}
+	if err != nil {
+		s.log.Warn("recherche de la fiche Google impossible", zap.String("merchant_id", merchantID), zap.Error(err))
+		return nil, ErrGoogleSearchUnavailable
+	}
+
+	out := []GoogleCandidate{}
+	for _, p := range found {
+		if !helpers.ValidGooglePlaceID(p.PlaceID) {
+			continue
+		}
+		out = append(out, GoogleCandidate{
+			PlaceID:   p.PlaceID,
+			Name:      p.Name,
+			Address:   p.Address,
+			MapsURL:   helpers.GoogleMapsPlaceURL(p.PlaceID),
+			ReviewURL: helpers.GoogleReviewURL(p.PlaceID),
+		})
+		if len(out) == 5 {
+			break
+		}
+	}
+	return out, nil
+}
+
+// fold : minuscules, sans accents, pour comparer une ville et une adresse.
+func fold(s string) string {
+	var b strings.Builder
+	for _, r := range norm.NFD.String(strings.ToLower(s)) {
+		if !unicode.Is(unicode.Mn, r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func (s *Service) provider() (ai.LLMProvider, error) {

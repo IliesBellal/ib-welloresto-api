@@ -56,6 +56,7 @@ func TestApplyMerchantSEO_CuisinesLinksReservation(t *testing.T) {
 	applyMerchantSEO(m, &MerchantSEORow{
 		SEOCuisineType:  "pizza,italien",
 		SEOLinks:        `["instagram.com/da-mario","https://g.page/r/da-mario"]`,
+		GoogleMapsURL:   "https://www.google.com/maps/place/?q=place_id:ChIJda-mario-123",
 		WebSite:         "www.da-mario.fr",
 		ReservationCode: strPtr("da-mario"),
 		MainSlug:        strPtr("da-mario-metz"),
@@ -67,7 +68,7 @@ func TestApplyMerchantSEO_CuisinesLinksReservation(t *testing.T) {
 	if m.CuisineType == nil || *m.CuisineType != "Pizza, Italienne" {
 		t.Fatalf("CuisineType = %v", m.CuisineType)
 	}
-	wantSameAs := []string{"https://instagram.com/da-mario", "https://g.page/r/da-mario", "https://www.da-mario.fr"}
+	wantSameAs := []string{"https://www.google.com/maps/place/?q=place_id:ChIJda-mario-123", "https://instagram.com/da-mario", "https://g.page/r/da-mario", "https://www.da-mario.fr"}
 	if len(m.SameAs) != len(wantSameAs) {
 		t.Fatalf("SameAs = %v, want %v", m.SameAs, wantSameAs)
 	}

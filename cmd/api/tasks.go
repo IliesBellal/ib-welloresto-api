@@ -177,6 +177,9 @@ func SetupTasks(
 	// moteurs IndexNow — Bing, Yahoo… (docs/scannorder-seo.md). Sans
 	// INDEXNOW_KEY (staging), ne fait rien.
 	add("@every 15m", taskManager.RunIndexNow)
+	// Demandes d'avis Google par e-mail, 1 h 30 après la clôture des commandes
+	// ScanNOrder, de 9 h à 21 h heure de l'établissement (docs/scannorder-seo.md).
+	add("@every 15m", taskManager.RunReviewRequests)
 
 	// Démarrage du Cron en arrière-plan
 	c.Start()

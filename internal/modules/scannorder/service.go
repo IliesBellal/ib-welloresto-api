@@ -302,7 +302,7 @@ func applyMerchantSEO(m *MerchantData, seo *MerchantSEORow, reservationBaseURL s
 		}
 		m.CuisineType = nonEmpty(strings.Join(labels, ", "))
 	}
-	m.SameAs = helpers.ScanNOrderSameAs(seo.SEOLinks, seo.WebSite)
+	m.SameAs = helpers.ScanNOrderSameAs(seo.GoogleMapsURL, seo.SEOLinks, seo.WebSite)
 	if seo.ReservationCode != nil && reservationBaseURL != "" {
 		reservationURL := strings.TrimRight(reservationBaseURL, "/") + "/restaurant/" + url.PathEscape(*seo.ReservationCode)
 		m.ReservationURL = &reservationURL

@@ -21,6 +21,8 @@ var scannorderReservedSlugs = map[string]bool{
 	"franchises": true,
 	"events":     true,
 	"sitemap":    true,
+	// /scannorder/review-requests/{token} : désinscription des demandes d'avis.
+	"review-requests": true,
 }
 
 // slugFolds : lettres que la décomposition Unicode ne ramène pas à une base.

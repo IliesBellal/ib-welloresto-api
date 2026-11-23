@@ -64,6 +64,9 @@ type TasksManager struct {
 	// IndexNow — signalement des pages ScanNOrder modifiées (RunIndexNow).
 	// Nil tant que SetupRoutes ne l'a pas branché.
 	IndexNow IndexNowRunner
+	// ReviewRequests — demandes d'avis Google par e-mail (RunReviewRequests).
+	// Nil tant que SetupRoutes ne l'a pas branché.
+	ReviewRequests ReviewRequestsRunner
 	Logger   *zap.Logger
 }
 

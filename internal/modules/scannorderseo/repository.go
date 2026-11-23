@@ -28,10 +28,18 @@ func (r *Repository) GetSettings(ctx context.Context, merchantID string) (*setti
 	var row settingsRow
 	var updatedAt sql.NullTime
 	err := db.QueryRowContext(ctx, `
-	SELECT COALESCE(seo_title, ''), COALESCE(seo_description, ''), COALESCE(seo_cuisine_type, ''),
-	       COALESCE(seo_links, ''), seo_updated_at
-	FROM scannorder_settings
-	WHERE merchant_id = ?`, merchantID).Scan(&row.Title, &row.Description, &row.Cuisines, &row.Links, &updatedAt)
+	SELECT COALESCE(snos.seo_title, ''), COALESCE(snos.seo_description, ''), COALESCE(snos.seo_cuisine_type, ''),
+	       COALESCE(snos.seo_links, ''), snos.seo_updated_at,
+	       COALESCE(snos.google_place_id, ''), COALESCE(snos.google_maps_url, ''), COALESCE(snos.google_review_url, ''),
+	       snos.review_request_enabled,
+	       (SELECT COUNT(*) FROM review_requests rr
+	         WHERE rr.merchant_id = snos.merchant_id AND rr.status = 'sent'
+	           AND rr.sent_at >= now() - interval '30 days')
+	FROM scannorder_settings snos
+	WHERE snos.merchant_id = ?`, merchantID).Scan(
+		&row.Title, &row.Description, &row.Cuisines, &row.Links, &updatedAt,
+		&row.GooglePlaceID, &row.GoogleMapsURL, &row.GoogleReviewURL, &row.ReviewRequestEnabled, &row.ReviewRequestsSent,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, models.ErrNotFound
 	}
@@ -66,13 +74,24 @@ func (r *Repository) UpdateSettings(ctx context.Context, merchantID string, u up
 		set = append(set, "seo_cuisine_type = ?")
 		args = append(args, *u.Cuisines)
 	}
-	if u.Links != nil {
-		set = append(set, "seo_links = ?")
-		if *u.Links == "" {
+	nullable := func(column string, v *string) {
+		if v == nil {
+			return
+		}
+		set = append(set, column+" = ?")
+		if *v == "" {
 			args = append(args, nil)
 		} else {
-			args = append(args, *u.Links)
+			args = append(args, *v)
 		}
+	}
+	nullable("seo_links", u.Links)
+	nullable("google_place_id", u.GooglePlaceID)
+	nullable("google_maps_url", u.GoogleMapsURL)
+	nullable("google_review_url", u.GoogleReviewURL)
+	if u.ReviewRequestEnabled != nil {
+		set = append(set, "review_request_enabled = ?")
+		args = append(args, *u.ReviewRequestEnabled)
 	}
 	if len(set) == 0 {
 		return nil
@@ -100,4 +119,24 @@ func (r *Repository) GetMerchantIdentity(ctx context.Context, merchantID string)
 		return "", "", models.ErrNotFound
 	}
 	return name, city, err
+}
+
+// GetPlaceQuery lit le nom, l'adresse et la position de l'établissement, pour
+// chercher sa fiche Google.
+func (r *Repository) GetPlaceQuery(ctx context.Context, merchantID string) (*placeQuery, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	var q placeQuery
+	var lat, lng sql.NullFloat64
+	err := db.QueryRowContext(ctx, `
+	SELECT fullName, COALESCE(address, ''), COALESCE(zip_code, ''), COALESCE(city, ''), lat, lng
+	FROM merchant WHERE id = ?`, merchantID).Scan(&q.Name, &q.Address, &q.ZipCode, &q.City, &lat, &lng)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, models.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	q.Lat, q.Lng = lat.Float64, lng.Float64
+	return &q, nil
 }

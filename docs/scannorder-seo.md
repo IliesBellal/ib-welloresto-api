@@ -64,13 +64,55 @@ Google lit le sitemap. Bing, et donc Yahoo, DuckDuckGo et Ecosia qui reprennent 
 - `lastmod` du sitemap = la plus récente de `merchant_parameters.last_menu_update` et `scannorder_settings.seo_updated_at`.
 - Inactif sans `INDEXNOW_KEY` (API) : ne la définir qu'en production. La même clé dans `INDEXNOW_KEY` du front ScanNOrder, qui sert le fichier `https://scannorder.welloresto.fr/{clé}.txt`. Format : 8 à 128 caractères `a-z A-Z 0-9 -`. `SCANNORDER_BASE_URL` doit être en `https`.
 
+## Fiche Google et demandes d'avis
+
+Migration 223. Réglages dans le back-office, carte « Votre fiche Google » et « Demande d'avis par e-mail » de l'onglet Référencement.
+
+### Fiche Google
+
+| Colonne de `scannorder_settings` | Contenu |
+|---|---|
+| `google_place_id` | Place ID, renseigné quand le restaurateur choisit sa fiche dans la recherche |
+| `google_maps_url` | lien de la fiche, publié **en premier** dans `same_as` (donc en `sameAs` et en `hasMap` sur la page) |
+| `google_review_url` | lien « laisser un avis » envoyé aux clients |
+| `review_request_enabled` | demande d'avis par e-mail activée (faux par défaut) |
+
+- **Recherche** : `POST /integrations/scannorder/seo/google-search` (20 par heure et par établissement) interroge l'API Places de Google (« Find Place from Text », clé `GOOGLE_API_KEY`, la même API que `googlemaps.GetAddressFromPlaceID`) avec le nom et l'adresse de l'établissement, puis le nom et la ville si rien n'est trouvé. Chaque fiche proposée porte ses liens : `https://www.google.com/maps/place/?q=place_id:{id}` et `https://search.google.com/local/writereview?placeid={id}` (format documenté par Google). Si Google refuse (API non activée sur la clé, quota), 503 `google_search_unavailable` : le back-office le dit et le restaurateur colle les liens lui-même.
+- **Saisie** : les deux liens doivent être sur un domaine Google (`google.<tld>` et sous-domaines, `g.page`, `goo.gl`, `maps.app.goo.gl`), passés en https. Le lien d'avis part dans des e-mails envoyés au nom de l'établissement : il ne peut pas mener ailleurs. Le lien d'avis se trouve aussi dans la fiche Google : « Demander des avis ».
+- **Activation** : `review_request_enabled = true` sans lien d'avis est refusé (`missing_review_url`) ; effacer le lien d'une demande active la coupe.
+
+### Demande d'avis par e-mail
+
+Module `internal/modules/reviewrequests`, tâche `RunReviewRequests` toutes les 15 minutes (une instance à la fois, `fiscal.TryLock`).
+
+| Règle | Valeur |
+|---|---|
+| Commandes | ScanNOrder (`order_source = 'SCANNORDER'`, ou ancien marqueur `created_by` `SCANNORDER` / `-1`), marque `WELLO_RESTO`, `state = 'CLOSED'`, client avec e-mail |
+| Délai | 1 h 30 après la clôture (`delivered_on`), au plus 48 h : pas d'envoi de l'historique au déploiement |
+| Heures | de 9 h à 21 h, heure de l'établissement ; en dehors, la commande attend le passage suivant |
+| Plafond | une demande par client et par établissement tous les 90 jours |
+| Établissement | demande activée, lien d'avis renseigné, abonnement ni suspendu ni résilié, module ScanNOrder actif |
+| Désinscription | lien dans chaque e-mail, propre à l'établissement |
+
+- **Suivi** (`review_requests`) : une ligne par commande considérée, écrite **avant** l'envoi (`pending`), puis `sent` (avec le messageId Brevo) ou `failed`. Aucune commande n'est sollicitée deux fois ; une demande en échec n'est pas retentée. Les commandes écartées sont aussi inscrites : `skipped_opt_out`, `skipped_recent`, `skipped_invalid`.
+- **Données personnelles** : aucune adresse e-mail n'est conservée par ce module, seulement son empreinte (`email_hash`, sha256 de l'adresse en minuscules) pour le plafond et la désinscription.
+- **E-mail** : `review_request.html` (cadre client aux couleurs de l'établissement), objet « Votre avis sur {établissement} ? », expéditeur au nom de l'établissement (`BrevoMailer.SendReviewRequest`, synchrone). Un seul bouton : « Laisser un avis sur Google ».
+- **Règles Google sur les avis** : aucune contrepartie, aucun tri des clients selon leur satisfaction (tous les clients éligibles reçoivent la même demande). Ne pas ajouter de question « Êtes-vous satisfait ? » avant le lien.
+- **Désinscription** : page ScanNOrder `/desinscription/avis/{jeton}` (hors slug, comme prévu au P10 de `docs/campagnes-marketing.md`). Le jeton est aléatoire (32 octets), stocké dans `review_requests.token` : aucune donnée personnelle dans l'URL, pas d'expiration. API publique `GET /scannorder/review-requests/{jeton}`, `POST …/opt-out` et `POST …/opt-in` (annulation d'un clic par erreur), 30 par minute et par visiteur. La désinscription vaut pour cet établissement seulement (`review_request_optouts`).
+- **Test** : `POST /integrations/scannorder/seo/review-request/test` (5 par heure) envoie la demande à l'utilisateur connecté, marquée « test », avec le lien d'avis enregistré. Rien n'est inscrit.
+- **Statistique** : le back-office affiche le nombre de demandes envoyées sur 30 jours (`review_requests_sent_30d`).
+- **Pas encore fait** : en-têtes `List-Unsubscribe` / `List-Unsubscribe-Post` (désinscription en un clic des messageries). Non testé avec Brevo, et non exigé à ce volume (Gmail et Yahoo l'imposent au-delà de 5 000 envois par jour). À ajouter avec le cadre des campagnes (`docs/campagnes-marketing.md` §10).
+- **À valider juridiquement** (Q7 de `docs/campagnes-marketing.md`) : la demande d'avis est envoyée au titre de l'intérêt légitime, comme suite de la commande, sans contenu promotionnel et avec un droit d'opposition dans chaque e-mail. Le mentionner dans la politique de confidentialité des établissements.
+
 ## Mise en production
 
-1. Migration `migrations/todo/222_scannorder_seo_links.up.sql` **avant** l'API : `GetMerchantSEOInfo` et le sitemap lisent les nouvelles colonnes. Sans elle, la page publique perd ses données de référencement (l'échec est journalisé, la commande n'est pas bloquée) et le sitemap échoue.
+1. Migrations `migrations/todo/222_scannorder_seo_links.up.sql` et `223_google_review_requests.up.sql` **avant** l'API : `GetMerchantSEOInfo`, le sitemap et les demandes d'avis lisent les nouvelles colonnes et tables. Sans elles, la page publique perd ses données de référencement (l'échec est journalisé, la commande n'est pas bloquée) et le sitemap échoue.
 2. API, puis front ScanNOrder, puis back-office. Le front tolère une API antérieure : sans `cuisines` ni `same_as`, il retombe sur l'ancien comportement.
 3. Générer une clé (`openssl rand -hex 16`), la poser dans `INDEXNOW_KEY` de l'API **et** du front de production.
 4. Ouvrir la suggestion : `AI_TASK_SEO_PROFILE_ENABLED=true` (d'abord sur staging).
 5. Déclarer `https://scannorder.welloresto.fr/sitemap.xml` dans Google Search Console (propriété déjà vérifiée) et dans Bing Webmaster Tools (import possible depuis la Search Console).
+6. Vérifier que la clé `GOOGLE_API_KEY` a l'API Places activée : sinon la recherche de fiche répond `google_search_unavailable` et seule la saisie reste possible.
+7. Les demandes d'avis partent du domaine de l'API vers la page de désinscription de `SCANNORDER_BASE_URL` : vérifier cette variable sur chaque environnement.
 
 ## Pas encore fait
 

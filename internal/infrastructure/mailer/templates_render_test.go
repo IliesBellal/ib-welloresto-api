@@ -41,6 +41,11 @@ func templateFixtures() map[string]interface{} {
 			ReceiptURL: "https://pay.stripe.com/receipts/abc",
 		},
 		"invoice_email.html": InvoiceEmailData{Brand: brand, MerchantName: brand.Name, CustomerName: "Camille", ReceiptNumber: "F-2026-0042", OrderNumber: "1042"},
+		"review_request.html": ReviewRequestEmailData{
+			Brand: brand, MerchantName: brand.Name, CustomerName: "Camille",
+			ReviewURL:      "https://search.google.com/local/writereview?placeid=ChIJN1t_tDeuEmsRUsoyG83frY4",
+			UnsubscribeURL: "https://scannorder.welloresto.fr/desinscription/avis/abc",
+		},
 		"customer_account_statement.html": CustomerAccountEmailData{
 			Brand: brand, MerchantName: brand.Name, CustomerName: "Camille", BalanceLabel: "Ardoise 35,00 €",
 			AmountDue: "35,00 €", PeriodLabel: "du 01/09/2026 au 17/11/2026", PaymentURL: "https://api.welloresto.fr/pay/account/abc",
@@ -246,7 +251,7 @@ func TestClientFooterAndNoLegacyFrame(t *testing.T) {
 		"booking_confirmation.html", "booking_reminder.html", "booking_modification.html",
 		"booking_cancellation.html", "booking_reconfirmation.html", "booking_post_visit.html",
 		"waitlist_available.html", "scannorder_payout.html", "customer_refund.html",
-		"invoice_email.html", "planning_week_published.html",
+		"invoice_email.html", "planning_week_published.html", "review_request.html",
 	}
 	for _, name := range clientMails {
 		html, err := RenderTemplate(name, fixtures[name])
@@ -292,5 +297,37 @@ func TestMerchantHeadLogoOrInitials(t *testing.T) {
 	}
 	if !strings.Contains(html, ">CP</td>") || !strings.Contains(html, "background-color:#c8102e") {
 		t.Error("initiales sur la couleur de l'établissement absentes")
+	}
+}
+
+func TestReviewRequestTemplate(t *testing.T) {
+	data := templateFixtures()["review_request.html"].(ReviewRequestEmailData)
+	html, err := RenderTemplate("review_request.html", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Merci pour votre commande, Camille",
+		`href="https://search.google.com/local/writereview?placeid=ChIJN1t_tDeuEmsRUsoyG83frY4"`,
+		"Laisser un avis sur Google",
+		`href="https://scannorder.welloresto.fr/desinscription/avis/abc"`,
+		"Ne plus recevoir ces e-mails",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("rendu sans %q", want)
+		}
+	}
+	if strings.Contains(html, "e-mail de test") {
+		t.Error("avis de test affiché hors test")
+	}
+
+	data.CustomerName = ""
+	data.TestNotice = "Ceci est un e-mail de test."
+	html, err = RenderTemplate("review_request.html", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(html, ">Merci pour votre commande<") || !strings.Contains(html, "Ceci est un e-mail de test.") {
+		t.Error("variante sans prénom / envoi de test incorrecte")
 	}
 }

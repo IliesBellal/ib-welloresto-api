@@ -55,12 +55,44 @@ func TestNormalizeScanNOrderSEOLink(t *testing.T) {
 }
 
 func TestScanNOrderSameAs(t *testing.T) {
-	got := ScanNOrderSameAs(`["instagram.com/pizzeria","https://instagram.com/pizzeria/","nope"]`, "www.pizzeria-x.fr")
-	want := []string{"https://instagram.com/pizzeria", "https://www.pizzeria-x.fr"}
+	got := ScanNOrderSameAs("https://www.google.com/maps/place/?q=place_id:ChIJ123", `["instagram.com/pizzeria","https://instagram.com/pizzeria/","nope"]`, "www.pizzeria-x.fr")
+	want := []string{"https://www.google.com/maps/place/?q=place_id:ChIJ123", "https://instagram.com/pizzeria", "https://www.pizzeria-x.fr"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ScanNOrderSameAs = %v, want %v", got, want)
 	}
-	if got := ScanNOrderSameAs("pas du json", ""); got != nil {
+	if got := ScanNOrderSameAs("", "pas du json", ""); got != nil {
 		t.Fatalf("valeur illisible : %v, want nil", got)
+	}
+}
+
+func TestNormalizeGoogleLink(t *testing.T) {
+	ok := map[string]string{
+		"https://g.page/r/CabcDEF123/review":                         "https://g.page/r/CabcDEF123/review",
+		"http://search.google.com/local/writereview?placeid=ChIJ123": "https://search.google.com/local/writereview?placeid=ChIJ123",
+		"maps.app.goo.gl/AbC123":                                     "https://maps.app.goo.gl/AbC123",
+		"https://www.google.fr/maps/place/Da+Mario":                  "https://www.google.fr/maps/place/Da+Mario",
+		"https://www.google.co.uk/maps?cid=123":                      "https://www.google.co.uk/maps?cid=123",
+	}
+	for in, want := range ok {
+		if got, err := NormalizeGoogleLink(in); err != nil || got != want {
+			t.Errorf("NormalizeGoogleLink(%q) = %q, %v ; want %q", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"", "https://evil.com/google.com", "https://google.com.evil.com/", "https://notgoogle.com/x", "https://instagram.com/x", "javascript:alert(1)"} {
+		if got, err := NormalizeGoogleLink(in); err == nil {
+			t.Errorf("NormalizeGoogleLink(%q) = %q, want error", in, got)
+		}
+	}
+}
+
+func TestGooglePlaceURLs(t *testing.T) {
+	if !ValidGooglePlaceID("ChIJN1t_tDeuEmsRUsoyG83frY4") || ValidGooglePlaceID("x") || ValidGooglePlaceID("ChIJ<script>aaaaaaa") {
+		t.Fatal("ValidGooglePlaceID")
+	}
+	if got := GoogleReviewURL("ChIJN1t_tDeuEmsRUsoyG83frY4"); got != "https://search.google.com/local/writereview?placeid=ChIJN1t_tDeuEmsRUsoyG83frY4" {
+		t.Fatalf("GoogleReviewURL = %s", got)
+	}
+	if got := GoogleMapsPlaceURL("ChIJN1t_tDeuEmsRUsoyG83frY4"); got != "https://www.google.com/maps/place/?q=place_id:ChIJN1t_tDeuEmsRUsoyG83frY4" {
+		t.Fatalf("GoogleMapsPlaceURL = %s", got)
 	}
 }

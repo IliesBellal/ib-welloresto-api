@@ -463,6 +463,21 @@ func (b *BrevoMailer) SendOrderInvoice(to string, data mailer.InvoiceEmailData, 
 	return b.sendEmailViaBrevoWithAttachmentsID(data.MerchantName, mailer.InvoiceEmail, to, subject, html, []mailer.Attachment{attachment})
 }
 
+// SendReviewRequest envoie une demande d'avis Google au nom de
+// l'établissement (docs/scannorder-seo.md), de façon synchrone, et renvoie le
+// messageId Brevo.
+func (b *BrevoMailer) SendReviewRequest(to string, data mailer.ReviewRequestEmailData) (string, error) {
+	html, err := b.renderTemplate("review_request.html", data)
+	if err != nil {
+		return "", fmt.Errorf("failed to render review request template: %w", err)
+	}
+	subject := "Votre avis sur " + data.MerchantName + " ?"
+	if data.TestNotice != "" {
+		subject = "[Test] " + subject
+	}
+	return b.sendEmailViaBrevo(data.MerchantName, mailer.InvoiceEmail, to, subject, html)
+}
+
 // renderTemplate parses and executes a template using the mailer package's embedded templates
 func (b *BrevoMailer) renderTemplate(templateName string, data interface{}) (string, error) {
 	// Use the helper function from the mailer package which has access to the embedded FS

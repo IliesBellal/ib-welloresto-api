@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -165,6 +168,9 @@ func (f *fakeStore) UpdateSettings(_ context.Context, _ string, u update, _ time
 func (f *fakeStore) GetMerchantIdentity(context.Context, string) (string, string, error) {
 	return "Da Mario", "Metz", nil
 }
+func (f *fakeStore) GetPlaceQuery(context.Context, string) (*placeQuery, error) {
+	return &placeQuery{Name: "Da Mario", Address: "3 rue Serpenoise", ZipCode: "57000", City: "Metz", Lat: 49.1, Lng: 6.17}, nil
+}
 
 type fakeMenu struct{ menu *models.MenuResponse }
 
@@ -264,5 +270,141 @@ func TestGetSettings(t *testing.T) {
 	empty, _ := newTestService(&fakeStore{}, nil, nil).GetSettings(context.Background(), "42")
 	if empty.Links == nil || empty.CuisineTypes == nil {
 		t.Fatal("listes nil : le back-office attend des tableaux")
+	}
+}
+
+// ---- Fiche Google ----
+
+func TestValidateUpdate_Google(t *testing.T) {
+	on := true
+	u, err := validateUpdate(&UpdateRequest{
+		GooglePlaceID:        strp(" ChIJN1t_tDeuEmsRUsoyG83frY4 "),
+		GoogleMapsURL:        strp("maps.app.goo.gl/AbC123"),
+		GoogleReviewURL:      strp("https://g.page/r/CabcDEF123/review"),
+		ReviewRequestEnabled: &on,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *u.GooglePlaceID != "ChIJN1t_tDeuEmsRUsoyG83frY4" || *u.GoogleMapsURL != "https://maps.app.goo.gl/AbC123" ||
+		*u.GoogleReviewURL != "https://g.page/r/CabcDEF123/review" || !*u.ReviewRequestEnabled {
+		t.Fatalf("update = %+v", u)
+	}
+	// Effacement : chaînes vides acceptées.
+	if u, err := validateUpdate(&UpdateRequest{GoogleReviewURL: strp(" ")}); err != nil || *u.GoogleReviewURL != "" {
+		t.Fatalf("effacement = %+v, %v", u, err)
+	}
+	for field, req := range map[string]UpdateRequest{
+		"google_review_url": {GoogleReviewURL: strp("https://evil.example/avis")},
+		"google_maps_url":   {GoogleMapsURL: strp("https://instagram.com/x")},
+		"google_place_id":   {GooglePlaceID: strp("<script>")},
+	} {
+		_, err := validateUpdate(&req)
+		var fe *FieldError
+		if !errors.As(err, &fe) || fe.Field != field {
+			t.Errorf("%s : err = %v", field, err)
+		}
+	}
+}
+
+func TestUpdateSettings_ReviewRequestNeedsReviewURL(t *testing.T) {
+	on := true
+	// Activer sans lien d'avis : refusé.
+	store := &fakeStore{}
+	_, err := newTestService(store, nil, nil).UpdateSettings(context.Background(), "42", &UpdateRequest{ReviewRequestEnabled: &on})
+	var fe *FieldError
+	if !errors.As(err, &fe) || fe.Field != "review_request_enabled" || fe.Reason != "missing_review_url" || store.updated != nil {
+		t.Fatalf("activation sans lien : err = %v, écrit = %v", err, store.updated)
+	}
+
+	// Activer en donnant le lien dans la même requête : accepté.
+	store = &fakeStore{}
+	if _, err := newTestService(store, nil, nil).UpdateSettings(context.Background(), "42", &UpdateRequest{
+		ReviewRequestEnabled: &on, GoogleReviewURL: strp("https://g.page/r/Cabc/review"),
+	}); err != nil || !*store.updated.ReviewRequestEnabled {
+		t.Fatalf("activation avec lien : %v, %+v", err, store.updated)
+	}
+
+	// Effacer le lien d'une demande active : la demande est coupée.
+	store = &fakeStore{row: settingsRow{GoogleReviewURL: "https://g.page/r/Cabc/review", ReviewRequestEnabled: true}}
+	if _, err := newTestService(store, nil, nil).UpdateSettings(context.Background(), "42", &UpdateRequest{GoogleReviewURL: strp("")}); err != nil ||
+		store.updated.ReviewRequestEnabled == nil || *store.updated.ReviewRequestEnabled {
+		t.Fatalf("effacement du lien : %v, %+v", err, store.updated)
+	}
+}
+
+type fakeFinder struct {
+	calls   []string
+	results [][]foundPlace
+	err     error
+}
+
+func (f *fakeFinder) FindPlaces(_ context.Context, text string, _, _ float64) ([]foundPlace, error) {
+	f.calls = append(f.calls, text)
+	if f.err != nil {
+		return nil, f.err
+	}
+	if len(f.calls) <= len(f.results) {
+		return f.results[len(f.calls)-1], nil
+	}
+	return nil, nil
+}
+
+func TestSearchGoogle(t *testing.T) {
+	finder := &fakeFinder{results: [][]foundPlace{
+		nil, // nom + adresse : rien
+		{{PlaceID: "ChIJN1t_tDeuEmsRUsoyG83frY4", Name: "Da Mario", Address: "3 Rue Serpenoise, 57000 Metz"}, {PlaceID: "bad"}},
+	}}
+	svc := newTestService(&fakeStore{}, nil, nil)
+	svc.places = finder
+
+	got, err := svc.SearchGoogle(context.Background(), "42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"Da Mario, 3 rue Serpenoise, 57000 Metz", "Da Mario Metz"}; !reflect.DeepEqual(finder.calls, want) {
+		t.Fatalf("recherches = %q, want %q", finder.calls, want)
+	}
+	if len(got) != 1 || got[0].ReviewURL != "https://search.google.com/local/writereview?placeid=ChIJN1t_tDeuEmsRUsoyG83frY4" ||
+		got[0].MapsURL != "https://www.google.com/maps/place/?q=place_id:ChIJN1t_tDeuEmsRUsoyG83frY4" {
+		t.Fatalf("candidats = %+v", got)
+	}
+
+	svc.places = &fakeFinder{err: errors.New("REQUEST_DENIED")}
+	if _, err := svc.SearchGoogle(context.Background(), "42"); !errors.Is(err, ErrGoogleSearchUnavailable) {
+		t.Fatalf("refus Google : %v", err)
+	}
+	svc.places = nil
+	if _, err := svc.SearchGoogle(context.Background(), "42"); !errors.Is(err, ErrGoogleSearchUnavailable) {
+		t.Fatalf("sans clé : %v", err)
+	}
+}
+
+func TestPlacesClient(t *testing.T) {
+	var query url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query = r.URL.Query()
+		if query.Get("input") == "refus" {
+			_, _ = w.Write([]byte(`{"status":"REQUEST_DENIED","error_message":"This API project is not authorized"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"OK","candidates":[{"place_id":"ChIJ123456789","name":"Da Mario","formatted_address":"3 Rue Serpenoise, 57000 Metz"}]}`))
+	}))
+	defer srv.Close()
+
+	c := &placesClient{apiKey: "k", endpoint: srv.URL, http: srv.Client()}
+	got, err := c.FindPlaces(context.Background(), "Da Mario Metz", 49.1, 6.17)
+	if err != nil || len(got) != 1 || got[0].PlaceID != "ChIJ123456789" || got[0].Address != "3 Rue Serpenoise, 57000 Metz" {
+		t.Fatalf("FindPlaces = %+v, %v", got, err)
+	}
+	if query.Get("inputtype") != "textquery" || query.Get("fields") != "place_id,name,formatted_address" ||
+		query.Get("locationbias") != "circle:2000@49.100000,6.170000" || query.Get("key") != "k" {
+		t.Fatalf("requête = %v", query)
+	}
+	if _, err := c.FindPlaces(context.Background(), "refus", 0, 0); err == nil || !strings.Contains(err.Error(), "REQUEST_DENIED") {
+		t.Fatalf("refus : %v", err)
+	}
+	if NewPlacesClient(" ") != nil {
+		t.Fatal("sans clé : client attendu nil")
 	}
 }

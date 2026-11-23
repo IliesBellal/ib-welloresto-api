@@ -69,11 +69,16 @@ func ParseScanNOrderSEOLinks(stored string) []string {
 	return dedupeSEOLinks(raw)
 }
 
-// ScanNOrderSameAs assemble les liens publiés en sameAs : ceux du
+// ScanNOrderSameAs assemble les liens publiés en sameAs : la fiche Google
+// d'abord (c'est elle qui relie la page au lieu connu de Google), puis ceux du
 // référencement, puis le site web de la fiche merchant s'il est valide, sans
 // doublon.
-func ScanNOrderSameAs(storedLinks, webSite string) []string {
-	links := ParseScanNOrderSEOLinks(storedLinks)
+func ScanNOrderSameAs(googleMapsURL, storedLinks, webSite string) []string {
+	var links []string
+	if strings.TrimSpace(googleMapsURL) != "" {
+		links = append(links, googleMapsURL)
+	}
+	links = append(links, ParseScanNOrderSEOLinks(storedLinks)...)
 	if strings.TrimSpace(webSite) != "" {
 		links = append(links, webSite)
 	}

@@ -67,8 +67,8 @@ type MerchantData struct {
 	// cuisine (champ antérieur, gardé pour les fronts déjà déployés).
 	Cuisines    []helpers.ScanNOrderCuisine `json:"cuisines,omitempty"`
 	CuisineType *string                     `json:"cuisine_type,omitempty"`
-	// SameAs : pages publiques de l'établissement (seo_links puis site web de
-	// la fiche merchant), publiées en sameAs par le front.
+	// SameAs : pages publiques de l'établissement (fiche Google, seo_links,
+	// puis site web de la fiche merchant), publiées en sameAs par le front.
 	SameAs []string `json:"same_as,omitempty"`
 	// ReservationURL : page de réservation en ligne, nil si l'établissement ne
 	// prend pas de réservation (même règle que le hub de franchise).
@@ -130,6 +130,8 @@ type MerchantSEORow struct {
 	SEOCuisineType string
 	// SEOLinks : scannorder_settings.seo_links brut (tableau JSON), vide si NULL.
 	SEOLinks string
+	// GoogleMapsURL : scannorder_settings.google_maps_url (fiche Google), vide si NULL.
+	GoogleMapsURL string
 	// WebSite : merchant.web_site, saisi à l'inscription (souvent vide).
 	WebSite string
 	// ReservationCode : code public de réservation, nil sans réservation active.

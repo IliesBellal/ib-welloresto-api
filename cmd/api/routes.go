@@ -27,6 +27,7 @@ import (
 	"welloresto-api/internal/modules/reservation"
 	"welloresto-api/internal/modules/scannorder"
 	scannorderSEOModule "welloresto-api/internal/modules/scannorderseo"
+	reviewRequestsModule "welloresto-api/internal/modules/reviewrequests"
 	"welloresto-api/internal/infrastructure/indexnow"
 	tasksPkg "welloresto-api/internal/tasks"
 	"welloresto-api/internal/version"
@@ -764,8 +765,21 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		scannSEORegistry = menuAIRegistry
 	}
 	scannSEOH := scannorderSEOModule.NewHandler(scannorderSEOModule.NewService(
-		scannorderSEOModule.NewRepository(selectedDB), menuService, scannSEORegistry, log.Named("scannorder_seo"),
+		scannorderSEOModule.NewRepository(selectedDB), menuService, scannSEORegistry,
+		scannorderSEOModule.NewPlacesClient(cfg.Google.APIKey), log.Named("scannorder_seo"),
 	))
+	// Demandes d'avis Google par e-mail après les commandes ScanNOrder
+	// (docs/scannorder-seo.md) : tâche RunReviewRequests, page de
+	// désinscription servie par le front ScanNOrder.
+	var reviewMailer reviewRequestsModule.Mailer
+	if m, ok := mailService.(reviewRequestsModule.Mailer); ok {
+		reviewMailer = m
+	}
+	reviewRequestsService := reviewRequestsModule.NewService(
+		reviewRequestsModule.NewRepository(selectedDB), reviewMailer, merchantBrands,
+		cfg.ScanNOrder.SNORedirectBaseURL, log.Named("review_requests"),
+	)
+	reviewRequestsH := reviewRequestsModule.NewHandler(reviewRequestsService)
 	allergensH := allergensModule.NewHandler(allergensService)
 	tagsH := tagsModule.NewHandler(tagsService)
 
@@ -871,6 +885,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	taskManager.AccountingSyncService = accountingSyncService
 	taskManager.DeliverooService = deliverooService
 	taskManager.UberEatsService = uberService
+	taskManager.ReviewRequests = reviewRequestsService
 	// IndexNow (docs/scannorder-seo.md) : actif seulement avec INDEXNOW_KEY et
 	// SCANNORDER_BASE_URL en https.
 	var indexNowClient *indexnow.Client
@@ -1262,6 +1277,13 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 			httprate.LimitBy(scannorder.AudienceClientPerMinute, 1*time.Minute, scannorder.AudienceClientKey),
 		).Post("/events", scannHandler.RecordEvents)
 		r.Get("/sitemap", scannHandler.GetSitemap)
+
+		// Lien « ne plus recevoir » des demandes d'avis (page ScanNOrder
+		// /desinscription/avis/{token}) : public, jeton aléatoire.
+		reviewOptOut := httprate.LimitBy(30, 1*time.Minute, reviewRequestsModule.ClientKey)
+		r.With(reviewOptOut).Get("/review-requests/{token}", reviewRequestsH.GetInfo)
+		r.With(reviewOptOut).Post("/review-requests/{token}/opt-out", reviewRequestsH.OptOut)
+		r.With(reviewOptOut).Post("/review-requests/{token}/opt-in", reviewRequestsH.OptIn)
 
 		// Seuils par visiteur et par établissement, larges (voir
 		// scannorder.MerchantClientKey et les constantes ScanNOrder*PerMinute).
@@ -2348,6 +2370,12 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 				// Suggestion IA (appel payant) : 10 par heure et par établissement.
 				r.With(httprate.LimitBy(10, time.Hour, scannorderSEOModule.MerchantRateKey)).
 					Post("/scannorder/seo/suggest", scannSEOH.Suggest)
+				// Recherche de la fiche Google (API Places, payante) : 20 par heure.
+				r.With(httprate.LimitBy(20, time.Hour, scannorderSEOModule.MerchantRateKey)).
+					Post("/scannorder/seo/google-search", scannSEOH.SearchGoogle)
+				// E-mail de test de la demande d'avis, à l'utilisateur connecté.
+				r.With(httprate.LimitBy(5, time.Hour, scannorderSEOModule.MerchantRateKey)).
+					Post("/scannorder/seo/review-request/test", reviewRequestsH.SendTest)
 				r.Post("/scannorder/onboarding", integrationsHandler.CreateScanNOrderOnboarding)
 				r.Patch("/global/close-temporary", integrationsHandler.CloseTemporaryGlobal)
 				r.Patch("/global/wait-time", integrationsHandler.SetWaitTimeGlobal)

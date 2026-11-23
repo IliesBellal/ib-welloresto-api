@@ -68,6 +68,10 @@ Ajoutée le 2026-10-26. Décision d'Ilies : **seulement dès 25 € TTC** (seuil
 
 À trancher (cf. R8) : chaque envoi est une copie du ticket. L'envoi manuel depuis la caisse ne trace pas non plus ces copies ; à confirmer dans le cadre de la conformité caisse si un envoi par e-mail doit être enregistré comme duplicata.
 
+## Demande d'avis Google
+
+Ajoutée le 2026-11-23 (`review_request.html`, cadre client). Envoyée après les commandes ScanNOrder des établissements qui l'ont activée ; règles, désinscription et suivi dans `docs/scannorder-seo.md` (« Fiche Google et demandes d'avis »). Un bouton « Laisser un avis sur Google » à la couleur de l'établissement, lien « Ne plus recevoir ces e-mails » au-dessus du pied, avis `notice` pour l'envoi de test du back-office.
+
 ## Pièces jointes
 
 Inchangées : elles ne passent pas par les templates mais par les fonctions d'envoi, que la refonte ne touche pas. Fichier `.ics` des rendez-vous de démo (`SendAsyncWithAttachment`, `demorequest`), PDF du relevé et de la facture de commission (`SendPayoutDocuments`), de la facture de commission mensuelle et de son récapitulatif (`SendCommissionInvoice`), de la facture d'abonnement (`SendSubscriptionInvoice`), de la facture client (`SendInvoiceEmailToCustomer`), de l'attestation (`attestations.Email`). Les cartes « PDF » des mails ne font que signaler la pièce jointe.
