@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"welloresto-api/internal/imagepick"
 	"welloresto-api/internal/infrastructure/r2"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
@@ -31,7 +32,12 @@ const (
 type AdminHandler struct {
 	service  *Service
 	r2Client *r2.Client
+	picker   *imagepick.Picker
 }
+
+// SetImagePicker branche le placement d'images de la rotation (banque
+// d'images, « Mes images », allègement des fichiers envoyés).
+func (h *AdminHandler) SetImagePicker(p *imagepick.Picker) { h.picker = p }
 
 func NewAdminHandler(s *Service, r2Client *r2.Client) *AdminHandler {
 	return &AdminHandler{service: s, r2Client: r2Client}
@@ -304,9 +310,35 @@ func (h *AdminHandler) CreateMediaItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Image hébergée sur notre stockage (banque d'images ou « Mes images ») :
+	// la banque est reprise telle quelle, une image de l'établissement est
+	// copiée sous la clé du média — le retirer de la rotation supprime son
+	// fichier, il ne doit pas emporter celui d'un produit
+	// (docs/banque-images.md). Une URL externe reste acceptée telle quelle.
+	log := logger.FromContext(ctx)
+	mediaID := ""
+	var placed *imagepick.Placed
+	var err error
+	if req.Kind == "image" && req.URL != nil && h.r2Client != nil && h.r2Client.GetKeyFromURL(*req.URL) != "" {
+		mediaID = NewMediaItemID()
+		placed, err = h.picker.FromURL(ctx, *req.URL, []string{r2.MerchantKeyPrefix(user.MerchantID)}, func(ext string) string {
+			return r2.GenerateCDSMediaKey(user.MerchantID, displayID, mediaID, ext)
+		})
+		if err != nil {
+			imagepick.Send(w, "cds", fnName, err)
+			return
+		}
+		req.URL = &placed.URL
+	}
+
 	resp, err := h.service.CreateMediaItem(ctx, user.MerchantID, displayID,
-		"", req.Kind, req.URL, req.QRPayload, req.DurationSeconds)
+		mediaID, req.Kind, req.URL, req.QRPayload, req.DurationSeconds)
 	if err != nil {
+		if placed != nil && !placed.Shared {
+			if delErr := h.r2Client.DeleteFile(ctx, placed.Key); delErr != nil {
+				log.Warn("cds admin: cleanup orphan media file failed", zap.Error(delErr), zap.String("key", placed.Key))
+			}
+		}
 		models.SendErrorJSON(w, "cds", fnName, err)
 		return
 	}
@@ -377,11 +409,25 @@ func (h *AdminHandler) createMediaItemFromUpload(w http.ResponseWriter, r *http.
 	mediaID := NewMediaItemID()
 	key := r2.GenerateCDSMediaKey(merchantID, displayID, mediaID, ext)
 
-	publicURL, err := h.r2Client.UploadFile(ctx, key, file, contentType)
-	if err != nil {
-		log.Error("cds admin: upload media failed", zap.Error(err))
-		models.SendErrorJSON(w, "cds", fnName, models.ErrCDSMediaInvalid)
-		return
+	var publicURL string
+	if kind == "image" {
+		// Les images sont allégées avant envoi (l'extension peut changer).
+		placed, upErr := h.picker.Upload(ctx, file, contentType, func(ext string) string {
+			return r2.GenerateCDSMediaKey(merchantID, displayID, mediaID, ext)
+		})
+		if upErr != nil {
+			log.Error("cds admin: upload media image failed", zap.Error(upErr))
+			models.SendErrorJSON(w, "cds", fnName, models.ErrCDSMediaInvalid)
+			return
+		}
+		key, publicURL = placed.Key, placed.URL
+	} else {
+		publicURL, err = h.r2Client.UploadFile(ctx, key, file, contentType)
+		if err != nil {
+			log.Error("cds admin: upload media failed", zap.Error(err))
+			models.SendErrorJSON(w, "cds", fnName, models.ErrCDSMediaInvalid)
+			return
+		}
 	}
 
 	resp, err := h.service.CreateMediaItem(ctx, merchantID, displayID, mediaID, kind, &publicURL, nil, durationSeconds)

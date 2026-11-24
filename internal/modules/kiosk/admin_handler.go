@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"welloresto-api/internal/imagepick"
 	"welloresto-api/internal/infrastructure/r2"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
@@ -23,7 +24,13 @@ import (
 type AdminHandler struct {
 	service  *Service
 	r2Client *r2.Client
+	picker   *imagepick.Picker
 }
+
+// SetImagePicker branche le placement d'images (veille, logo, ruban
+// marketing) : banque d'images, « Mes images » et allègement des fichiers
+// envoyés (docs/banque-images.md).
+func (h *AdminHandler) SetImagePicker(p *imagepick.Picker) { h.picker = p }
 
 func NewAdminHandler(s *Service, r2Client *r2.Client) *AdminHandler {
 	return &AdminHandler{service: s, r2Client: r2Client}
@@ -428,29 +435,20 @@ func (h *AdminHandler) uploadSettingsImage(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := r.ParseMultipartForm(maxBytes); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "kiosk", fnName, map[string]string{"error": "file_too_large_or_invalid"})
-		return
-	}
-
-	file, header, err := r.FormFile("file")
+	// Multipart (champ "file") ou JSON {"image_url"} : image de la banque ou
+	// image déjà utilisée par l'établissement (docs/banque-images.md).
+	placed, err := h.picker.Place(w, r, imagepick.Request{
+		Field:           "file",
+		MultipartMemory: maxBytes,
+		OwnPrefixes:     []string{r2.MerchantKeyPrefix(user.MerchantID)},
+		KeyFor:          func(ext string) string { return r2.GenerateKioskKey(user.MerchantID, imageType, ext) },
+	})
 	if err != nil {
-		models.SendJSON(w, http.StatusBadRequest, "kiosk", fnName, map[string]string{"error": "missing_file_field"})
+		log.Error("kiosk admin: place image failed", zap.Error(err))
+		imagepick.Send(w, "kiosk", fnName, err)
 		return
 	}
-	defer file.Close()
-
-	contentType := header.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = r2.GetContentTypeFromExtension(header.Filename)
-	}
-	if !r2.ValidateImageType(contentType) {
-		models.SendJSON(w, http.StatusBadRequest, "kiosk", fnName, map[string]string{
-			"error":   "invalid_image_type",
-			"message": "Only JPEG, PNG, and WebP images are allowed",
-		})
-		return
-	}
+	publicURL := placed.URL
 
 	settings, err := h.service.GetSettings(ctx, user.MerchantID)
 	if err != nil {
@@ -465,27 +463,6 @@ func (h *AdminHandler) uploadSettingsImage(w http.ResponseWriter, r *http.Reques
 		oldURL = *settings.IdleImageURL
 	}
 
-	ext := r2.GetExtensionFromContentType(contentType)
-	key := r2.GenerateKioskKey(user.MerchantID, imageType, ext)
-
-	if oldURL != "" {
-		if oldKey := h.r2Client.GetKeyFromURL(oldURL); oldKey != "" && oldKey != key {
-			if err := h.r2Client.DeleteFile(ctx, oldKey); err != nil {
-				log.Warn("kiosk admin: delete old image failed", zap.Error(err))
-			}
-		}
-	}
-
-	publicURL, err := h.r2Client.UploadFile(ctx, key, file, contentType)
-	if err != nil {
-		log.Error("kiosk admin: upload image failed", zap.Error(err))
-		models.SendErrorJSON(w, "kiosk", fnName, fmt.Errorf("failed to upload image"))
-		return
-	}
-	// Cache-buster : la clé R2 est déterministe (même URL à chaque upload),
-	// sans ce paramètre le navigateur/CDN continue de servir l'ancienne image.
-	publicURL = fmt.Sprintf("%s?v=%d", publicURL, time.Now().UnixNano())
-
 	var updated *KioskSettingsResponse
 	if imageType == "logo" {
 		updated, err = h.service.SetLogoURL(ctx, user.MerchantID, publicURL)
@@ -496,6 +473,14 @@ func (h *AdminHandler) uploadSettingsImage(w http.ResponseWriter, r *http.Reques
 		log.Error("kiosk admin: persist image url failed", zap.Error(err))
 		models.SendErrorJSON(w, "kiosk", fnName, err)
 		return
+	}
+
+	if oldURL != "" {
+		if oldKey := h.r2Client.GetKeyFromURL(oldURL); oldKey != "" && oldKey != placed.Key {
+			if err := h.r2Client.DeleteFile(ctx, oldKey); err != nil {
+				log.Warn("kiosk admin: delete old image failed", zap.Error(err))
+			}
+		}
 	}
 
 	if imageType == "logo" {

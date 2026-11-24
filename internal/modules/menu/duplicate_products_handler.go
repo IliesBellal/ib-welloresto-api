@@ -106,7 +106,8 @@ func (h *MenuHandler) BulkDuplicateProducts(w http.ResponseWriter, r *http.Reque
 // l'objet de la source ne tiendrait pas : la clé d'une image dépend du
 // produit, et UploadProductImage supprime l'ancienne image quand elle portait
 // une autre clé — remplacer l'image de la copie effacerait celle de la source.
-// Une URL externe, que l'API ne supprime jamais, est reprise telle quelle.
+// Une URL externe, que l'API ne supprime jamais, est reprise telle quelle, de
+// même qu'une image de la banque.
 func (h *MenuHandler) duplicateProductImages(ctx context.Context, copies []DuplicatedProduct) (map[string]string, int) {
 	images := make(map[string]string)
 	failed := 0
@@ -126,7 +127,9 @@ func (h *MenuHandler) duplicateProductImages(ctx context.Context, copies []Dupli
 			continue
 		}
 		srcKey := h.r2Client.GetKeyFromURL(c.SourceImageURL)
-		if srcKey == "" {
+		// Une image de la banque est partagée et jamais supprimée : la copie
+		// garde la même URL (docs/banque-images.md).
+		if srcKey == "" || r2.IsImageBankKey(srcKey) {
 			images[c.NewID] = c.SourceImageURL
 			continue
 		}

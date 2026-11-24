@@ -27,6 +27,8 @@ import (
 	"welloresto-api/internal/modules/reservation"
 	"welloresto-api/internal/modules/scannorder"
 	scannorderSEOModule "welloresto-api/internal/modules/scannorderseo"
+	imageBankModule "welloresto-api/internal/modules/imagebank"
+	"welloresto-api/internal/imagepick"
 	reviewRequestsModule "welloresto-api/internal/modules/reviewrequests"
 	"welloresto-api/internal/infrastructure/indexnow"
 	tasksPkg "welloresto-api/internal/tasks"
@@ -443,7 +445,20 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 
 	// ---- Franchises (back-office ; hub public : scannorder) ----
 	franchisesService := franchisesModule.NewService(franchisesModule.NewRepository(selectedDB), redisClient, cfg.ScanNOrder.SNORedirectBaseURL)
+	// ---- Banque d'images (docs/banque-images.md) ----
+	// imagePicker place les images de tous les endpoints d'upload hors logos :
+	// fichier de l'appareil (allégé), image de la banque (URL partagée) ou
+	// image de l'établissement (copiée). nil si R2 n'est pas configuré.
+	var imageBankKeys imageBankModule.KeyResolver
+	if r2Client != nil {
+		imageBankKeys = r2Client
+	}
+	imageBankService := imageBankModule.NewService(imageBankModule.NewRepository(selectedDB), redisClient, imageBankKeys)
+	imageBankH := imageBankModule.NewHandler(imageBankService)
+	imagePicker := imagepick.New(r2Client, imageBankService)
+
 	franchisesHandler := franchisesModule.NewHandler(franchisesService, r2Client)
+	franchisesHandler.SetImagePicker(imagePicker)
 
 	// ---- Integrations dashboard ----
 	integrationsService := integrationsModule.NewService(
@@ -457,6 +472,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		cfg.ScanNOrder.SNORedirectBaseURL,
 	)
 	integrationsHandler := integrationsModule.NewHandler(integrationsService, r2Client)
+	integrationsHandler.SetImagePicker(imagePicker)
 
 	// ---- Pricing (LOT A Semaine 3, Chantier 11a/11b) : single reference
 	// table + cheapest-plan calculation, consumed by signup-context below.
@@ -694,6 +710,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	kioskService.SetOnboardingService(onboardingService)
 	kioskHandler := kioskModule.NewHandler(kioskService)
 	kioskAdminHandler := kioskModule.NewAdminHandler(kioskService, r2Client)
+	kioskAdminHandler.SetImagePicker(imagePicker)
 
 	// ---- CDS (écran d'affichage client) ----
 	// Module distinct de kiosk (voir CDS_DECISIONS.md D10) : tables, quota,
@@ -710,6 +727,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	cdsService := cdsModule.NewService(cdsCfg, cdsRepo, selectedDB, redisClient, notificationService)
 	cdsHandler := cdsModule.NewHandler(cdsService)
 	cdsAdminHandler := cdsModule.NewAdminHandler(cdsService, r2Client)
+	cdsAdminHandler.SetImagePicker(imagePicker)
 
 	// =============================
 	//  HANDLERS
@@ -719,6 +737,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 	posH := posModule.NewPOSHandler(posService, r2Client)
 	statsH := statsModule.NewStatsHandler(statsService)
 	menuH := menuModule.NewMenuHandler(menuService, r2Client, translationRepo, translationService)
+	menuH.SetImagePicker(imagePicker)
 	// Import de produits : dépendances propres (lecture seule + registry de
 	// providers + cache), volontairement disjointes de celles de MenuService —
 	// à l'exception de menuChanges, partagé à dessein (voir plus haut).
@@ -1392,6 +1411,19 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		r.Use(notSuspendedMiddleware)
 
 		r.Post("/haccp", haccpH.UploadHACCP)
+	})
+
+	// --- BANQUE D'IMAGES --- (docs/banque-images.md)
+	// Lecture seule pour le back-office : la banque est commune à tous les
+	// établissements et alimentée par cmd/image_bank_import. Choisir une image
+	// passe par les endpoints d'upload existants (corps JSON {"image_url"}).
+	r.Route("/image-bank", func(r chi.Router) {
+		r.Use(authMiddleware)
+		r.Use(notSuspendedMiddleware)
+
+		r.Get("/", imageBankH.List)
+		r.Get("/categories", imageBankH.Categories)
+		r.Get("/mine", imageBankH.Mine)
 	})
 
 	// --- MENU ---

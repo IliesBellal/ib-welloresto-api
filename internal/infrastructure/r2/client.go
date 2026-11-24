@@ -130,8 +130,16 @@ func (c *Client) GetFile(ctx context.Context, key string) ([]byte, error) {
 	return io.ReadAll(out.Body)
 }
 
-// DeleteFile supprime un fichier de R2
+// DeleteFile supprime un fichier de R2.
+//
+// Les images de la banque (préfixe ImageBankPrefix) ne sont jamais supprimées :
+// plusieurs établissements référencent la même URL, et tous les circuits qui
+// effacent « l'ancienne image » d'un produit, d'une option, d'une bannière…
+// passent par ici. Voir docs/banque-images.md.
 func (c *Client) DeleteFile(ctx context.Context, key string) error {
+	if IsImageBankKey(key) {
+		return nil
+	}
 	_, err := c.s3Client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(c.bucket),
 		Key:    aws.String(key),
@@ -183,6 +191,36 @@ func (c *Client) GetKeyFromURL(rawURL string) string {
 		return strings.TrimPrefix(u.Path, "/")
 	}
 	return ""
+}
+
+// ImageBankPrefix : dossier R2 des images de la banque Wello Resto, communes à
+// tous les établissements (table image_bank).
+const ImageBankPrefix = "wello_resto_images_storage/image_bank/"
+
+// IsImageBankKey indique si key désigne une image de la banque.
+func IsImageBankKey(key string) bool {
+	return strings.HasPrefix(key, ImageBankPrefix)
+}
+
+// GenerateImageBankKey génère la clé R2 d'une image de la banque. name est un
+// identifiant déjà normalisé (minuscules, chiffres, tirets).
+func GenerateImageBankKey(category, name, ext string) string {
+	if !strings.HasPrefix(ext, ".") {
+		ext = "." + ext
+	}
+	return ImageBankPrefix + category + "/" + name + ext
+}
+
+// IsImageKey : clé d'un fichier image accepté (jpg, png, webp).
+func IsImageKey(key string) bool {
+	k := strings.ToLower(key)
+	return strings.HasSuffix(k, ".jpg") || strings.HasSuffix(k, ".jpeg") ||
+		strings.HasSuffix(k, ".png") || strings.HasSuffix(k, ".webp")
+}
+
+// MerchantKeyPrefix : dossier R2 des fichiers d'un établissement.
+func MerchantKeyPrefix(merchantID string) string {
+	return "wello_resto_images_storage/merchants/" + merchantID + "/"
 }
 
 // GenerateProductKey génère la clé R2 pour un produit

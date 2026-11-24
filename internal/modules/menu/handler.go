@@ -3,13 +3,13 @@ package menu
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 	"welloresto-api/internal/helpers"
+	"welloresto-api/internal/imagepick"
 	"welloresto-api/internal/modules/deliveroo"
 	"welloresto-api/internal/modules/marketplacecatalog"
 	"welloresto-api/internal/modules/ubereats"
@@ -29,6 +29,7 @@ var validLangCode = regexp.MustCompile(`^[a-z]{2,5}$`)
 type MenuHandler struct {
 	service            *MenuService
 	r2Client           *r2.Client
+	picker             *imagepick.Picker
 	translationRepo    *translationModule.Repository
 	translationService *translationModule.Service
 }
@@ -1297,91 +1298,6 @@ func (h *MenuHandler) UpdateProductAttributes(w http.ResponseWriter, r *http.Req
 	models.SendJSON(w, http.StatusOK, "menu", "update_product_attributes", map[string]string{"status": "success", "message": "attributes updated"})
 }
 
-func (h *MenuHandler) UploadProductCategoryImage(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	log := logger.FromContext(ctx)
-
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		models.SendJSON(w, http.StatusUnauthorized, "menu", "upload_product_category_image", map[string]string{"error": "missing_token"})
-		return
-	}
-
-	user, err := middleware.UserFromContext(ctx)
-	if err != nil {
-		log.Error("[ERROR] UploadProductCategoryImage UserFromContext: " + err.Error())
-		models.SendJSON(w, http.StatusUnauthorized, "menu", "upload_product_category_image", map[string]string{"error": "invalid_token"})
-		return
-	}
-
-	categoryID := chi.URLParam(r, "category_id")
-	if strings.TrimSpace(categoryID) == "" {
-		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_product_category_image", map[string]string{"error": "missing_category_id"})
-		return
-	}
-
-	if err := r.ParseMultipartForm(5 << 20); err != nil {
-		log.Error("[ERROR] UploadProductCategoryImage ParseMultipartForm: " + err.Error())
-		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_product_category_image", map[string]string{"error": "file_too_large_or_invalid"})
-		return
-	}
-
-	file, header, err := r.FormFile("photo")
-	if err != nil {
-		log.Error("[ERROR] UploadProductCategoryImage FormFile: " + err.Error())
-		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_product_category_image", map[string]string{"error": "missing_photo_field"})
-		return
-	}
-	defer file.Close()
-
-	contentType := header.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = r2.GetContentTypeFromExtension(header.Filename)
-	}
-	if !r2.ValidateImageType(contentType) {
-		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_product_category_image", map[string]string{
-			"error":   "invalid_image_type",
-			"message": "Only JPEG, PNG, and WebP images are allowed",
-		})
-		return
-	}
-
-	oldImageURL, err := h.service.GetProductCategoryImageURL(ctx, token, categoryID)
-	if err != nil {
-		log.Warn("[WARN] UploadProductCategoryImage GetProductCategoryImageURL: " + err.Error())
-	}
-
-	ext := r2.GetExtensionFromContentType(contentType)
-	key := r2.GenerateProductCategoryKey(user.MerchantID, categoryID, ext)
-
-	if oldImageURL != "" {
-		oldKey := h.r2Client.GetKeyFromURL(oldImageURL)
-		if oldKey != "" {
-			if err := h.r2Client.DeleteFile(ctx, oldKey); err != nil {
-				log.Warn("[WARN] UploadProductCategoryImage DeleteFile (old image): " + err.Error())
-			}
-		}
-	}
-
-	publicURL, err := h.r2Client.UploadFile(ctx, key, file, contentType)
-	if err != nil {
-		log.Error("[ERROR] UploadProductCategoryImage UploadFile: " + err.Error())
-		models.SendErrorJSON(w, "menu", "upload_product_category_image", fmt.Errorf("failed to upload image"))
-		return
-	}
-
-	if err := h.service.UpdateProductCategoryImageURL(ctx, token, categoryID, publicURL); err != nil {
-		log.Error("[ERROR] UploadProductCategoryImage UpdateProductCategoryImageURL: " + err.Error())
-		models.SendErrorJSON(w, "menu", "upload_product_category_image", err)
-		return
-	}
-
-	models.SendJSON(w, http.StatusOK, "menu", "upload_product_category_image", map[string]interface{}{
-		"status":    "success",
-		"image_url": publicURL,
-	})
-}
-
 func (h *MenuHandler) DeleteProductCategoryImage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
@@ -1421,91 +1337,6 @@ func (h *MenuHandler) DeleteProductCategoryImage(w http.ResponseWriter, r *http.
 	models.SendJSON(w, http.StatusOK, "menu", "delete_product_category_image", map[string]interface{}{
 		"status":  "success",
 		"message": "product_category_image_deleted",
-	})
-}
-
-func (h *MenuHandler) UploadMarketingCategoryImage(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	log := logger.FromContext(ctx)
-
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		models.SendJSON(w, http.StatusUnauthorized, "menu", "upload_marketing_category_image", map[string]string{"error": "missing_token"})
-		return
-	}
-
-	user, err := middleware.UserFromContext(ctx)
-	if err != nil {
-		log.Error("[ERROR] UploadMarketingCategoryImage UserFromContext: " + err.Error())
-		models.SendJSON(w, http.StatusUnauthorized, "menu", "upload_marketing_category_image", map[string]string{"error": "invalid_token"})
-		return
-	}
-
-	categoryID := chi.URLParam(r, "category_id")
-	if strings.TrimSpace(categoryID) == "" {
-		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_marketing_category_image", map[string]string{"error": "missing_category_id"})
-		return
-	}
-
-	if err := r.ParseMultipartForm(5 << 20); err != nil {
-		log.Error("[ERROR] UploadMarketingCategoryImage ParseMultipartForm: " + err.Error())
-		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_marketing_category_image", map[string]string{"error": "file_too_large_or_invalid"})
-		return
-	}
-
-	file, header, err := r.FormFile("photo")
-	if err != nil {
-		log.Error("[ERROR] UploadMarketingCategoryImage FormFile: " + err.Error())
-		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_marketing_category_image", map[string]string{"error": "missing_photo_field"})
-		return
-	}
-	defer file.Close()
-
-	contentType := header.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = r2.GetContentTypeFromExtension(header.Filename)
-	}
-	if !r2.ValidateImageType(contentType) {
-		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_marketing_category_image", map[string]string{
-			"error":   "invalid_image_type",
-			"message": "Only JPEG, PNG, and WebP images are allowed",
-		})
-		return
-	}
-
-	oldImageURL, err := h.service.GetMarketingCategoryImageURL(ctx, token, categoryID)
-	if err != nil {
-		log.Warn("[WARN] UploadMarketingCategoryImage GetMarketingCategoryImageURL: " + err.Error())
-	}
-
-	ext := r2.GetExtensionFromContentType(contentType)
-	key := r2.GenerateMarketingCategoryKey(user.MerchantID, categoryID, ext)
-
-	if oldImageURL != "" {
-		oldKey := h.r2Client.GetKeyFromURL(oldImageURL)
-		if oldKey != "" {
-			if err := h.r2Client.DeleteFile(ctx, oldKey); err != nil {
-				log.Warn("[WARN] UploadMarketingCategoryImage DeleteFile (old image): " + err.Error())
-			}
-		}
-	}
-
-	publicURL, err := h.r2Client.UploadFile(ctx, key, file, contentType)
-	if err != nil {
-		log.Error("[ERROR] UploadMarketingCategoryImage UploadFile: " + err.Error())
-		models.SendErrorJSON(w, "menu", "upload_marketing_category_image", fmt.Errorf("failed to upload image"))
-		return
-	}
-
-	if err := h.service.UpdateMarketingCategoryImageURL(ctx, token, categoryID, publicURL); err != nil {
-		log.Error("[ERROR] UploadMarketingCategoryImage UpdateMarketingCategoryImageURL: " + err.Error())
-		models.SendErrorJSON(w, "menu", "upload_marketing_category_image", err)
-		return
-	}
-
-	models.SendJSON(w, http.StatusOK, "menu", "upload_marketing_category_image", map[string]interface{}{
-		"status":    "success",
-		"image_url": publicURL,
 	})
 }
 
@@ -1551,224 +1382,10 @@ func (h *MenuHandler) DeleteMarketingCategoryImage(w http.ResponseWriter, r *htt
 	})
 }
 
-func (h *MenuHandler) UploadProductImage(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	log := logger.FromContext(ctx)
-
-	// 1. Auth & Validation basique
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		models.SendJSON(w, http.StatusUnauthorized, "menu", "upload_product_image", map[string]string{"error": "missing_token"})
-		return
-	}
-
-	user, err := middleware.UserFromContext(ctx)
-	if err != nil {
-		log.Error("[ERROR] UploadProductImage UserFromContext: " + err.Error())
-		models.SendJSON(w, http.StatusUnauthorized, "menu", "upload_product_image", map[string]string{"error": "invalid_token"})
-		return
-	}
-
-	productID := chi.URLParam(r, "product_id")
-	if productID == "" {
-		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_product_image", map[string]string{"error": "missing_parameter"})
-		return
-	}
-
-	// 2. Parse multipart form (taille max 5 Mo)
-	if err := r.ParseMultipartForm(5 << 20); err != nil {
-		log.Error("[ERROR] UploadProductImage ParseMultipartForm: " + err.Error())
-		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_product_image", map[string]string{"error": "file_too_large_or_invalid"})
-		return
-	}
-
-	// 3. Récupérer le fichier
-	file, header, err := r.FormFile("photo")
-	if err != nil {
-		log.Error("[ERROR] UploadProductImage FormFile: " + err.Error())
-		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_product_image", map[string]string{"error": "missing_photo_field"})
-		return
-	}
-	defer file.Close()
-
-	// 4. Valider le type MIME
-	contentType := header.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = r2.GetContentTypeFromExtension(header.Filename)
-	}
-
-	if !r2.ValidateImageType(contentType) {
-		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_product_image", map[string]string{
-			"error":   "invalid_image_type",
-			"message": "Only JPEG, PNG, and WebP images are allowed",
-		})
-		return
-	}
-
-	// 6. Récupérer l'ancienne URL d'image (si elle existe)
-	oldImageURL, err := h.service.GetProductImageURL(ctx, token, productID)
-	if err != nil {
-		// On log l'erreur mais on continue (pas bloquant)
-		log.Warn("[WARN] UploadProductImage GetProductImageURL: " + err.Error())
-	}
-
-	// 7. Générer la clé R2
-	ext := r2.GetExtensionFromContentType(contentType)
-	key := r2.GenerateProductKey(user.MerchantID, productID, ext)
-
-	// 8. Upload le nouveau fichier vers R2
-	publicURL, err := h.r2Client.UploadFile(ctx, key, file, contentType)
-	if err != nil {
-		log.Error("[ERROR] UploadProductImage UploadFile: " + err.Error())
-		models.SendErrorJSON(w, "menu", "upload_product_image", fmt.Errorf("failed to upload image"))
-		return
-	}
-
-	// La clé R2 est fixe par produit : remplacer une image par une autre du
-	// même format redonnerait la même URL, et navigateurs/CDN/apps
-	// continueraient d'afficher l'ancienne depuis leur cache. Le paramètre de
-	// version change l'URL à chaque upload ; GetKeyFromURL l'ignore, donc la
-	// suppression de l'ancienne image retrouve toujours la bonne clé.
-	versionedURL := publicURL + "?v=" + strconv.FormatInt(time.Now().UnixMilli(), 10)
-
-	// 9. Mettre à jour la base de données
-	if err := h.service.UpdateProductImage(ctx, token, productID, versionedURL); err != nil {
-		log.Error("[ERROR] UploadProductImage UpdateProductImage: " + err.Error())
-		models.SendErrorJSON(w, "menu", "upload_product_image", err)
-		return
-	}
-
-	// 10. Supprimer l'ancienne image de R2, seulement une fois la nouvelle en
-	// place (un échec d'upload ne laisse plus le produit sans image) et
-	// seulement si elle portait une autre clé (sinon on effacerait la nouvelle).
-	if oldImageURL != "" {
-		oldKey := h.r2Client.GetKeyFromURL(oldImageURL)
-		if oldKey != "" && oldKey != key {
-			if err := h.r2Client.DeleteFile(ctx, oldKey); err != nil {
-				// On log l'erreur mais on continue (pas bloquant)
-				log.Warn("[WARN] UploadProductImage DeleteFile (old image): " + err.Error())
-			}
-		}
-	}
-
-	// 11. Réponse
-	models.SendJSON(w, http.StatusOK, "menu", "upload_product_image", map[string]interface{}{
-		"status":    "success",
-		"photo_url": versionedURL,
-	})
-}
-
 // maxAttributeOptionImageBytes : 2 Mo, décision actée pour les vignettes
 // d'option de configuration (voir docs/KIOSK_DECISIONS.md) — plus petit que
 // les 5 Mo d'une image produit plein écran.
 const maxAttributeOptionImageBytes = 2 << 20
-
-func (h *MenuHandler) UploadAttributeOptionImage(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	log := logger.FromContext(ctx)
-
-	// 1. Auth & Validation basique
-	token := helpers.ExtractToken(r)
-	if strings.TrimSpace(token) == "" {
-		models.SendJSON(w, http.StatusUnauthorized, "menu", "upload_attribute_option_image", map[string]string{"error": "missing_token"})
-		return
-	}
-
-	user, err := middleware.UserFromContext(ctx)
-	if err != nil {
-		log.Error("[ERROR] UploadAttributeOptionImage UserFromContext: " + err.Error())
-		models.SendJSON(w, http.StatusUnauthorized, "menu", "upload_attribute_option_image", map[string]string{"error": "invalid_token"})
-		return
-	}
-
-	optionID := chi.URLParam(r, "option_id")
-	if optionID == "" {
-		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_attribute_option_image", map[string]string{"error": "missing_parameter"})
-		return
-	}
-
-	// 2. Parse multipart form (taille max 2 Mo)
-	if err := r.ParseMultipartForm(maxAttributeOptionImageBytes); err != nil {
-		log.Error("[ERROR] UploadAttributeOptionImage ParseMultipartForm: " + err.Error())
-		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_attribute_option_image", map[string]string{"error": "file_too_large_or_invalid"})
-		return
-	}
-
-	// 3. Récupérer le fichier
-	file, header, err := r.FormFile("photo")
-	if err != nil {
-		log.Error("[ERROR] UploadAttributeOptionImage FormFile: " + err.Error())
-		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_attribute_option_image", map[string]string{"error": "missing_photo_field"})
-		return
-	}
-	defer file.Close()
-
-	// 4. Valider le type MIME
-	contentType := header.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = r2.GetContentTypeFromExtension(header.Filename)
-	}
-
-	if !r2.ValidateImageType(contentType) {
-		models.SendJSON(w, http.StatusBadRequest, "menu", "upload_attribute_option_image", map[string]string{
-			"error":   "invalid_image_type",
-			"message": "Only JPEG, PNG, and WebP images are allowed",
-		})
-		return
-	}
-
-	// 5. Récupérer l'ancienne URL d'image (si elle existe)
-	oldImageURL, err := h.service.GetAttributeOptionImageURL(ctx, token, optionID)
-	if err != nil {
-		// On log l'erreur mais on continue (pas bloquant)
-		log.Warn("[WARN] UploadAttributeOptionImage GetAttributeOptionImageURL: " + err.Error())
-	}
-
-	// 6. Générer la clé R2
-	ext := r2.GetExtensionFromContentType(contentType)
-	key := r2.GenerateConfigOptionKey(user.MerchantID, optionID, ext)
-
-	// 7. Upload le nouveau fichier vers R2 — AVANT toute suppression : un échec
-	// d'upload ne doit pas laisser l'option pointer vers une image effacée.
-	publicURL, err := h.r2Client.UploadFile(ctx, key, file, contentType)
-	if err != nil {
-		log.Error("[ERROR] UploadAttributeOptionImage UploadFile: " + err.Error())
-		models.SendErrorJSON(w, "menu", "upload_attribute_option_image", fmt.Errorf("failed to upload image"))
-		return
-	}
-
-	// La clé R2 est fixe par option : remplacer une image par une autre du même
-	// format redonnerait la même URL, et le back-office (<img>), navigateurs,
-	// CDN et bornes continueraient d'afficher l'ancienne depuis leur cache. Le
-	// paramètre de version change l'URL à chaque upload ; GetKeyFromURL
-	// l'ignore. Même mécanisme que UploadProductImage.
-	versionedURL := versionedImageURL(publicURL, time.Now())
-
-	// 8. Mettre à jour la base de données
-	if err := h.service.UpdateAttributeOptionImageURL(ctx, token, optionID, versionedURL); err != nil {
-		log.Error("[ERROR] UploadAttributeOptionImage UpdateAttributeOptionImageURL: " + err.Error())
-		models.SendErrorJSON(w, "menu", "upload_attribute_option_image", err)
-		return
-	}
-
-	// 9. Supprimer l'ancienne image de R2, une fois la nouvelle en place et
-	// seulement si c'était un fichier de cette option (voir
-	// shouldDeleteOldOptionImage).
-	if oldImageURL != "" {
-		oldKey := h.r2Client.GetKeyFromURL(oldImageURL)
-		if shouldDeleteOldOptionImage(oldKey, key, user.MerchantID, optionID) {
-			if err := h.r2Client.DeleteFile(ctx, oldKey); err != nil {
-				// On log l'erreur mais on continue (pas bloquant)
-				log.Warn("[WARN] UploadAttributeOptionImage DeleteFile (old image): " + err.Error())
-			}
-		}
-	}
-
-	// 10. Réponse
-	models.SendJSON(w, http.StatusOK, "menu", "upload_attribute_option_image", map[string]interface{}{
-		"image_url": versionedURL,
-	})
-}
 
 // versionedImageURL ajoute à publicURL un paramètre de version (horodatage en
 // millisecondes) qui force navigateurs, CDN et apps à recharger l'image quand

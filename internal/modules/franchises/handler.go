@@ -9,11 +9,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
+	"welloresto-api/internal/imagepick"
 	"welloresto-api/internal/infrastructure/r2"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
@@ -29,9 +29,13 @@ const (
 )
 
 type Handler struct {
-	svc *Service
-	r2  *r2.Client
+	svc    *Service
+	r2     *r2.Client
+	picker *imagepick.Picker
 }
+
+// SetImagePicker branche le placement d'images (logo / bannière du hub).
+func (h *Handler) SetImagePicker(p *imagepick.Picker) { h.picker = p }
 
 func NewHandler(svc *Service, r2Client *r2.Client) *Handler {
 	return &Handler{svc: svc, r2: r2Client}
@@ -157,45 +161,26 @@ func (h *Handler) uploadImage(w http.ResponseWriter, r *http.Request, imageType 
 		return
 	}
 
+	// Multipart (fichier de l'appareil) ou JSON {"image_url"} : image de la
+	// banque, ou image de l'établissement courant / de la franchise, copiée
+	// (docs/banque-images.md).
 	r.Body = http.MaxBytesReader(w, r.Body, maxImageBytes+multipartOverheadBytes)
-	if err := r.ParseMultipartForm(maxImageBytes); err != nil {
-		models.SendJSON(w, http.StatusBadRequest, module, fnName, map[string]string{"error": "file_too_large_or_invalid"})
-		return
+	ownPrefixes := []string{"wello_resto_images_storage/franchises/" + franchiseID + "/"}
+	if user := middleware.GetUser(r); user != nil && user.MerchantID != "" {
+		ownPrefixes = append(ownPrefixes, r2.MerchantKeyPrefix(user.MerchantID))
 	}
-	defer func() {
-		if r.MultipartForm != nil {
-			_ = r.MultipartForm.RemoveAll()
-		}
-	}()
-
-	file, header, err := r.FormFile("photo")
+	placed, err := h.picker.Place(w, r, imagepick.Request{
+		Field:           "photo",
+		MultipartMemory: maxImageBytes,
+		OwnPrefixes:     ownPrefixes,
+		KeyFor:          func(ext string) string { return r2.GenerateFranchiseKey(franchiseID, imageType, ext) },
+	})
 	if err != nil {
-		models.SendJSON(w, http.StatusBadRequest, module, fnName, map[string]string{"error": "missing_photo_field"})
+		log.Error(fnName+" Place", zap.Error(err))
+		imagepick.Send(w, module, fnName, err)
 		return
 	}
-	defer file.Close()
-
-	contentType := header.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = r2.GetContentTypeFromExtension(header.Filename)
-	}
-	if !r2.ValidateImageType(contentType) {
-		models.SendJSON(w, http.StatusBadRequest, module, fnName, map[string]string{
-			"error":   "invalid_image_type",
-			"message": "Only JPEG, PNG, and WebP images are allowed",
-		})
-		return
-	}
-
-	key := r2.GenerateFranchiseKey(franchiseID, imageType, r2.GetExtensionFromContentType(contentType))
-	publicURL, err := h.r2.UploadFile(ctx, key, file, contentType)
-	if err != nil {
-		log.Error(fnName+" UploadFile", zap.Error(err))
-		models.SendErrorJSON(w, module, fnName, fmt.Errorf("failed to upload image"))
-		return
-	}
-	// Clé déterministe : sans ce paramètre, navigateur et CDN servent l'ancienne image.
-	publicURL = fmt.Sprintf("%s?v=%d", publicURL, time.Now().UnixNano())
+	key, publicURL := placed.Key, placed.URL
 
 	oldURL, err := h.svc.SetImage(ctx, actor, franchiseID, imageType, publicURL)
 	if err != nil {

@@ -1,0 +1,376 @@
+slug,file,category,name,tags,format,source,license,author,source_url,sort_order,enabled,priority,sourcing,search_en
+canette-de-cola-33-cl,boissons-soft/canette-de-cola-33-cl.png,boissons-soft,Canette de cola 33 cl,soda|cola|canette,square,,,,,10,true,P1,fournisseur,cola can 33cl packshot white background
+canette-de-cola-zero-sucre-33-cl,boissons-soft/canette-de-cola-zero-sucre-33-cl.png,boissons-soft,Canette de cola zéro sucre 33 cl,soda|cola|zero|light|canette,square,,,,,20,true,P1,fournisseur,zero sugar cola can
+canette-de-limonade-33-cl,boissons-soft/canette-de-limonade-33-cl.png,boissons-soft,Canette de limonade 33 cl,soda|limonade|canette,square,,,,,30,true,P1,fournisseur,lemon lime soda can
+canette-de-soda-orange-33-cl,boissons-soft/canette-de-soda-orange-33-cl.png,boissons-soft,Canette de soda orange 33 cl,soda|orange|canette,square,,,,,40,true,P1,fournisseur,orange soda can
+canette-de-the-glace-peche-33-cl,boissons-soft/canette-de-the-glace-peche-33-cl.png,boissons-soft,Canette de thé glacé pêche 33 cl,the glace|ice tea|peche|canette,square,,,,,50,true,P1,fournisseur,peach iced tea can
+canette-de-boisson-energisante-25-cl,boissons-soft/canette-de-boisson-energisante-25-cl.png,boissons-soft,Canette de boisson énergisante 25 cl,energy drink|canette,square,,,,,60,true,P1,fournisseur,energy drink can
+bouteille-de-cola-50-cl,boissons-soft/bouteille-de-cola-50-cl.png,boissons-soft,Bouteille de cola 50 cl,soda|cola|bouteille,square,,,,,70,true,P1,fournisseur,cola plastic bottle 50cl
+bouteille-de-cola-1-5-l,boissons-soft/bouteille-de-cola-1-5-l.png,boissons-soft,"Bouteille de cola 1,5 L",soda|cola|bouteille|grand format,square,,,,,80,true,P2,fournisseur,cola 1.5l bottle
+bouteille-de-soda-orange-50-cl,boissons-soft/bouteille-de-soda-orange-50-cl.png,boissons-soft,Bouteille de soda orange 50 cl,soda|orange|bouteille,square,,,,,90,true,P2,fournisseur,orange soda bottle
+bouteille-de-the-glace-50-cl,boissons-soft/bouteille-de-the-glace-50-cl.png,boissons-soft,Bouteille de thé glacé 50 cl,the glace|ice tea|bouteille,square,,,,,100,true,P2,fournisseur,iced tea bottle
+canette-de-soda-tropical-33-cl,boissons-soft/canette-de-soda-tropical-33-cl.png,boissons-soft,Canette de soda tropical 33 cl,soda|tropical|exotique|canette,square,,,,,110,true,P2,fournisseur,tropical soda can
+canette-de-ginger-ale-33-cl,boissons-soft/canette-de-ginger-ale-33-cl.png,boissons-soft,Canette de ginger ale 33 cl,ginger ale|soda|canette,square,,,,,120,true,P3,fournisseur,ginger ale can
+canette-de-tonic-33-cl,boissons-soft/canette-de-tonic-33-cl.png,boissons-soft,Canette de tonic 33 cl,tonic|soda|canette,square,,,,,130,true,P3,fournisseur,tonic water can
+bouteille-verre-de-cola-33-cl,boissons-soft/bouteille-verre-de-cola-33-cl.png,boissons-soft,Bouteille verre de cola 33 cl,soda|cola|verre,square,,,,,140,true,P2,fournisseur,glass bottle cola
+verre-de-cola-avec-glacons,boissons-soft/verre-de-cola-avec-glacons.jpg,boissons-soft,Verre de cola avec glaçons,soda|cola|verre|glacons,square,,,,,150,true,P1,libre-cc0,glass of cola ice cubes
+soda-maison-au-citron,boissons-soft/soda-maison-au-citron.jpg,boissons-soft,Soda maison au citron,soda|limonade|maison|citron,square,,,,,160,true,P3,ia-ou-photographe,homemade lemonade glass
+canette-de-soda-sans-marque,boissons-soft/canette-de-soda-sans-marque.jpg,boissons-soft,Canette de soda sans marque,soda|canette|generique,square,,,,,170,true,P1,ia-ou-photographe,blank aluminum can mockup
+bouteille-d-eau-plate-50-cl,eaux/bouteille-d-eau-plate-50-cl.png,eaux,Bouteille d'eau plate 50 cl,eau|plate|bouteille,square,,,,,10,true,P1,fournisseur,still water bottle 50cl
+bouteille-d-eau-gazeuse-50-cl,eaux/bouteille-d-eau-gazeuse-50-cl.png,eaux,Bouteille d'eau gazeuse 50 cl,eau|gazeuse|petillante|bouteille,square,,,,,20,true,P1,fournisseur,sparkling water bottle
+bouteille-d-eau-plate-1-l-verre,eaux/bouteille-d-eau-plate-1-l-verre.png,eaux,Bouteille d'eau plate 1 L verre,eau|plate|verre|restaurant,square,,,,,30,true,P2,fournisseur,glass bottle still water restaurant
+bouteille-d-eau-gazeuse-1-l-verre,eaux/bouteille-d-eau-gazeuse-1-l-verre.png,eaux,Bouteille d'eau gazeuse 1 L verre,eau|gazeuse|verre|restaurant,square,,,,,40,true,P2,fournisseur,glass bottle sparkling water
+eau-aromatisee,eaux/eau-aromatisee.png,eaux,Eau aromatisée,eau|aromatisee|fruit,square,,,,,50,true,P3,fournisseur,flavored water bottle
+carafe-d-eau,eaux/carafe-d-eau.jpg,eaux,Carafe d'eau,eau|carafe,square,,,,,60,true,P2,libre-cc0,water carafe table
+verre-d-eau-citronnee,eaux/verre-d-eau-citronnee.jpg,eaux,Verre d'eau citronnée,eau|citron|verre,square,,,,,70,true,P3,libre-cc0,glass of water lemon slice
+jus-d-orange-presse,jus/jus-d-orange-presse.jpg,jus,Jus d'orange pressé,jus|orange|frais|presse,square,,,,,10,true,P1,libre-cc0,fresh orange juice glass
+bouteille-de-jus-d-orange-25-cl,jus/bouteille-de-jus-d-orange-25-cl.png,jus,Bouteille de jus d'orange 25 cl,jus|orange|bouteille,square,,,,,20,true,P1,fournisseur,orange juice small bottle
+jus-de-pomme,jus/jus-de-pomme.jpg,jus,Jus de pomme,jus|pomme,square,,,,,30,true,P1,libre-cc0,apple juice glass
+jus-multifruit,jus/jus-multifruit.png,jus,Jus multifruit,jus|multifruit|exotique,square,,,,,40,true,P2,fournisseur,multifruit juice
+jus-d-ananas,jus/jus-d-ananas.jpg,jus,Jus d'ananas,jus|ananas,square,,,,,50,true,P2,libre-cc0,pineapple juice glass
+jus-de-tomate,jus/jus-de-tomate.jpg,jus,Jus de tomate,jus|tomate,square,,,,,60,true,P3,libre-cc0,tomato juice glass
+citronnade-maison,jus/citronnade-maison.jpg,jus,Citronnade maison,citronnade|limonade|citron|maison,square,,,,,70,true,P2,libre-cc0,homemade lemonade pitcher
+smoothie-fraise-banane,jus/smoothie-fraise-banane.jpg,jus,Smoothie fraise banane,smoothie|fraise|banane,square,,,,,80,true,P2,libre-cc0,strawberry banana smoothie
+smoothie-mangue,jus/smoothie-mangue.jpg,jus,Smoothie mangue,smoothie|mangue|exotique,square,,,,,90,true,P2,libre-cc0,mango smoothie
+smoothie-vert,jus/smoothie-vert.jpg,jus,Smoothie vert,smoothie|detox|epinard|kiwi,square,,,,,100,true,P3,libre-cc0,green smoothie
+milkshake-vanille,jus/milkshake-vanille.jpg,jus,Milkshake vanille,milkshake|vanille,square,,,,,110,true,P1,libre-cc0,vanilla milkshake
+milkshake-chocolat,jus/milkshake-chocolat.jpg,jus,Milkshake chocolat,milkshake|chocolat,square,,,,,120,true,P1,libre-cc0,chocolate milkshake
+milkshake-fraise,jus/milkshake-fraise.jpg,jus,Milkshake fraise,milkshake|fraise,square,,,,,130,true,P2,libre-cc0,strawberry milkshake
+bubble-tea,jus/bubble-tea.jpg,jus,Bubble tea,bubble tea|the|perles de tapioca,square,,,,,140,true,P2,libre-cc0,bubble tea
+expresso,boissons-chaudes/expresso.jpg,boissons-chaudes,Expresso,cafe|expresso|espresso,square,,,,,10,true,P1,libre-cc0,espresso cup
+cafe-allonge,boissons-chaudes/cafe-allonge.jpg,boissons-chaudes,Café allongé,cafe|allonge|americano,square,,,,,20,true,P1,libre-cc0,americano coffee cup
+cappuccino,boissons-chaudes/cappuccino.jpg,boissons-chaudes,Cappuccino,cafe|cappuccino|lait,square,,,,,30,true,P1,libre-cc0,cappuccino latte art
+cafe-latte,boissons-chaudes/cafe-latte.jpg,boissons-chaudes,Café latte,cafe|latte|lait,square,,,,,40,true,P2,libre-cc0,caffe latte glass
+cafe-creme,boissons-chaudes/cafe-creme.jpg,boissons-chaudes,Café crème,cafe|creme|noisette,square,,,,,50,true,P2,libre-cc0,cafe creme
+chocolat-chaud,boissons-chaudes/chocolat-chaud.jpg,boissons-chaudes,Chocolat chaud,chocolat chaud|lait,square,,,,,60,true,P1,libre-cc0,hot chocolate mug
+the-noir,boissons-chaudes/the-noir.jpg,boissons-chaudes,Thé noir,the|infusion,square,,,,,70,true,P1,libre-cc0,black tea cup
+the-vert-a-la-menthe,boissons-chaudes/the-vert-a-la-menthe.jpg,boissons-chaudes,Thé vert à la menthe,the|menthe|the vert,square,,,,,80,true,P2,libre-cc0,moroccan mint tea glass
+infusion,boissons-chaudes/infusion.jpg,boissons-chaudes,Infusion,infusion|tisane|verveine,square,,,,,90,true,P2,libre-cc0,herbal tea cup
+cafe-a-emporter,boissons-chaudes/cafe-a-emporter.jpg,boissons-chaudes,Café à emporter,cafe|a emporter|gobelet,square,,,,,100,true,P2,libre-cc0,takeaway coffee cup
+matcha-latte,boissons-chaudes/matcha-latte.jpg,boissons-chaudes,Matcha latte,matcha|latte|the vert,square,,,,,110,true,P3,libre-cc0,matcha latte
+irish-coffee,boissons-chaudes/irish-coffee.jpg,boissons-chaudes,Irish coffee,cafe|irish coffee|whisky,square,,,,,120,true,P3,libre-cc0,irish coffee glass
+demi-de-biere-blonde-pression,bieres/demi-de-biere-blonde-pression.jpg,bieres,Demi de bière blonde pression,biere|blonde|pression|demi,square,,,,,10,true,P1,libre-cc0,glass of lager beer
+pinte-de-biere-blonde,bieres/pinte-de-biere-blonde.jpg,bieres,Pinte de bière blonde,biere|blonde|pinte,square,,,,,20,true,P1,libre-cc0,pint of lager
+biere-ambree,bieres/biere-ambree.jpg,bieres,Bière ambrée,biere|ambree,square,,,,,30,true,P2,libre-cc0,amber beer glass
+biere-blanche,bieres/biere-blanche.jpg,bieres,Bière blanche,biere|blanche,square,,,,,40,true,P2,libre-cc0,wheat beer glass
+biere-brune,bieres/biere-brune.jpg,bieres,Bière brune,biere|brune|stout,square,,,,,50,true,P3,libre-cc0,stout beer glass
+ipa,bieres/ipa.jpg,bieres,IPA,biere|ipa|craft,square,,,,,60,true,P2,libre-cc0,ipa beer glass
+bouteille-de-biere-blonde-33-cl,bieres/bouteille-de-biere-blonde-33-cl.png,bieres,Bouteille de bière blonde 33 cl,biere|blonde|bouteille,square,,,,,70,true,P1,fournisseur,beer bottle 33cl
+canette-de-biere-50-cl,bieres/canette-de-biere-50-cl.png,bieres,Canette de bière 50 cl,biere|canette,square,,,,,80,true,P2,fournisseur,beer can
+biere-sans-alcool,bieres/biere-sans-alcool.png,bieres,Bière sans alcool,biere|sans alcool,square,,,,,90,true,P2,fournisseur,alcohol free beer bottle
+panache,bieres/panache.jpg,bieres,Panaché,biere|panache|limonade,square,,,,,100,true,P3,libre-cc0,shandy beer
+cidre-brut,bieres/cidre-brut.jpg,bieres,Cidre brut,cidre|brut|bolee,square,,,,,110,true,P2,libre-cc0,cider bowl brittany
+bouteille-de-cidre,bieres/bouteille-de-cidre.png,bieres,Bouteille de cidre,cidre|bouteille,square,,,,,120,true,P3,fournisseur,cider bottle
+verre-de-vin-rouge,vins/verre-de-vin-rouge.jpg,vins,Verre de vin rouge,vin|rouge|verre,square,,,,,10,true,P1,libre-cc0,glass of red wine
+verre-de-vin-blanc,vins/verre-de-vin-blanc.jpg,vins,Verre de vin blanc,vin|blanc|verre,square,,,,,20,true,P1,libre-cc0,glass of white wine
+verre-de-vin-rose,vins/verre-de-vin-rose.jpg,vins,Verre de vin rosé,vin|rose|verre,square,,,,,30,true,P1,libre-cc0,glass of rose wine
+bouteille-de-vin-rouge,vins/bouteille-de-vin-rouge.png,vins,Bouteille de vin rouge,vin|rouge|bouteille,square,,,,,40,true,P1,fournisseur,red wine bottle
+bouteille-de-vin-blanc,vins/bouteille-de-vin-blanc.png,vins,Bouteille de vin blanc,vin|blanc|bouteille,square,,,,,50,true,P1,fournisseur,white wine bottle
+bouteille-de-vin-rose,vins/bouteille-de-vin-rose.png,vins,Bouteille de vin rosé,vin|rose|bouteille,square,,,,,60,true,P1,fournisseur,rose wine bottle
+pichet-de-vin-rouge,vins/pichet-de-vin-rouge.jpg,vins,Pichet de vin rouge,vin|rouge|pichet,square,,,,,70,true,P2,libre-cc0,carafe red wine
+coupe-de-champagne,vins/coupe-de-champagne.jpg,vins,Coupe de champagne,champagne|coupe|bulles,square,,,,,80,true,P1,libre-cc0,champagne flute
+bouteille-de-champagne,vins/bouteille-de-champagne.png,vins,Bouteille de champagne,champagne|bouteille,square,,,,,90,true,P2,fournisseur,champagne bottle
+prosecco,vins/prosecco.png,vins,Prosecco,prosecco|petillant|bulles,square,,,,,100,true,P3,fournisseur,prosecco glass
+kir,vins/kir.jpg,vins,Kir,kir|aperitif|vin blanc|cassis,square,,,,,110,true,P3,libre-cc0,kir cassis glass
+mojito,aperitifs-cocktails/mojito.jpg,aperitifs-cocktails,Mojito,cocktail|mojito|menthe|rhum,square,,,,,10,true,P1,libre-cc0,mojito cocktail
+virgin-mojito,aperitifs-cocktails/virgin-mojito.jpg,aperitifs-cocktails,Virgin mojito,cocktail|sans alcool|mojito|mocktail,square,,,,,20,true,P1,libre-cc0,virgin mojito
+spritz,aperitifs-cocktails/spritz.jpg,aperitifs-cocktails,Spritz,cocktail|spritz|aperitif,square,,,,,30,true,P1,libre-cc0,aperol spritz
+pina-colada,aperitifs-cocktails/pina-colada.jpg,aperitifs-cocktails,Piña colada,cocktail|pina colada|coco|ananas,square,,,,,40,true,P2,libre-cc0,pina colada
+margarita,aperitifs-cocktails/margarita.jpg,aperitifs-cocktails,Margarita,cocktail|margarita|tequila,square,,,,,50,true,P2,libre-cc0,margarita cocktail
+gin-tonic,aperitifs-cocktails/gin-tonic.jpg,aperitifs-cocktails,Gin tonic,cocktail|gin|tonic,square,,,,,60,true,P2,libre-cc0,gin tonic glass
+cosmopolitan,aperitifs-cocktails/cosmopolitan.jpg,aperitifs-cocktails,Cosmopolitan,cocktail|cosmopolitan|vodka,square,,,,,70,true,P3,libre-cc0,cosmopolitan cocktail
+sex-on-the-beach,aperitifs-cocktails/sex-on-the-beach.jpg,aperitifs-cocktails,Sex on the beach,cocktail|vodka|peche,square,,,,,80,true,P3,libre-cc0,sex on the beach cocktail
+caipirinha,aperitifs-cocktails/caipirinha.jpg,aperitifs-cocktails,Caipirinha,cocktail|caipirinha|citron vert,square,,,,,90,true,P3,libre-cc0,caipirinha
+pastis,aperitifs-cocktails/pastis.jpg,aperitifs-cocktails,Pastis,aperitif|pastis|anise,square,,,,,100,true,P2,libre-cc0,pastis glass water
+whisky,aperitifs-cocktails/whisky.jpg,aperitifs-cocktails,Whisky,spiritueux|whisky|glacon,square,,,,,110,true,P2,libre-cc0,whisky glass ice
+rhum-arrange,aperitifs-cocktails/rhum-arrange.jpg,aperitifs-cocktails,Rhum arrangé,spiritueux|rhum|arrange,square,,,,,120,true,P3,libre-cc0,rum infused fruit jar
+cocktail-sans-alcool-fruits-rouges,aperitifs-cocktails/cocktail-sans-alcool-fruits-rouges.jpg,aperitifs-cocktails,Cocktail sans alcool fruits rouges,mocktail|sans alcool|fruits rouges,square,,,,,130,true,P2,libre-cc0,berry mocktail
+planche-aperitive,aperitifs-cocktails/planche-aperitive.jpg,aperitifs-cocktails,Planche apéritive,aperitif|planche|charcuterie|fromage,square,,,,,140,true,P1,libre-cc0,charcuterie board
+cheeseburger,burgers/cheeseburger.jpg,burgers,Cheeseburger,burger|cheese|fromage|boeuf,square,,,,,10,true,P1,ia-ou-photographe,cheeseburger
+double-cheeseburger,burgers/double-cheeseburger.jpg,burgers,Double cheeseburger,burger|double|cheese|boeuf,square,,,,,20,true,P1,ia-ou-photographe,double cheeseburger
+burger-classique,burgers/burger-classique.jpg,burgers,Burger classique,burger|boeuf|salade|tomate,square,,,,,30,true,P1,ia-ou-photographe,classic hamburger
+burger-au-bacon,burgers/burger-au-bacon.jpg,burgers,Burger au bacon,burger|bacon|boeuf,square,,,,,40,true,P1,ia-ou-photographe,bacon burger
+burger-au-poulet-croustillant,burgers/burger-au-poulet-croustillant.jpg,burgers,Burger au poulet croustillant,burger|poulet|crispy,square,,,,,50,true,P1,ia-ou-photographe,crispy chicken burger
+burger-vegetarien,burgers/burger-vegetarien.jpg,burgers,Burger végétarien,burger|vegetarien|veggie,square,,,,,60,true,P1,ia-ou-photographe,veggie burger
+burger-au-chevre,burgers/burger-au-chevre.jpg,burgers,Burger au chèvre,burger|chevre|miel,square,,,,,70,true,P2,ia-ou-photographe,goat cheese burger
+burger-raclette,burgers/burger-raclette.jpg,burgers,Burger raclette,burger|raclette|fromage,square,,,,,80,true,P2,ia-ou-photographe,raclette burger
+burger-au-poisson,burgers/burger-au-poisson.jpg,burgers,Burger au poisson,burger|poisson|fish,square,,,,,90,true,P2,ia-ou-photographe,fish burger
+smash-burger,burgers/smash-burger.jpg,burgers,Smash burger,burger|smash|boeuf,square,,,,,100,true,P2,ia-ou-photographe,smash burger
+burger-gourmet,burgers/burger-gourmet.jpg,burgers,Burger gourmet,burger|gourmet|brioche,square,,,,,110,true,P2,ia-ou-photographe,gourmet burger brioche
+burger-enfant,burgers/burger-enfant.jpg,burgers,Burger enfant,burger|enfant|mini,square,,,,,120,true,P2,ia-ou-photographe,kids mini burger
+menu-burger-frites-boisson,burgers/menu-burger-frites-boisson.jpg,burgers,Menu burger frites boisson,menu|burger|frites|boisson,square,,,,,130,true,P1,ia-ou-photographe,burger fries drink combo
+jambon-beurre,sandwichs/jambon-beurre.jpg,sandwichs,Jambon-beurre,sandwich|baguette|jambon|beurre,square,,,,,10,true,P1,ia-ou-photographe,ham butter baguette sandwich
+sandwich-poulet-crudites,sandwichs/sandwich-poulet-crudites.jpg,sandwichs,Sandwich poulet crudités,sandwich|poulet|crudites,square,,,,,20,true,P1,ia-ou-photographe,chicken sandwich baguette
+sandwich-thon-crudites,sandwichs/sandwich-thon-crudites.jpg,sandwichs,Sandwich thon crudités,sandwich|thon|crudites,square,,,,,30,true,P2,ia-ou-photographe,tuna sandwich baguette
+croque-monsieur,sandwichs/croque-monsieur.jpg,sandwichs,Croque-monsieur,croque monsieur|jambon|fromage,square,,,,,40,true,P1,libre-cc0,croque monsieur
+croque-madame,sandwichs/croque-madame.jpg,sandwichs,Croque-madame,croque madame|oeuf,square,,,,,50,true,P2,libre-cc0,croque madame
+panini-jambon-fromage,sandwichs/panini-jambon-fromage.jpg,sandwichs,Panini jambon fromage,panini|jambon|fromage,square,,,,,60,true,P1,ia-ou-photographe,panini ham cheese
+panini-poulet,sandwichs/panini-poulet.jpg,sandwichs,Panini poulet,panini|poulet,square,,,,,70,true,P2,ia-ou-photographe,chicken panini
+club-sandwich,sandwichs/club-sandwich.jpg,sandwichs,Club sandwich,club sandwich|poulet|bacon,square,,,,,80,true,P1,libre-cc0,club sandwich
+bagel-saumon,sandwichs/bagel-saumon.jpg,sandwichs,Bagel saumon,bagel|saumon|cream cheese,square,,,,,90,true,P2,libre-cc0,salmon bagel
+hot-dog,sandwichs/hot-dog.jpg,sandwichs,Hot-dog,hot dog|saucisse,square,,,,,100,true,P1,libre-cc0,hot dog
+sandwich-americain,sandwichs/sandwich-americain.jpg,sandwichs,Sandwich américain,americain|frites|steak|baguette,square,,,,,110,true,P2,ia-ou-photographe,french americain sandwich fries baguette
+banh-mi,sandwichs/banh-mi.jpg,sandwichs,Bánh mì,banh mi|vietnamien|sandwich,square,,,,,120,true,P3,libre-cc0,banh mi
+wrap-vegetarien,sandwichs/wrap-vegetarien.jpg,sandwichs,Wrap végétarien,wrap|vegetarien|legumes,square,,,,,130,true,P2,libre-cc0,veggie wrap
+sandwich-triangle,sandwichs/sandwich-triangle.jpg,sandwichs,Sandwich triangle,sandwich|triangle|pain de mie,square,,,,,140,true,P3,libre-cc0,triangle sandwich
+pizza-margherita,pizzas/pizza-margherita.jpg,pizzas,Pizza margherita,pizza|margherita|tomate|mozzarella,square,,,,,10,true,P1,libre-cc0,pizza margherita
+pizza-reine,pizzas/pizza-reine.jpg,pizzas,Pizza reine,pizza|reine|jambon|champignons,square,,,,,20,true,P1,ia-ou-photographe,ham mushroom pizza
+pizza-4-fromages,pizzas/pizza-4-fromages.jpg,pizzas,Pizza 4 fromages,pizza|4 fromages|fromage,square,,,,,30,true,P1,ia-ou-photographe,four cheese pizza
+pizza-pepperoni,pizzas/pizza-pepperoni.jpg,pizzas,Pizza pepperoni,pizza|pepperoni|chorizo,square,,,,,40,true,P1,libre-cc0,pepperoni pizza
+pizza-vegetarienne,pizzas/pizza-vegetarienne.jpg,pizzas,Pizza végétarienne,pizza|vegetarienne|legumes,square,,,,,50,true,P1,ia-ou-photographe,vegetable pizza
+pizza-orientale,pizzas/pizza-orientale.jpg,pizzas,Pizza orientale,pizza|merguez|poivrons,square,,,,,60,true,P2,ia-ou-photographe,merguez pizza
+pizza-calzone,pizzas/pizza-calzone.jpg,pizzas,Pizza calzone,pizza|calzone,square,,,,,70,true,P2,libre-cc0,calzone
+pizza-saumon,pizzas/pizza-saumon.jpg,pizzas,Pizza saumon,pizza|saumon|creme,square,,,,,80,true,P2,ia-ou-photographe,salmon pizza white base
+pizza-chevre-miel,pizzas/pizza-chevre-miel.jpg,pizzas,Pizza chèvre miel,pizza|chevre|miel,square,,,,,90,true,P2,ia-ou-photographe,goat cheese honey pizza
+pizza-poulet-barbecue,pizzas/pizza-poulet-barbecue.jpg,pizzas,Pizza poulet barbecue,pizza|poulet|barbecue,square,,,,,100,true,P2,ia-ou-photographe,bbq chicken pizza
+pizza-burrata,pizzas/pizza-burrata.jpg,pizzas,Pizza burrata,pizza|burrata|roquette,square,,,,,110,true,P3,ia-ou-photographe,burrata pizza
+part-de-pizza,pizzas/part-de-pizza.jpg,pizzas,Part de pizza,pizza|part|slice,square,,,,,120,true,P2,libre-cc0,pizza slice
+pizza-a-emporter-dans-sa-boite,pizzas/pizza-a-emporter-dans-sa-boite.jpg,pizzas,Pizza à emporter dans sa boîte,pizza|a emporter|boite,square,,,,,130,true,P2,ia-ou-photographe,pizza in box
+tacos-francais,tacos-wraps/tacos-francais.jpg,tacos-wraps,Tacos français,tacos|french tacos|frites|sauce fromagere,square,,,,,10,true,P1,ia-ou-photographe,french tacos
+kebab-assiette,tacos-wraps/kebab-assiette.jpg,tacos-wraps,Kebab assiette,kebab|assiette|frites,square,,,,,20,true,P1,ia-ou-photographe,kebab plate fries
+kebab-sandwich-pain,tacos-wraps/kebab-sandwich-pain.jpg,tacos-wraps,Kebab sandwich pain,kebab|sandwich|pain,square,,,,,30,true,P1,ia-ou-photographe,doner kebab sandwich
+durum,tacos-wraps/durum.jpg,tacos-wraps,Durum,durum|kebab|galette,square,,,,,40,true,P1,ia-ou-photographe,durum wrap
+wrap-poulet,tacos-wraps/wrap-poulet.jpg,tacos-wraps,Wrap poulet,wrap|poulet,square,,,,,50,true,P1,libre-cc0,chicken wrap
+burrito,tacos-wraps/burrito.jpg,tacos-wraps,Burrito,burrito|mexicain,square,,,,,60,true,P2,libre-cc0,burrito
+tacos-mexicains,tacos-wraps/tacos-mexicains.jpg,tacos-wraps,Tacos mexicains,tacos|mexicain|tortilla,square,,,,,70,true,P2,libre-cc0,mexican tacos
+quesadilla,tacos-wraps/quesadilla.jpg,tacos-wraps,Quesadilla,quesadilla|fromage|tortilla,square,,,,,80,true,P2,libre-cc0,quesadilla
+nachos,tacos-wraps/nachos.jpg,tacos-wraps,Nachos,nachos|guacamole|fromage,square,,,,,90,true,P2,libre-cc0,nachos cheese
+falafel,tacos-wraps/falafel.jpg,tacos-wraps,Falafel,falafel|pita|vegetarien,square,,,,,100,true,P2,libre-cc0,falafel pita
+shawarma,tacos-wraps/shawarma.jpg,tacos-wraps,Shawarma,shawarma|poulet|pita,square,,,,,110,true,P2,libre-cc0,chicken shawarma
+salade-cesar,salades/salade-cesar.jpg,salades,Salade César,salade|cesar|poulet|parmesan,square,,,,,10,true,P1,libre-cc0,caesar salad
+salade-nicoise,salades/salade-nicoise.jpg,salades,Salade niçoise,salade|nicoise|thon|oeuf,square,,,,,20,true,P2,libre-cc0,salade nicoise
+salade-de-chevre-chaud,salades/salade-de-chevre-chaud.jpg,salades,Salade de chèvre chaud,salade|chevre chaud,square,,,,,30,true,P1,libre-cc0,warm goat cheese salad
+salade-grecque,salades/salade-grecque.jpg,salades,Salade grecque,salade|grecque|feta,square,,,,,40,true,P2,libre-cc0,greek salad
+salade-composee,salades/salade-composee.jpg,salades,Salade composée,salade|composee|crudites,square,,,,,50,true,P2,libre-cc0,mixed salad
+poke-bowl-saumon,salades/poke-bowl-saumon.jpg,salades,Poke bowl saumon,poke|bowl|saumon,square,,,,,60,true,P1,libre-cc0,salmon poke bowl
+poke-bowl-poulet,salades/poke-bowl-poulet.jpg,salades,Poke bowl poulet,poke|bowl|poulet,square,,,,,70,true,P2,libre-cc0,chicken poke bowl
+buddha-bowl,salades/buddha-bowl.jpg,salades,Buddha bowl,bowl|vegetarien|vegan,square,,,,,80,true,P2,libre-cc0,buddha bowl
+taboule,salades/taboule.jpg,salades,Taboulé,taboule|semoule,square,,,,,90,true,P3,libre-cc0,tabbouleh
+salade-de-pates,salades/salade-de-pates.jpg,salades,Salade de pâtes,salade|pates,square,,,,,100,true,P3,libre-cc0,pasta salad
+spaghetti-bolognaise,pates/spaghetti-bolognaise.jpg,pates,Spaghetti bolognaise,pates|spaghetti|bolognaise,square,,,,,10,true,P1,libre-cc0,spaghetti bolognese
+pates-carbonara,pates/pates-carbonara.jpg,pates,Pâtes carbonara,pates|carbonara|lardons,square,,,,,20,true,P1,libre-cc0,pasta carbonara
+lasagnes,pates/lasagnes.jpg,pates,Lasagnes,lasagnes|boeuf|bechamel,square,,,,,30,true,P1,libre-cc0,lasagna
+penne-arrabbiata,pates/penne-arrabbiata.jpg,pates,Penne arrabbiata,pates|penne|arrabbiata|tomate,square,,,,,40,true,P2,libre-cc0,penne arrabbiata
+pates-au-pesto,pates/pates-au-pesto.jpg,pates,Pâtes au pesto,pates|pesto|basilic,square,,,,,50,true,P2,libre-cc0,pesto pasta
+tagliatelles-au-saumon,pates/tagliatelles-au-saumon.jpg,pates,Tagliatelles au saumon,pates|tagliatelles|saumon|creme,square,,,,,60,true,P2,libre-cc0,salmon tagliatelle
+raviolis,pates/raviolis.jpg,pates,Raviolis,raviolis|pates fraiches,square,,,,,70,true,P2,libre-cc0,ravioli
+gnocchis,pates/gnocchis.jpg,pates,Gnocchis,gnocchis|pates,square,,,,,80,true,P3,libre-cc0,gnocchi
+risotto-aux-champignons,pates/risotto-aux-champignons.jpg,pates,Risotto aux champignons,risotto|champignons,square,,,,,90,true,P2,libre-cc0,mushroom risotto
+mac-and-cheese,pates/mac-and-cheese.jpg,pates,Mac and cheese,pates|fromage|gratin,square,,,,,100,true,P3,libre-cc0,mac and cheese
+plat-du-jour,plats/plat-du-jour.jpg,plats,Plat du jour,plat du jour|assiette,square,,,,,10,true,P1,ia-ou-photographe,plate of the day restaurant
+couscous,plats/couscous.jpg,plats,Couscous,couscous|semoule|legumes|merguez,square,,,,,20,true,P1,libre-cc0,couscous
+tajine,plats/tajine.jpg,plats,Tajine,tajine|poulet|citron,square,,,,,30,true,P2,libre-cc0,tagine
+paella,plats/paella.jpg,plats,Paella,paella|riz|fruits de mer,square,,,,,40,true,P2,libre-cc0,paella
+hachis-parmentier,plats/hachis-parmentier.jpg,plats,Hachis parmentier,hachis parmentier|puree,square,,,,,50,true,P2,libre-cc0,cottage pie
+blanquette-de-veau,plats/blanquette-de-veau.jpg,plats,Blanquette de veau,blanquette|veau,square,,,,,60,true,P3,libre-cc0,blanquette de veau
+boeuf-bourguignon,plats/boeuf-bourguignon.jpg,plats,Boeuf bourguignon,boeuf bourguignon|mijote,square,,,,,70,true,P2,libre-cc0,beef bourguignon
+chili-con-carne,plats/chili-con-carne.jpg,plats,Chili con carne,chili|haricots|boeuf,square,,,,,80,true,P2,libre-cc0,chili con carne
+curry-de-poulet,plats/curry-de-poulet.jpg,plats,Curry de poulet,curry|poulet|riz,square,,,,,90,true,P2,libre-cc0,chicken curry
+quiche-lorraine,plats/quiche-lorraine.jpg,plats,Quiche lorraine,quiche|lardons,square,,,,,100,true,P2,libre-cc0,quiche lorraine
+omelette,plats/omelette.jpg,plats,Omelette,omelette|oeufs,square,,,,,110,true,P2,libre-cc0,omelette
+galette-complete,plats/galette-complete.jpg,plats,Galette complète,galette|sarrasin|jambon|oeuf|fromage,square,,,,,120,true,P1,libre-cc0,buckwheat galette complete
+tartiflette,plats/tartiflette.jpg,plats,Tartiflette,tartiflette|reblochon|pommes de terre,square,,,,,130,true,P2,libre-cc0,tartiflette
+moules-frites,plats/moules-frites.jpg,plats,Moules-frites,moules|frites,square,,,,,140,true,P2,libre-cc0,mussels and fries
+soupe-du-jour,plats/soupe-du-jour.jpg,plats,Soupe du jour,soupe|veloute,square,,,,,150,true,P2,libre-cc0,vegetable soup bowl
+entrecote-grillee,viandes-grillades/entrecote-grillee.jpg,viandes-grillades,Entrecôte grillée,viande|entrecote|boeuf|grill,square,,,,,10,true,P1,libre-cc0,grilled ribeye steak
+steak-frites,viandes-grillades/steak-frites.jpg,viandes-grillades,Steak frites,steak|frites|boeuf,square,,,,,20,true,P1,libre-cc0,steak frites
+bavette-a-l-echalote,viandes-grillades/bavette-a-l-echalote.jpg,viandes-grillades,Bavette à l'échalote,bavette|echalote|boeuf,square,,,,,30,true,P2,libre-cc0,flank steak shallot
+tartare-de-boeuf,viandes-grillades/tartare-de-boeuf.jpg,viandes-grillades,Tartare de boeuf,tartare|boeuf|cru,square,,,,,40,true,P2,libre-cc0,beef tartare
+poulet-roti,viandes-grillades/poulet-roti.jpg,viandes-grillades,Poulet rôti,poulet|roti,square,,,,,50,true,P1,libre-cc0,roast chicken
+tenders-de-poulet,viandes-grillades/tenders-de-poulet.jpg,viandes-grillades,Tenders de poulet,poulet|tenders|pane,square,,,,,60,true,P1,ia-ou-photographe,chicken tenders
+nuggets-de-poulet,viandes-grillades/nuggets-de-poulet.jpg,viandes-grillades,Nuggets de poulet,poulet|nuggets,square,,,,,70,true,P1,ia-ou-photographe,chicken nuggets
+wings-de-poulet,viandes-grillades/wings-de-poulet.jpg,viandes-grillades,Wings de poulet,poulet|wings|ailes|barbecue,square,,,,,80,true,P1,libre-cc0,chicken wings
+brochettes-de-poulet,viandes-grillades/brochettes-de-poulet.jpg,viandes-grillades,Brochettes de poulet,brochettes|poulet|grill,square,,,,,90,true,P2,libre-cc0,chicken skewers
+cotes-d-agneau,viandes-grillades/cotes-d-agneau.jpg,viandes-grillades,Côtes d'agneau,agneau|cotes|grill,square,,,,,100,true,P3,libre-cc0,lamb chops
+travers-de-porc,viandes-grillades/travers-de-porc.jpg,viandes-grillades,Travers de porc,porc|ribs|barbecue,square,,,,,110,true,P2,libre-cc0,bbq pork ribs
+magret-de-canard,viandes-grillades/magret-de-canard.jpg,viandes-grillades,Magret de canard,canard|magret,square,,,,,120,true,P2,libre-cc0,duck breast
+merguez-grillees,viandes-grillades/merguez-grillees.jpg,viandes-grillades,Merguez grillées,merguez|grill,square,,,,,130,true,P2,libre-cc0,grilled merguez
+escalope-milanaise,viandes-grillades/escalope-milanaise.jpg,viandes-grillades,Escalope milanaise,escalope|panee|milanaise,square,,,,,140,true,P3,libre-cc0,breaded escalope
+fish-and-chips,poissons/fish-and-chips.jpg,poissons,Fish and chips,poisson|fish and chips|frites,square,,,,,10,true,P1,libre-cc0,fish and chips
+pave-de-saumon,poissons/pave-de-saumon.jpg,poissons,Pavé de saumon,saumon|poisson,square,,,,,20,true,P1,libre-cc0,salmon fillet plate
+filet-de-cabillaud,poissons/filet-de-cabillaud.jpg,poissons,Filet de cabillaud,cabillaud|poisson,square,,,,,30,true,P2,libre-cc0,cod fillet
+crevettes-sautees,poissons/crevettes-sautees.jpg,poissons,Crevettes sautées,crevettes|fruits de mer,square,,,,,40,true,P2,libre-cc0,sauteed shrimp
+calamars-frits,poissons/calamars-frits.jpg,poissons,Calamars frits,calamars|frits|fruits de mer,square,,,,,50,true,P2,libre-cc0,fried calamari
+plateau-de-fruits-de-mer,poissons/plateau-de-fruits-de-mer.jpg,poissons,Plateau de fruits de mer,fruits de mer|huitres|plateau,square,,,,,60,true,P3,libre-cc0,seafood platter
+huitres,poissons/huitres.jpg,poissons,Huîtres,huitres|fruits de mer,square,,,,,70,true,P3,libre-cc0,oysters
+tartare-de-saumon,poissons/tartare-de-saumon.jpg,poissons,Tartare de saumon,tartare|saumon|cru,square,,,,,80,true,P2,libre-cc0,salmon tartare
+bouillabaisse,poissons/bouillabaisse.jpg,poissons,Bouillabaisse,bouillabaisse|soupe de poisson,square,,,,,90,true,P3,libre-cc0,bouillabaisse
+sushis-saumon,asiatique/sushis-saumon.jpg,asiatique,Sushis saumon,sushi|saumon|japonais,square,,,,,10,true,P1,libre-cc0,salmon nigiri sushi
+makis,asiatique/makis.jpg,asiatique,Makis,maki|sushi|japonais,square,,,,,20,true,P1,libre-cc0,maki rolls
+california-rolls,asiatique/california-rolls.jpg,asiatique,California rolls,california|sushi|avocat,square,,,,,30,true,P1,libre-cc0,california roll
+sashimis,asiatique/sashimis.jpg,asiatique,Sashimis,sashimi|saumon|thon|cru,square,,,,,40,true,P2,libre-cc0,sashimi platter
+plateau-de-sushis,asiatique/plateau-de-sushis.jpg,asiatique,Plateau de sushis,sushi|plateau|assortiment,square,,,,,50,true,P1,libre-cc0,sushi platter
+brochettes-yakitori,asiatique/brochettes-yakitori.jpg,asiatique,Brochettes yakitori,yakitori|brochettes|japonais,square,,,,,60,true,P2,libre-cc0,yakitori
+ramen,asiatique/ramen.jpg,asiatique,Ramen,ramen|nouilles|bouillon,square,,,,,70,true,P1,libre-cc0,ramen bowl
+pad-thai,asiatique/pad-thai.jpg,asiatique,Pad thaï,pad thai|nouilles|thai,square,,,,,80,true,P1,libre-cc0,pad thai
+nouilles-sautees,asiatique/nouilles-sautees.jpg,asiatique,Nouilles sautées,nouilles|sautees|wok,square,,,,,90,true,P1,libre-cc0,stir fried noodles
+riz-cantonais,asiatique/riz-cantonais.jpg,asiatique,Riz cantonais,riz|cantonais|chinois,square,,,,,100,true,P1,libre-cc0,fried rice
+nems,asiatique/nems.jpg,asiatique,Nems,nems|vietnamien|frits,square,,,,,110,true,P1,libre-cc0,spring rolls fried
+rouleaux-de-printemps,asiatique/rouleaux-de-printemps.jpg,asiatique,Rouleaux de printemps,rouleaux de printemps|vietnamien,square,,,,,120,true,P2,libre-cc0,fresh spring rolls
+gyozas,asiatique/gyozas.jpg,asiatique,Gyozas,gyoza|raviolis|japonais,square,,,,,130,true,P2,libre-cc0,gyoza
+dim-sum,asiatique/dim-sum.jpg,asiatique,Dim sum,dim sum|vapeur|chinois,square,,,,,140,true,P2,libre-cc0,dim sum basket
+poulet-au-curry-rouge,asiatique/poulet-au-curry-rouge.jpg,asiatique,Poulet au curry rouge,curry|thai|poulet,square,,,,,150,true,P2,libre-cc0,thai red curry
+bo-bun,asiatique/bo-bun.jpg,asiatique,Bo bun,bo bun|vietnamien|vermicelles,square,,,,,160,true,P1,libre-cc0,bo bun
+butter-chicken,asiatique/butter-chicken.jpg,asiatique,Butter chicken,indien|butter chicken|curry,square,,,,,170,true,P2,libre-cc0,butter chicken
+naan-au-fromage,asiatique/naan-au-fromage.jpg,asiatique,Naan au fromage,indien|naan|fromage,square,,,,,180,true,P2,libre-cc0,cheese naan
+bibimbap,asiatique/bibimbap.jpg,asiatique,Bibimbap,coreen|bibimbap|riz,square,,,,,190,true,P3,libre-cc0,bibimbap
+poulet-frit-coreen,asiatique/poulet-frit-coreen.jpg,asiatique,Poulet frit coréen,coreen|poulet frit,square,,,,,200,true,P3,libre-cc0,korean fried chicken
+frites,accompagnements/frites.jpg,accompagnements,Frites,frites|pommes de terre,square,,,,,10,true,P1,libre-cc0,french fries
+grandes-frites,accompagnements/grandes-frites.jpg,accompagnements,Grandes frites,frites|grande portion,square,,,,,20,true,P2,libre-cc0,large fries cone
+frites-maison,accompagnements/frites-maison.jpg,accompagnements,Frites maison,frites|maison,square,,,,,30,true,P1,libre-cc0,homemade fries
+potatoes,accompagnements/potatoes.jpg,accompagnements,Potatoes,potatoes|pommes de terre|epices,square,,,,,40,true,P1,libre-cc0,potato wedges
+frites-de-patate-douce,accompagnements/frites-de-patate-douce.jpg,accompagnements,Frites de patate douce,frites|patate douce,square,,,,,50,true,P2,libre-cc0,sweet potato fries
+onion-rings,accompagnements/onion-rings.jpg,accompagnements,Onion rings,onion rings|oignons,square,,,,,60,true,P2,libre-cc0,onion rings
+riz-blanc,accompagnements/riz-blanc.jpg,accompagnements,Riz blanc,riz,square,,,,,70,true,P2,libre-cc0,bowl of rice
+puree-maison,accompagnements/puree-maison.jpg,accompagnements,Purée maison,puree|pommes de terre,square,,,,,80,true,P2,libre-cc0,mashed potatoes
+legumes-grilles,accompagnements/legumes-grilles.jpg,accompagnements,Légumes grillés,legumes|grilles,square,,,,,90,true,P2,libre-cc0,grilled vegetables
+salade-verte,accompagnements/salade-verte.jpg,accompagnements,Salade verte,salade|verte,square,,,,,100,true,P1,libre-cc0,green salad side
+haricots-verts,accompagnements/haricots-verts.jpg,accompagnements,Haricots verts,haricots verts|legumes,square,,,,,110,true,P3,libre-cc0,green beans
+pain,accompagnements/pain.jpg,accompagnements,Pain,pain|baguette,square,,,,,120,true,P2,libre-cc0,bread basket
+coleslaw,accompagnements/coleslaw.jpg,accompagnements,Coleslaw,coleslaw|chou,square,,,,,130,true,P3,libre-cc0,coleslaw
+mozzarella-sticks,accompagnements/mozzarella-sticks.jpg,accompagnements,Mozzarella sticks,mozzarella sticks|fromage|frits,square,,,,,140,true,P2,libre-cc0,mozzarella sticks
+cheddar-fondu,accompagnements/cheddar-fondu.jpg,accompagnements,Cheddar fondu,cheddar|sauce fromage,square,,,,,150,true,P2,libre-cc0,nacho cheese sauce
+ketchup,sauces/ketchup.jpg,sauces,Ketchup,sauce|ketchup|tomate,square,,,,,10,true,P1,libre-cc0,ketchup dip bowl
+mayonnaise,sauces/mayonnaise.jpg,sauces,Mayonnaise,sauce|mayonnaise,square,,,,,20,true,P1,libre-cc0,mayonnaise dip bowl
+sauce-barbecue,sauces/sauce-barbecue.jpg,sauces,Sauce barbecue,sauce|barbecue,square,,,,,30,true,P1,libre-cc0,bbq sauce dip
+sauce-algerienne,sauces/sauce-algerienne.jpg,sauces,Sauce algérienne,sauce|algerienne|epicee,square,,,,,40,true,P1,ia-ou-photographe,spicy sauce dip
+sauce-samourai,sauces/sauce-samourai.jpg,sauces,Sauce samouraï,sauce|samourai|piquante,square,,,,,50,true,P1,ia-ou-photographe,spicy mayo dip
+sauce-blanche,sauces/sauce-blanche.jpg,sauces,Sauce blanche,sauce|blanche|yaourt|kebab,square,,,,,60,true,P1,libre-cc0,garlic yogurt sauce
+sauce-harissa,sauces/sauce-harissa.jpg,sauces,Sauce harissa,sauce|harissa|piquante,square,,,,,70,true,P2,libre-cc0,harissa
+sauce-moutarde,sauces/sauce-moutarde.jpg,sauces,Sauce moutarde,sauce|moutarde,square,,,,,80,true,P2,libre-cc0,mustard dip
+sauce-curry,sauces/sauce-curry.jpg,sauces,Sauce curry,sauce|curry,square,,,,,90,true,P2,libre-cc0,curry sauce dip
+sauce-poivre,sauces/sauce-poivre.jpg,sauces,Sauce poivre,sauce|poivre|viande,square,,,,,100,true,P2,libre-cc0,pepper sauce
+sauce-fromagere,sauces/sauce-fromagere.jpg,sauces,Sauce fromagère,sauce|fromagere|tacos,square,,,,,110,true,P1,ia-ou-photographe,cheese sauce
+sauce-soja,sauces/sauce-soja.jpg,sauces,Sauce soja,sauce|soja|asiatique,square,,,,,120,true,P2,libre-cc0,soy sauce dish
+guacamole,sauces/guacamole.jpg,sauces,Guacamole,sauce|guacamole|avocat,square,,,,,130,true,P2,libre-cc0,guacamole bowl
+sauce-aigre-douce,sauces/sauce-aigre-douce.jpg,sauces,Sauce aigre-douce,sauce|aigre douce,square,,,,,140,true,P3,libre-cc0,sweet and sour sauce
+tranche-de-cheddar,ingredients/tranche-de-cheddar.jpg,ingredients,Tranche de cheddar,supplement|fromage|cheddar,square,,,,,10,true,P1,libre-cc0,cheddar slice isolated
+mozzarella,ingredients/mozzarella.jpg,ingredients,Mozzarella,supplement|fromage|mozzarella,square,,,,,20,true,P1,libre-cc0,mozzarella ball
+fromage-de-chevre,ingredients/fromage-de-chevre.jpg,ingredients,Fromage de chèvre,supplement|fromage|chevre,square,,,,,30,true,P1,libre-cc0,goat cheese log
+raclette,ingredients/raclette.jpg,ingredients,Raclette,supplement|fromage|raclette,square,,,,,40,true,P2,libre-cc0,raclette cheese slice
+emmental-rape,ingredients/emmental-rape.jpg,ingredients,Emmental râpé,supplement|fromage|emmental,square,,,,,50,true,P2,libre-cc0,grated cheese
+bacon,ingredients/bacon.jpg,ingredients,Bacon,supplement|bacon,square,,,,,60,true,P1,libre-cc0,crispy bacon
+jambon,ingredients/jambon.jpg,ingredients,Jambon,supplement|jambon,square,,,,,70,true,P1,libre-cc0,ham slices
+steak-hache,ingredients/steak-hache.jpg,ingredients,Steak haché,supplement|steak|boeuf,square,,,,,80,true,P1,libre-cc0,beef patty
+poulet-grille,ingredients/poulet-grille.jpg,ingredients,Poulet grillé,supplement|poulet,square,,,,,90,true,P1,libre-cc0,grilled chicken pieces
+oeuf-au-plat,ingredients/oeuf-au-plat.jpg,ingredients,Oeuf au plat,supplement|oeuf,square,,,,,100,true,P1,libre-cc0,fried egg
+tomate,ingredients/tomate.jpg,ingredients,Tomate,supplement|legume|tomate,square,,,,,110,true,P1,libre-cc0,tomato slices
+salade,ingredients/salade.jpg,ingredients,Salade,supplement|legume|laitue,square,,,,,120,true,P1,libre-cc0,lettuce leaf
+oignons,ingredients/oignons.jpg,ingredients,Oignons,supplement|legume|oignons,square,,,,,130,true,P1,libre-cc0,onion rings raw
+oignons-frits,ingredients/oignons-frits.jpg,ingredients,Oignons frits,supplement|oignons frits,square,,,,,140,true,P2,libre-cc0,crispy fried onions
+cornichons,ingredients/cornichons.jpg,ingredients,Cornichons,supplement|cornichons|pickles,square,,,,,150,true,P1,libre-cc0,pickles
+champignons,ingredients/champignons.jpg,ingredients,Champignons,supplement|champignons,square,,,,,160,true,P1,libre-cc0,sliced mushrooms
+poivrons,ingredients/poivrons.jpg,ingredients,Poivrons,supplement|poivrons,square,,,,,170,true,P2,libre-cc0,bell peppers
+olives,ingredients/olives.jpg,ingredients,Olives,supplement|olives,square,,,,,180,true,P2,libre-cc0,olives bowl
+jalapenos,ingredients/jalapenos.jpg,ingredients,Jalapeños,supplement|jalapenos|piment,square,,,,,190,true,P2,libre-cc0,jalapeno slices
+avocat,ingredients/avocat.jpg,ingredients,Avocat,supplement|avocat,square,,,,,200,true,P2,libre-cc0,avocado half
+ananas,ingredients/ananas.jpg,ingredients,Ananas,supplement|ananas,square,,,,,210,true,P3,libre-cc0,pineapple chunks
+thon,ingredients/thon.jpg,ingredients,Thon,supplement|thon,square,,,,,220,true,P2,libre-cc0,tuna chunks
+saumon-fume,ingredients/saumon-fume.jpg,ingredients,Saumon fumé,supplement|saumon,square,,,,,230,true,P2,libre-cc0,smoked salmon slices
+chorizo,ingredients/chorizo.jpg,ingredients,Chorizo,supplement|chorizo,square,,,,,240,true,P2,libre-cc0,chorizo slices
+merguez,ingredients/merguez.jpg,ingredients,Merguez,supplement|merguez,square,,,,,250,true,P2,libre-cc0,merguez sausages
+pain-burger-brioche,ingredients/pain-burger-brioche.jpg,ingredients,Pain burger brioché,pain|brioche|burger,square,,,,,260,true,P2,libre-cc0,brioche bun
+pain-sans-gluten,ingredients/pain-sans-gluten.jpg,ingredients,Pain sans gluten,pain|sans gluten,square,,,,,270,true,P3,ia-ou-photographe,gluten free bun
+glacons,ingredients/glacons.jpg,ingredients,Glaçons,glacons,square,,,,,280,true,P3,libre-cc0,ice cubes
+citron,ingredients/citron.jpg,ingredients,Citron,citron|agrume,square,,,,,290,true,P2,libre-cc0,lemon slice
+menthe-fraiche,ingredients/menthe-fraiche.jpg,ingredients,Menthe fraîche,menthe|herbes,square,,,,,300,true,P3,libre-cc0,fresh mint leaves
+tiramisu,desserts/tiramisu.jpg,desserts,Tiramisu,dessert|tiramisu|cafe,square,,,,,10,true,P1,libre-cc0,tiramisu
+fondant-au-chocolat,desserts/fondant-au-chocolat.jpg,desserts,Fondant au chocolat,dessert|fondant|chocolat,square,,,,,20,true,P1,libre-cc0,chocolate lava cake
+mousse-au-chocolat,desserts/mousse-au-chocolat.jpg,desserts,Mousse au chocolat,dessert|mousse|chocolat,square,,,,,30,true,P1,libre-cc0,chocolate mousse
+creme-brulee,desserts/creme-brulee.jpg,desserts,Crème brûlée,dessert|creme brulee,square,,,,,40,true,P1,libre-cc0,creme brulee
+panna-cotta,desserts/panna-cotta.jpg,desserts,Panna cotta,dessert|panna cotta|fruits rouges,square,,,,,50,true,P2,libre-cc0,panna cotta
+cheesecake,desserts/cheesecake.jpg,desserts,Cheesecake,dessert|cheesecake,square,,,,,60,true,P1,libre-cc0,cheesecake slice
+tarte-aux-pommes,desserts/tarte-aux-pommes.jpg,desserts,Tarte aux pommes,dessert|tarte|pommes,square,,,,,70,true,P2,libre-cc0,apple tart
+tarte-au-citron-meringuee,desserts/tarte-au-citron-meringuee.jpg,desserts,Tarte au citron meringuée,dessert|tarte|citron|meringue,square,,,,,80,true,P2,libre-cc0,lemon meringue tart
+tarte-aux-fraises,desserts/tarte-aux-fraises.jpg,desserts,Tarte aux fraises,dessert|tarte|fraises,square,,,,,90,true,P3,libre-cc0,strawberry tart
+cookie,desserts/cookie.jpg,desserts,Cookie,dessert|cookie|chocolat,square,,,,,100,true,P1,libre-cc0,chocolate chip cookie
+brownie,desserts/brownie.jpg,desserts,Brownie,dessert|brownie|chocolat,square,,,,,110,true,P1,libre-cc0,brownie
+muffin,desserts/muffin.jpg,desserts,Muffin,dessert|muffin,square,,,,,120,true,P2,libre-cc0,muffin
+donut,desserts/donut.jpg,desserts,Donut,dessert|donut|beignet,square,,,,,130,true,P2,libre-cc0,donut
+crepe-au-sucre,desserts/crepe-au-sucre.jpg,desserts,Crêpe au sucre,dessert|crepe|sucre,square,,,,,140,true,P1,libre-cc0,sugar crepe
+crepe-nutella,desserts/crepe-nutella.jpg,desserts,Crêpe Nutella,dessert|crepe|chocolat|pate a tartiner,square,,,,,150,true,P1,libre-cc0,chocolate crepe
+gaufre,desserts/gaufre.jpg,desserts,Gaufre,dessert|gaufre|chantilly,square,,,,,160,true,P1,libre-cc0,waffle
+profiteroles,desserts/profiteroles.jpg,desserts,Profiteroles,dessert|profiteroles|chocolat,square,,,,,170,true,P3,libre-cc0,profiteroles
+ile-flottante,desserts/ile-flottante.jpg,desserts,Île flottante,dessert|ile flottante,square,,,,,180,true,P3,libre-cc0,floating island dessert
+salade-de-fruits,desserts/salade-de-fruits.jpg,desserts,Salade de fruits,dessert|fruits|salade,square,,,,,190,true,P2,libre-cc0,fruit salad
+cafe-gourmand,desserts/cafe-gourmand.jpg,desserts,Café gourmand,dessert|cafe gourmand|mignardises,square,,,,,200,true,P2,libre-cc0,cafe gourmand
+tiramisu-en-pot,desserts/tiramisu-en-pot.jpg,desserts,Tiramisu en pot,dessert|tiramisu|pot|a emporter,square,,,,,210,true,P2,ia-ou-photographe,tiramisu cup takeaway
+baklava,desserts/baklava.jpg,desserts,Baklava,dessert|baklava|oriental,square,,,,,220,true,P2,libre-cc0,baklava
+macarons,desserts/macarons.jpg,desserts,Macarons,dessert|macarons,square,,,,,230,true,P3,libre-cc0,macarons
+yaourt,desserts/yaourt.jpg,desserts,Yaourt,dessert|yaourt|laitage,square,,,,,240,true,P3,libre-cc0,yogurt pot
+fruit-frais,desserts/fruit-frais.jpg,desserts,Fruit frais,dessert|fruit|pomme,square,,,,,250,true,P3,libre-cc0,fresh fruit
+glace-vanille,glaces/glace-vanille.jpg,glaces,Glace vanille,glace|vanille|boule,square,,,,,10,true,P1,libre-cc0,vanilla ice cream scoop
+glace-chocolat,glaces/glace-chocolat.jpg,glaces,Glace chocolat,glace|chocolat|boule,square,,,,,20,true,P1,libre-cc0,chocolate ice cream scoop
+glace-fraise,glaces/glace-fraise.jpg,glaces,Glace fraise,glace|fraise|boule,square,,,,,30,true,P2,libre-cc0,strawberry ice cream
+sorbet-citron,glaces/sorbet-citron.jpg,glaces,Sorbet citron,glace|sorbet|citron,square,,,,,40,true,P2,libre-cc0,lemon sorbet
+cornet-de-glace,glaces/cornet-de-glace.jpg,glaces,Cornet de glace,glace|cornet,square,,,,,50,true,P1,libre-cc0,ice cream cone
+coupe-glacee,glaces/coupe-glacee.jpg,glaces,Coupe glacée,glace|coupe|chantilly,square,,,,,60,true,P2,libre-cc0,ice cream sundae
+glace-a-l-italienne,glaces/glace-a-l-italienne.jpg,glaces,Glace à l'italienne,glace|italienne|soft,square,,,,,70,true,P2,libre-cc0,soft serve ice cream
+dame-blanche,glaces/dame-blanche.jpg,glaces,Dame blanche,glace|dame blanche|chocolat chaud,square,,,,,80,true,P3,libre-cc0,dame blanche
+batonnet-glace,glaces/batonnet-glace.png,glaces,Bâtonnet glacé,glace|batonnet|esquimau,square,,,,,90,true,P2,fournisseur,ice cream bar
+pot-de-glace,glaces/pot-de-glace.png,glaces,Pot de glace,glace|pot|a emporter,square,,,,,100,true,P2,fournisseur,ice cream tub
+croissant,boulangerie/croissant.jpg,boulangerie,Croissant,viennoiserie|croissant,square,,,,,10,true,P1,libre-cc0,croissant
+pain-au-chocolat,boulangerie/pain-au-chocolat.jpg,boulangerie,Pain au chocolat,viennoiserie|pain au chocolat|chocolatine,square,,,,,20,true,P1,libre-cc0,pain au chocolat
+pain-aux-raisins,boulangerie/pain-aux-raisins.jpg,boulangerie,Pain aux raisins,viennoiserie|pain aux raisins,square,,,,,30,true,P2,libre-cc0,pain aux raisins
+chausson-aux-pommes,boulangerie/chausson-aux-pommes.jpg,boulangerie,Chausson aux pommes,viennoiserie|chausson|pommes,square,,,,,40,true,P2,libre-cc0,apple turnover
+baguette,boulangerie/baguette.jpg,boulangerie,Baguette,pain|baguette,square,,,,,50,true,P1,libre-cc0,french baguette
+pain-de-campagne,boulangerie/pain-de-campagne.jpg,boulangerie,Pain de campagne,pain|campagne,square,,,,,60,true,P2,libre-cc0,country bread loaf
+brioche,boulangerie/brioche.jpg,boulangerie,Brioche,viennoiserie|brioche,square,,,,,70,true,P2,libre-cc0,brioche
+eclair-au-chocolat,boulangerie/eclair-au-chocolat.jpg,boulangerie,Éclair au chocolat,patisserie|eclair|chocolat,square,,,,,80,true,P2,libre-cc0,chocolate eclair
+flan-patissier,boulangerie/flan-patissier.jpg,boulangerie,Flan pâtissier,patisserie|flan,square,,,,,90,true,P2,libre-cc0,flan patissier
+paris-brest,boulangerie/paris-brest.jpg,boulangerie,Paris-brest,patisserie|paris brest|praline,square,,,,,100,true,P3,libre-cc0,paris brest
+cannele,boulangerie/cannele.jpg,boulangerie,Cannelé,patisserie|canele,square,,,,,110,true,P3,libre-cc0,canele
+madeleines,boulangerie/madeleines.jpg,boulangerie,Madeleines,patisserie|madeleines,square,,,,,120,true,P3,libre-cc0,madeleines
+petit-dejeuner-complet,petit-dejeuner/petit-dejeuner-complet.jpg,petit-dejeuner,Petit-déjeuner complet,petit dejeuner|formule|cafe|croissant|jus,square,,,,,10,true,P1,libre-cc0,continental breakfast
+tartines-beurre-confiture,petit-dejeuner/tartines-beurre-confiture.jpg,petit-dejeuner,Tartines beurre confiture,petit dejeuner|tartines|confiture,square,,,,,20,true,P2,libre-cc0,bread butter jam
+oeufs-brouilles,petit-dejeuner/oeufs-brouilles.jpg,petit-dejeuner,Oeufs brouillés,petit dejeuner|oeufs|brouilles,square,,,,,30,true,P2,libre-cc0,scrambled eggs toast
+oeufs-benedicte,petit-dejeuner/oeufs-benedicte.jpg,petit-dejeuner,Oeufs Bénédicte,brunch|oeufs benedicte,square,,,,,40,true,P2,libre-cc0,eggs benedict
+avocado-toast,petit-dejeuner/avocado-toast.jpg,petit-dejeuner,Avocado toast,brunch|avocat|toast,square,,,,,50,true,P2,libre-cc0,avocado toast
+pancakes,petit-dejeuner/pancakes.jpg,petit-dejeuner,Pancakes,brunch|pancakes|sirop d'erable,square,,,,,60,true,P1,libre-cc0,pancakes stack
+pain-perdu,petit-dejeuner/pain-perdu.jpg,petit-dejeuner,Pain perdu,brunch|pain perdu,square,,,,,70,true,P3,libre-cc0,french toast
+granola-bowl,petit-dejeuner/granola-bowl.jpg,petit-dejeuner,Granola bowl,petit dejeuner|granola|yaourt|fruits,square,,,,,80,true,P2,libre-cc0,granola yogurt bowl
+assiette-brunch,petit-dejeuner/assiette-brunch.jpg,petit-dejeuner,Assiette brunch,brunch|assiette|salé,square,,,,,90,true,P2,libre-cc0,brunch plate
+bacon-et-oeufs,petit-dejeuner/bacon-et-oeufs.jpg,petit-dejeuner,Bacon et oeufs,petit dejeuner|bacon|oeufs,square,,,,,100,true,P3,libre-cc0,bacon and eggs
+menu-enfant-nuggets,enfants/menu-enfant-nuggets.jpg,enfants,Menu enfant nuggets,enfant|menu|nuggets|frites,square,,,,,10,true,P1,ia-ou-photographe,kids meal nuggets fries
+menu-enfant-burger,enfants/menu-enfant-burger.jpg,enfants,Menu enfant burger,enfant|menu|burger,square,,,,,20,true,P1,ia-ou-photographe,kids burger meal
+menu-enfant-pates,enfants/menu-enfant-pates.jpg,enfants,Menu enfant pâtes,enfant|menu|pates,square,,,,,30,true,P2,ia-ou-photographe,kids pasta
+compote-a-boire,enfants/compote-a-boire.png,enfants,Compote à boire,enfant|compote|gourde,square,,,,,40,true,P1,fournisseur,fruit puree pouch
+jus-de-fruits-enfant,enfants/jus-de-fruits-enfant.png,enfants,Jus de fruits enfant,enfant|jus|brique,square,,,,,50,true,P2,fournisseur,kids juice box
+jouet-surprise,enfants/jouet-surprise.jpg,enfants,Jouet surprise,enfant|jouet|cadeau,square,,,,,60,true,P3,ia-ou-photographe,kids toy surprise
+salle-de-restaurant-chaleureuse,ambiance/salle-de-restaurant-chaleureuse.jpg,ambiance,Salle de restaurant chaleureuse,ambiance|salle|restaurant,square,,,,,10,true,P2,libre-cc0,cozy restaurant interior
+terrasse,ambiance/terrasse.jpg,ambiance,Terrasse,ambiance|terrasse|exterieur,square,,,,,20,true,P2,libre-cc0,restaurant terrace
+comptoir-de-bar,ambiance/comptoir-de-bar.jpg,ambiance,Comptoir de bar,ambiance|bar|comptoir,square,,,,,30,true,P3,libre-cc0,bar counter
+cuisine-ouverte,ambiance/cuisine-ouverte.jpg,ambiance,Cuisine ouverte,ambiance|cuisine|chef,square,,,,,40,true,P3,libre-cc0,open kitchen chef
+table-dressee,ambiance/table-dressee.jpg,ambiance,Table dressée,ambiance|table|dressage,square,,,,,50,true,P3,libre-cc0,set table restaurant
+banniere-burgers-et-frites,burgers/banniere-burgers-et-frites.jpg,burgers,Bannière burgers et frites,banniere|burger|frites,banner,,,,,140,true,P1,ia-ou-photographe,burger and fries wide banner dark
+banniere-pizza-au-feu-de-bois,pizzas/banniere-pizza-au-feu-de-bois.jpg,pizzas,Bannière pizza au feu de bois,banniere|pizza|four,banner,,,,,140,true,P1,libre-cc0,wood fired pizza oven wide
+banniere-pizzas-sur-table,pizzas/banniere-pizzas-sur-table.jpg,pizzas,Bannière pizzas sur table,banniere|pizza|table,banner,,,,,150,true,P2,libre-cc0,pizzas on table top view
+banniere-kebab-et-tacos,tacos-wraps/banniere-kebab-et-tacos.jpg,tacos-wraps,Bannière kebab et tacos,banniere|kebab|tacos,banner,,,,,120,true,P1,ia-ou-photographe,kebab grill wide
+banniere-sushis,asiatique/banniere-sushis.jpg,asiatique,Bannière sushis,banniere|sushi|japonais,banner,,,,,210,true,P1,libre-cc0,sushi platter wide
+banniere-cuisine-asiatique-au-wok,asiatique/banniere-cuisine-asiatique-au-wok.jpg,asiatique,Bannière cuisine asiatique au wok,banniere|wok|asiatique,banner,,,,,220,true,P2,libre-cc0,wok fire cooking
+banniere-cuisine-indienne,asiatique/banniere-cuisine-indienne.jpg,asiatique,Bannière cuisine indienne,banniere|indien|curry,banner,,,,,230,true,P3,libre-cc0,indian food spread
+banniere-salades-et-bowls,salades/banniere-salades-et-bowls.jpg,salades,Bannière salades et bowls,banniere|salade|bowl|healthy,banner,,,,,110,true,P2,libre-cc0,healthy bowls top view
+banniere-cuisine-traditionnelle,plats/banniere-cuisine-traditionnelle.jpg,plats,Bannière cuisine traditionnelle,banniere|plats|traditionnel|brasserie,banner,,,,,160,true,P2,libre-cc0,french bistro dishes
+banniere-creperie,plats/banniere-creperie.jpg,plats,Bannière crêperie,banniere|crepes|galettes,banner,,,,,170,true,P2,libre-cc0,crepes galettes wide
+banniere-couscous-et-tajines,plats/banniere-couscous-et-tajines.jpg,plats,Bannière couscous et tajines,banniere|couscous|tajine|oriental,banner,,,,,180,true,P2,libre-cc0,moroccan food spread
+banniere-grillades,viandes-grillades/banniere-grillades.jpg,viandes-grillades,Bannière grillades,banniere|grill|viande|barbecue,banner,,,,,150,true,P2,libre-cc0,grill flames meat
+banniere-poulet-frit,viandes-grillades/banniere-poulet-frit.jpg,viandes-grillades,Bannière poulet frit,banniere|poulet|frit|wings,banner,,,,,160,true,P2,ia-ou-photographe,fried chicken bucket wide
+banniere-fruits-de-mer,poissons/banniere-fruits-de-mer.jpg,poissons,Bannière fruits de mer,banniere|fruits de mer|poisson,banner,,,,,100,true,P3,libre-cc0,seafood wide
+banniere-cuisine-italienne,pates/banniere-cuisine-italienne.jpg,pates,Bannière cuisine italienne,banniere|italien|pates,banner,,,,,110,true,P2,libre-cc0,italian pasta table
+banniere-sandwicherie,sandwichs/banniere-sandwicherie.jpg,sandwichs,Bannière sandwicherie,banniere|sandwich|baguette,banner,,,,,150,true,P2,libre-cc0,sandwiches wide
+banniere-desserts,desserts/banniere-desserts.jpg,desserts,Bannière desserts,banniere|desserts|patisserie,banner,,,,,260,true,P2,libre-cc0,desserts table
+banniere-glacier,glaces/banniere-glacier.jpg,glaces,Bannière glacier,banniere|glaces|ete,banner,,,,,110,true,P3,libre-cc0,ice cream shop
+banniere-boulangerie,boulangerie/banniere-boulangerie.jpg,boulangerie,Bannière boulangerie,banniere|boulangerie|viennoiseries,banner,,,,,130,true,P2,libre-cc0,bakery display
+banniere-cafe,boissons-chaudes/banniere-cafe.jpg,boissons-chaudes,Bannière café,banniere|cafe|coffee shop,banner,,,,,130,true,P1,libre-cc0,coffee shop wide
+banniere-brunch,petit-dejeuner/banniere-brunch.jpg,petit-dejeuner,Bannière brunch,banniere|brunch|petit dejeuner,banner,,,,,110,true,P2,libre-cc0,brunch table top view
+banniere-bar-a-cocktails,aperitifs-cocktails/banniere-bar-a-cocktails.jpg,aperitifs-cocktails,Bannière bar à cocktails,banniere|cocktails|bar,banner,,,,,150,true,P2,libre-cc0,cocktails bar wide
+banniere-bar-a-vins,vins/banniere-bar-a-vins.jpg,vins,Bannière bar à vins,banniere|vin|bar a vins,banner,,,,,120,true,P3,libre-cc0,wine bar
+banniere-bieres-pression,bieres/banniere-bieres-pression.jpg,bieres,Bannière bières pression,banniere|biere|pression|pub,banner,,,,,130,true,P3,libre-cc0,beer taps pub
+banniere-boissons-fraiches,boissons-soft/banniere-boissons-fraiches.jpg,boissons-soft,Bannière boissons fraîches,banniere|boissons|soda|ete,banner,,,,,180,true,P2,libre-cc0,cold drinks ice
+banniere-salle-de-restaurant,ambiance/banniere-salle-de-restaurant.jpg,ambiance,Bannière salle de restaurant,banniere|ambiance|salle,banner,,,,,60,true,P1,libre-cc0,restaurant interior wide
+banniere-terrasse,ambiance/banniere-terrasse.jpg,ambiance,Bannière terrasse,banniere|ambiance|terrasse,banner,,,,,70,true,P2,libre-cc0,restaurant terrace wide
+banniere-cuisine-en-action,ambiance/banniere-cuisine-en-action.jpg,ambiance,Bannière cuisine en action,banniere|ambiance|cuisine|chef,banner,,,,,80,true,P2,libre-cc0,chef cooking kitchen wide
+banniere-livraison,ambiance/banniere-livraison.jpg,ambiance,Bannière livraison,banniere|livraison|a emporter,banner,,,,,90,true,P1,ia-ou-photographe,food delivery bag
+banniere-table-en-bois-vue-de-dessus,ambiance/banniere-table-en-bois-vue-de-dessus.jpg,ambiance,Bannière table en bois vue de dessus,banniere|fond|bois|neutre,banner,,,,,100,true,P1,libre-cc0,empty wooden table top view
+banniere-fond-ardoise,ambiance/banniere-fond-ardoise.jpg,ambiance,Bannière fond ardoise,banniere|fond|ardoise|neutre,banner,,,,,110,true,P1,libre-cc0,slate background texture
+banniere-ingredients-frais,ambiance/banniere-ingredients-frais.jpg,ambiance,Bannière ingrédients frais,banniere|fond|ingredients|legumes,banner,,,,,120,true,P2,libre-cc0,fresh ingredients flat lay

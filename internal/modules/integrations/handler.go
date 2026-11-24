@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
+	"welloresto-api/internal/imagepick"
 	"welloresto-api/internal/infrastructure/r2"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
@@ -17,11 +17,15 @@ const maxImageSize = 5 << 20
 type Handler struct {
 	svc      *Service
 	r2Client *r2.Client
+	picker   *imagepick.Picker
 }
 
 func NewHandler(svc *Service, r2Client *r2.Client) *Handler {
 	return &Handler{svc: svc, r2Client: r2Client}
 }
+
+// SetImagePicker branche le placement d'images (bannière / logo ScanNOrder).
+func (h *Handler) SetImagePicker(p *imagepick.Picker) { h.picker = p }
 
 // GetUberEats handles GET /integrations/uber-eats. store_id optionnel en
 // query string cible un compte précis ; absent, retourne le compte
@@ -124,6 +128,11 @@ func (h *Handler) UploadScanNOrderBanner(w http.ResponseWriter, r *http.Request)
 
 // uploadScanNOrderImage is the shared implementation for logo/banner uploads.
 // imageType is "logo" or "banner"; dbColumn is "logo_url" or "banner_url".
+//
+// Corps multipart (champ "photo") ou JSON {"image_url"} : image de la banque
+// ou image déjà utilisée par l'établissement (docs/banque-images.md). La
+// nouvelle image est placée et enregistrée avant de supprimer l'ancienne,
+// seulement si sa clé diffère.
 func (h *Handler) uploadScanNOrderImage(w http.ResponseWriter, r *http.Request, imageType, dbColumn string) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
@@ -131,68 +140,37 @@ func (h *Handler) uploadScanNOrderImage(w http.ResponseWriter, r *http.Request, 
 
 	user := middleware.GetUser(r)
 
-	// 1. Parse multipart form (5 MB limit)
-	if err := r.ParseMultipartForm(maxImageSize); err != nil {
-		log.Error(fmt.Sprintf("[ERROR] %s ParseMultipartForm: %s", fnName, err.Error()))
-		models.SendJSON(w, http.StatusBadRequest, "integrations", fnName, map[string]string{"error": "file_too_large_or_invalid"})
-		return
-	}
-
-	// 2. Retrieve file
-	file, header, err := r.FormFile("photo")
+	placed, err := h.picker.Place(w, r, imagepick.Request{
+		Field:           "photo",
+		MultipartMemory: maxImageSize,
+		OwnPrefixes:     []string{r2.MerchantKeyPrefix(user.MerchantID)},
+		KeyFor:          func(ext string) string { return r2.GenerateScanNOrderKey(user.MerchantID, imageType, ext) },
+	})
 	if err != nil {
-		log.Error(fmt.Sprintf("[ERROR] %s FormFile: %s", fnName, err.Error()))
-		models.SendJSON(w, http.StatusBadRequest, "integrations", fnName, map[string]string{"error": "missing_photo_field"})
-		return
-	}
-	defer file.Close()
-
-	// 3. Validate MIME type
-	contentType := header.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = r2.GetContentTypeFromExtension(header.Filename)
-	}
-	if !r2.ValidateImageType(contentType) {
-		models.SendJSON(w, http.StatusBadRequest, "integrations", fnName, map[string]string{
-			"error":   "invalid_image_type",
-			"message": "Only JPEG, PNG, and WebP images are allowed",
-		})
+		log.Error(fmt.Sprintf("[ERROR] %s Place: %s", fnName, err.Error()))
+		imagepick.Send(w, "integrations", fnName, err)
 		return
 	}
 
-	// 4. Delete old image from R2 (non-blocking)
-	if oldURL, err := h.svc.GetScanNOrderCurrentImageURL(ctx, user.MerchantID, dbColumn); err == nil && oldURL != "" {
-		if oldKey := h.r2Client.GetKeyFromURL(oldURL); oldKey != "" {
+	oldURL, oldErr := h.svc.GetScanNOrderCurrentImageURL(ctx, user.MerchantID, dbColumn)
+
+	if err := h.svc.UpdateScanNOrderImageURL(ctx, user.MerchantID, dbColumn, placed.URL); err != nil {
+		log.Error(fmt.Sprintf("[ERROR] %s UpdateScanNOrderImageURL: %s", fnName, err.Error()))
+		models.SendErrorJSON(w, "integrations", fnName, err)
+		return
+	}
+
+	if oldErr == nil && oldURL != "" {
+		if oldKey := h.r2Client.GetKeyFromURL(oldURL); oldKey != "" && oldKey != placed.Key {
 			if err := h.r2Client.DeleteFile(ctx, oldKey); err != nil {
 				log.Warn(fmt.Sprintf("[WARN] %s DeleteFile (old image): %s", fnName, err.Error()))
 			}
 		}
 	}
 
-	// 5. Build R2 key and upload
-	ext := r2.GetExtensionFromContentType(contentType)
-	key := r2.GenerateScanNOrderKey(user.MerchantID, imageType, ext)
-
-	publicURL, err := h.r2Client.UploadFile(ctx, key, file, contentType)
-	if err != nil {
-		log.Error(fmt.Sprintf("[ERROR] %s UploadFile: %s", fnName, err.Error()))
-		models.SendErrorJSON(w, "integrations", fnName, fmt.Errorf("failed to upload image"))
-		return
-	}
-	// Cache-buster : la clé R2 est déterministe (même URL à chaque upload),
-	// sans ce paramètre le navigateur/CDN continue de servir l'ancienne image.
-	publicURL = fmt.Sprintf("%s?v=%d", publicURL, time.Now().UnixNano())
-
-	// 6. Persist URL in DB
-	if err := h.svc.UpdateScanNOrderImageURL(ctx, user.MerchantID, dbColumn, publicURL); err != nil {
-		log.Error(fmt.Sprintf("[ERROR] %s UpdateScanNOrderImageURL: %s", fnName, err.Error()))
-		models.SendErrorJSON(w, "integrations", fnName, err)
-		return
-	}
-
 	models.SendJSON(w, http.StatusOK, "integrations", fnName, map[string]interface{}{
 		"status":    "success",
-		"photo_url": publicURL,
+		"photo_url": placed.URL,
 	})
 }
 

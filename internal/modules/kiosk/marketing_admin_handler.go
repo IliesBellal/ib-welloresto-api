@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
+	"welloresto-api/internal/imagepick"
 	"welloresto-api/internal/infrastructure/r2"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
@@ -128,6 +129,12 @@ func (h *AdminHandler) CreateMarketingMedia(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Image choisie par URL (banque ou « Mes images », docs/banque-images.md).
+	if imagepick.WantsURL(r) {
+		h.createMarketingMediaFromURL(w, r, user.MerchantID)
+		return
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, maxMarketingVideoBytes+marketingMultipartOverheadBytes)
 	if err := r.ParseMultipartForm(marketingMultipartMemoryBytes); err != nil {
 		models.SendJSON(w, http.StatusBadRequest, "kiosk", fnName, map[string]string{"error": "file_too_large_or_invalid"})
@@ -197,11 +204,25 @@ func (h *AdminHandler) CreateMarketingMedia(w http.ResponseWriter, r *http.Reque
 	mediaID := NewMarketingMediaID()
 	key := r2.GenerateKioskMarketingMediaKey(user.MerchantID, mediaID, ext)
 
-	publicURL, err := h.r2Client.UploadFile(ctx, key, file, contentType)
-	if err != nil {
-		log.Error("kiosk admin: upload marketing media failed", zap.Error(err))
-		models.SendErrorJSON(w, "kiosk", fnName, models.ErrKioskMediaInvalid)
-		return
+	var publicURL string
+	if kind == marketingKindImage {
+		// Les images sont allégées avant envoi (l'extension peut changer).
+		placed, upErr := h.picker.Upload(ctx, file, contentType, func(ext string) string {
+			return r2.GenerateKioskMarketingMediaKey(user.MerchantID, mediaID, ext)
+		})
+		if upErr != nil {
+			log.Error("kiosk admin: upload marketing image failed", zap.Error(upErr))
+			models.SendErrorJSON(w, "kiosk", fnName, models.ErrKioskMediaInvalid)
+			return
+		}
+		key, publicURL = placed.Key, placed.URL
+	} else {
+		publicURL, err = h.r2Client.UploadFile(ctx, key, file, contentType)
+		if err != nil {
+			log.Error("kiosk admin: upload marketing media failed", zap.Error(err))
+			models.SendErrorJSON(w, "kiosk", fnName, models.ErrKioskMediaInvalid)
+			return
+		}
 	}
 
 	resp, err := h.service.CreateMarketingMedia(ctx, user.MerchantID, mediaID, kind, publicURL, durationSeconds)
@@ -210,6 +231,44 @@ func (h *AdminHandler) CreateMarketingMedia(w http.ResponseWriter, r *http.Reque
 		// orphelin dans le bucket sans aucune ligne pour le référencer.
 		if delErr := h.r2Client.DeleteFile(ctx, key); delErr != nil {
 			log.Warn("kiosk admin: cleanup orphan marketing media failed", zap.Error(delErr), zap.String("key", key))
+		}
+		models.SendErrorJSON(w, "kiosk", fnName, err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "kiosk", fnName, resp)
+}
+
+// createMarketingMediaFromURL : variante JSON {"image_url"} de
+// CreateMarketingMedia. Une image de la banque est reprise telle quelle ; une
+// image de l'établissement est copiée sous la clé du nouveau média (le
+// retirer du ruban supprime son fichier).
+func (h *AdminHandler) createMarketingMediaFromURL(w http.ResponseWriter, r *http.Request, merchantID string) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+	const fnName = "create_marketing_media"
+
+	rawURL, err := imagepick.DecodeURL(w, r)
+	if err != nil {
+		imagepick.Send(w, "kiosk", fnName, err)
+		return
+	}
+	mediaID := NewMarketingMediaID()
+	placed, err := h.picker.FromURL(ctx, rawURL, []string{r2.MerchantKeyPrefix(merchantID)}, func(ext string) string {
+		return r2.GenerateKioskMarketingMediaKey(merchantID, mediaID, ext)
+	})
+	if err != nil {
+		log.Error("kiosk admin: place marketing image failed", zap.Error(err))
+		imagepick.Send(w, "kiosk", fnName, err)
+		return
+	}
+
+	resp, err := h.service.CreateMarketingMedia(ctx, merchantID, mediaID, marketingKindImage, placed.URL, nil)
+	if err != nil {
+		if !placed.Shared {
+			if delErr := h.r2Client.DeleteFile(ctx, placed.Key); delErr != nil {
+				log.Warn("kiosk admin: cleanup orphan marketing media failed", zap.Error(delErr), zap.String("key", placed.Key))
+			}
 		}
 		models.SendErrorJSON(w, "kiosk", fnName, err)
 		return
