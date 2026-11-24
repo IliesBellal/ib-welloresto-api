@@ -1,0 +1,477 @@
+slug,category,name,tags,format,provider,query,brand,exclude,barcode,priority
+coca-cola-canette-33-cl,boissons-soft,Coca-Cola canette 33 cl,coca-cola|cola|soda|canette,square,openfoodfacts,,coca-cola,,5449000000996,P1
+coca-cola-sans-sucres-canette-33-cl,boissons-soft,Coca-Cola sans sucres canette 33 cl,coca-cola|zero|cola|soda|canette,square,openfoodfacts,zero/sucres,coca-cola,cherry|vanille|cafeine|lime|citron,,P1
+coca-cola-bouteille-50-cl,boissons-soft,Coca-Cola bouteille 50 cl,coca-cola|cola|soda|bouteille,square,openfoodfacts,,coca-cola,zero|sans sucre|cherry|vanille|light|cafeine|energy|lime|citron,,P1
+coca-cola-bouteille-1-5-l,boissons-soft,"Coca-Cola bouteille 1,5 L",coca-cola|cola|soda|bouteille|grand format,square,openfoodfacts,"1,5/1.5/1,25/1.25",coca-cola,zero|sans sucre|cherry|light,,P2
+coca-cola-cherry-33-cl,boissons-soft,Coca-Cola Cherry 33 cl,coca-cola|cherry|cerise|soda,square,openfoodfacts,cherry,coca-cola,,,P3
+fanta-orange-33-cl,boissons-soft,Fanta Orange 33 cl,fanta|orange|soda|canette,square,openfoodfacts,orange,fanta,zero|sans sucre,,P1
+fanta-citron,boissons-soft,Fanta Citron,fanta|citron|soda,square,openfoodfacts,citron,fanta,,,P3
+sprite-33-cl,boissons-soft,Sprite 33 cl,sprite|citron|soda|canette,square,openfoodfacts,,sprite,zero|sans sucre,,P1
+orangina-33-cl,boissons-soft,Orangina 33 cl,orangina|orange|soda,square,openfoodfacts,,orangina,zero|rouge|light,,P1
+oasis-tropical,boissons-soft,Oasis Tropical,oasis|tropical|fruits|soda,square,openfoodfacts,tropical,oasis,,,P1
+oasis-pomme-cassis-framboise,boissons-soft,Oasis Pomme Cassis Framboise,oasis|cassis|framboise|soda,square,openfoodfacts,cassis,oasis,,,P2
+schweppes-agrum,boissons-soft,Schweppes Agrum',schweppes|agrumes|soda,square,openfoodfacts,agrum,schweppes,zero,,P2
+schweppes-indian-tonic,boissons-soft,Schweppes Indian Tonic,schweppes|tonic|soda,square,openfoodfacts,tonic,schweppes,zero|hibiscus,,P2
+lipton-ice-tea-peche,boissons-soft,Lipton Ice Tea pêche,lipton|ice tea|the glace|peche,square,openfoodfacts,peche,lipton,,,P1
+fuze-tea-peche,boissons-soft,Fuze Tea pêche,fuze tea|ice tea|the glace|peche,square,openfoodfacts,peche,fuze-tea,,,P2
+pepsi-33-cl,boissons-soft,Pepsi 33 cl,pepsi|cola|soda,square,openfoodfacts,,pepsi,max|zero|light,,P2
+pepsi-max,boissons-soft,Pepsi Max,pepsi|max|zero|cola|soda,square,openfoodfacts,max,pepsi,,,P2
+7up,boissons-soft,7Up,7up|citron|soda,square,openfoodfacts,,7up,,,P3
+red-bull-25-cl,boissons-soft,Red Bull 25 cl,red bull|energy drink|boisson energisante,square,openfoodfacts,,red-bull,sugarfree|sans sucre|edition|zero,,P1
+monster-energy,boissons-soft,Monster Energy,monster|energy drink|boisson energisante,square,openfoodfacts,,monster-energy,ultra|zero,,P1
+dada,boissons-soft,Dada,dada|boisson|soda,square,openfoodfacts,,dada,,,P2
+hawai,boissons-soft,Hawaï,hawai|tropical|soda,square,openfoodfacts,,hawai,,,P3
+vimto,boissons-soft,Vimto,vimto|soda,square,openfoodfacts,,vimto,,,P3
+pulco-citron,boissons-soft,Pulco citron,pulco|citron|citronnade,square,openfoodfacts,citron,pulco,,,P3
+evian-50-cl,eaux,Evian 50 cl,evian|eau|plate,square,openfoodfacts,,evian,,,P1
+cristaline-50-cl,eaux,Cristaline 50 cl,cristaline|eau|plate,square,openfoodfacts,,cristaline,,,P1
+vittel,eaux,Vittel,vittel|eau|plate,square,openfoodfacts,,vittel,,,P2
+volvic,eaux,Volvic,volvic|eau|plate,square,openfoodfacts,,volvic,zest|aromatis|fraise|citron,,P2
+perrier,eaux,Perrier,perrier|eau|gazeuse,square,openfoodfacts,,perrier,citron|framboise|aromatis,,P1
+san-pellegrino,eaux,San Pellegrino,san pellegrino|eau|gazeuse,square,openfoodfacts,,san-pellegrino,aranciata|limonata|essenza,,P1
+badoit,eaux,Badoit,badoit|eau|gazeuse,square,openfoodfacts,,badoit,,,P2
+vichy-celestins,eaux,Vichy Célestins,vichy|eau|gazeuse,square,openfoodfacts,,vichy-celestins,,,P3
+tropicana-orange,jus,Tropicana orange,tropicana|jus|orange,square,openfoodfacts,orange,tropicana,,,P2
+minute-maid-orange,jus,Minute Maid orange,minute maid|jus|orange,square,openfoodfacts,orange,minute-maid,,,P2
+capri-sun,jus,Capri-Sun,capri-sun|jus|enfant,square,openfoodfacts,,capri-sun,,,P1
+pago,jus,Pago,pago|jus,square,openfoodfacts,,pago,,,P3
+innocent-smoothie,jus,Innocent smoothie,innocent|smoothie,square,openfoodfacts,,innocent,,,P3
+heineken,bieres,Heineken,heineken|biere|blonde,square,openfoodfacts,,heineken,"0.0|0,0|sans alcool",,P1
+heineken-0-0,bieres,Heineken 0.0,heineken|biere|sans alcool,square,openfoodfacts,0,heineken,,,P2
+1664,bieres,1664,1664|kronenbourg|biere|blonde,square,openfoodfacts,,1664,blanc|rose|sans alcool|0.0,,P1
+1664-blanc,bieres,1664 Blanc,1664|biere|blanche,square,openfoodfacts,blanc,1664,,,P2
+desperados,bieres,Desperados,desperados|biere|tequila,square,openfoodfacts,,desperados,,,P2
+leffe-blonde,bieres,Leffe Blonde,leffe|biere|abbaye,square,openfoodfacts,blonde,leffe,,,P2
+corona,bieres,Corona,corona|biere|blonde,square,openfoodfacts,,corona,,,P2
+grimbergen,bieres,Grimbergen,grimbergen|biere|abbaye,square,openfoodfacts,,grimbergen,,,P3
+pelforth,bieres,Pelforth,pelforth|biere|brune,square,openfoodfacts,,pelforth,,,P3
+cidre-loic-raison,bieres,Cidre Loïc Raison,cidre|loic raison,square,openfoodfacts,,loic-raison,,,P3
+martini-bianco,aperitifs-cocktails,Martini Bianco,martini|aperitif,square,openfoodfacts,bianco,martini,,,P3
+ricard,aperitifs-cocktails,Ricard,ricard|pastis|aperitif,square,openfoodfacts,,ricard,,,P3
+magnum-classic,glaces,Magnum classic,magnum|glace|batonnet,square,openfoodfacts,,magnum,,,P2
+ben-jerry-s,glaces,Ben & Jerry's,ben & jerry's|glace|pot,square,openfoodfacts,,ben-jerry-s,,,P2
+haagen-dazs,glaces,Häagen-Dazs,haagen-dazs|glace|pot,square,openfoodfacts,,haagen-dazs,,,P2
+cornetto,glaces,Cornetto,cornetto|glace|cornet,square,openfoodfacts,,cornetto,,,P3
+kinder-bueno,desserts,Kinder Bueno,kinder|bueno|chocolat|snack,square,openfoodfacts,bueno,kinder,,,P2
+twix,desserts,Twix,twix|chocolat|snack,square,openfoodfacts,,twix,,,P3
+m-m-s,desserts,M&M's,m&m's|chocolat|snack,square,openfoodfacts,,m-m-s,,,P3
+danette-chocolat,desserts,Danette chocolat,danette|creme dessert|chocolat,square,openfoodfacts,chocolat,danette,,,P3
+pom-potes,enfants,Pom'Potes,pom'potes|compote|gourde|enfant,square,openfoodfacts,,pom-potes,,,P1
+kinder-surprise,enfants,Kinder Surprise,kinder|surprise|enfant,square,openfoodfacts,surprise,kinder,,,P3
+ketchup-heinz,sauces,Ketchup Heinz,heinz|ketchup|sauce,square,openfoodfacts,ketchup,heinz,,,P1
+mayonnaise-amora,sauces,Mayonnaise Amora,amora|mayonnaise|sauce,square,openfoodfacts,mayonnaise,amora,,,P1
+moutarde-amora,sauces,Moutarde Amora,amora|moutarde|sauce,square,openfoodfacts,moutarde,amora,,,P2
+sauce-barbecue-heinz,sauces,Sauce barbecue Heinz,heinz|barbecue|sauce,square,openfoodfacts,barbecue,heinz,,,P2
+tabasco,sauces,Tabasco,tabasco|piment|sauce,square,openfoodfacts,,tabasco,,,P3
+sauce-soja-kikkoman,sauces,Sauce soja Kikkoman,kikkoman|soja|sauce,square,openfoodfacts,,kikkoman,,,P3
+nutella,ingredients,Nutella,nutella|pate a tartiner|chocolat,square,openfoodfacts,,nutella,,,P2
+canette-de-cola-33-cl,boissons-soft,Canette de cola 33 cl,soda|cola|canette,square,openverse,cola can 33cl packshot white background,,,,P1
+canette-de-cola-zero-sucre-33-cl,boissons-soft,Canette de cola zéro sucre 33 cl,soda|cola|zero|light|canette,square,openverse,zero sugar cola can,,,,P1
+canette-de-limonade-33-cl,boissons-soft,Canette de limonade 33 cl,soda|limonade|canette,square,openverse,lemon lime soda can,,,,P1
+canette-de-soda-orange-33-cl,boissons-soft,Canette de soda orange 33 cl,soda|orange|canette,square,openverse,orange soda can,,,,P1
+canette-de-the-glace-peche-33-cl,boissons-soft,Canette de thé glacé pêche 33 cl,the glace|ice tea|peche|canette,square,openverse,peach iced tea can,,,,P1
+canette-de-boisson-energisante-25-cl,boissons-soft,Canette de boisson énergisante 25 cl,energy drink|canette,square,openverse,energy drink can,,,,P1
+bouteille-de-cola-50-cl,boissons-soft,Bouteille de cola 50 cl,soda|cola|bouteille,square,openverse,cola plastic bottle 50cl,,,,P1
+bouteille-de-cola-1-5-l,boissons-soft,"Bouteille de cola 1,5 L",soda|cola|bouteille|grand format,square,openverse,cola 1.5l bottle,,,,P2
+bouteille-de-soda-orange-50-cl,boissons-soft,Bouteille de soda orange 50 cl,soda|orange|bouteille,square,openverse,orange soda bottle,,,,P2
+bouteille-de-the-glace-50-cl,boissons-soft,Bouteille de thé glacé 50 cl,the glace|ice tea|bouteille,square,openverse,iced tea bottle,,,,P2
+canette-de-soda-tropical-33-cl,boissons-soft,Canette de soda tropical 33 cl,soda|tropical|exotique|canette,square,openverse,tropical soda can,,,,P2
+canette-de-ginger-ale-33-cl,boissons-soft,Canette de ginger ale 33 cl,ginger ale|soda|canette,square,openverse,ginger ale can,,,,P3
+canette-de-tonic-33-cl,boissons-soft,Canette de tonic 33 cl,tonic|soda|canette,square,openverse,tonic water can,,,,P3
+bouteille-verre-de-cola-33-cl,boissons-soft,Bouteille verre de cola 33 cl,soda|cola|verre,square,openverse,glass bottle cola,,,,P2
+verre-de-cola-avec-glacons,boissons-soft,Verre de cola avec glaçons,soda|cola|verre|glacons,square,openverse,glass of cola ice cubes,,,,P1
+soda-maison-au-citron,boissons-soft,Soda maison au citron,soda|limonade|maison|citron,square,openverse,homemade lemonade glass,,,,P3
+canette-de-soda-sans-marque,boissons-soft,Canette de soda sans marque,soda|canette|generique,square,openverse,blank aluminum can mockup,,,,P1
+bouteille-d-eau-plate-50-cl,eaux,Bouteille d'eau plate 50 cl,eau|plate|bouteille,square,openverse,still water bottle 50cl,,,,P1
+bouteille-d-eau-gazeuse-50-cl,eaux,Bouteille d'eau gazeuse 50 cl,eau|gazeuse|petillante|bouteille,square,openverse,sparkling water bottle,,,,P1
+bouteille-d-eau-plate-1-l-verre,eaux,Bouteille d'eau plate 1 L verre,eau|plate|verre|restaurant,square,openverse,glass bottle still water restaurant,,,,P2
+bouteille-d-eau-gazeuse-1-l-verre,eaux,Bouteille d'eau gazeuse 1 L verre,eau|gazeuse|verre|restaurant,square,openverse,glass bottle sparkling water,,,,P2
+eau-aromatisee,eaux,Eau aromatisée,eau|aromatisee|fruit,square,openverse,flavored water bottle,,,,P3
+carafe-d-eau,eaux,Carafe d'eau,eau|carafe,square,openverse,water carafe table,,,,P2
+verre-d-eau-citronnee,eaux,Verre d'eau citronnée,eau|citron|verre,square,openverse,glass of water lemon slice,,,,P3
+jus-d-orange-presse,jus,Jus d'orange pressé,jus|orange|frais|presse,square,openverse,fresh orange juice glass,,,,P1
+bouteille-de-jus-d-orange-25-cl,jus,Bouteille de jus d'orange 25 cl,jus|orange|bouteille,square,openverse,orange juice small bottle,,,,P1
+jus-de-pomme,jus,Jus de pomme,jus|pomme,square,openverse,apple juice glass,,,,P1
+jus-multifruit,jus,Jus multifruit,jus|multifruit|exotique,square,openverse,multifruit juice,,,,P2
+jus-d-ananas,jus,Jus d'ananas,jus|ananas,square,openverse,pineapple juice glass,,,,P2
+jus-de-tomate,jus,Jus de tomate,jus|tomate,square,openverse,tomato juice glass,,,,P3
+citronnade-maison,jus,Citronnade maison,citronnade|limonade|citron|maison,square,openverse,homemade lemonade pitcher,,,,P2
+smoothie-fraise-banane,jus,Smoothie fraise banane,smoothie|fraise|banane,square,openverse,strawberry banana smoothie,,,,P2
+smoothie-mangue,jus,Smoothie mangue,smoothie|mangue|exotique,square,openverse,mango smoothie,,,,P2
+smoothie-vert,jus,Smoothie vert,smoothie|detox|epinard|kiwi,square,openverse,green smoothie,,,,P3
+milkshake-vanille,jus,Milkshake vanille,milkshake|vanille,square,openverse,vanilla milkshake,,,,P1
+milkshake-chocolat,jus,Milkshake chocolat,milkshake|chocolat,square,openverse,chocolate milkshake,,,,P1
+milkshake-fraise,jus,Milkshake fraise,milkshake|fraise,square,openverse,strawberry milkshake,,,,P2
+bubble-tea,jus,Bubble tea,bubble tea|the|perles de tapioca,square,openverse,bubble tea,,,,P2
+expresso,boissons-chaudes,Expresso,cafe|expresso|espresso,square,openverse,espresso cup,,,,P1
+cafe-allonge,boissons-chaudes,Café allongé,cafe|allonge|americano,square,openverse,americano coffee cup,,,,P1
+cappuccino,boissons-chaudes,Cappuccino,cafe|cappuccino|lait,square,openverse,cappuccino latte art,,,,P1
+cafe-latte,boissons-chaudes,Café latte,cafe|latte|lait,square,openverse,caffe latte glass,,,,P2
+cafe-creme,boissons-chaudes,Café crème,cafe|creme|noisette,square,openverse,cafe creme,,,,P2
+chocolat-chaud,boissons-chaudes,Chocolat chaud,chocolat chaud|lait,square,openverse,hot chocolate mug,,,,P1
+the-noir,boissons-chaudes,Thé noir,the|infusion,square,openverse,black tea cup,,,,P1
+the-vert-a-la-menthe,boissons-chaudes,Thé vert à la menthe,the|menthe|the vert,square,openverse,moroccan mint tea glass,,,,P2
+infusion,boissons-chaudes,Infusion,infusion|tisane|verveine,square,openverse,herbal tea cup,,,,P2
+cafe-a-emporter,boissons-chaudes,Café à emporter,cafe|a emporter|gobelet,square,openverse,takeaway coffee cup,,,,P2
+matcha-latte,boissons-chaudes,Matcha latte,matcha|latte|the vert,square,openverse,matcha latte,,,,P3
+irish-coffee,boissons-chaudes,Irish coffee,cafe|irish coffee|whisky,square,openverse,irish coffee glass,,,,P3
+demi-de-biere-blonde-pression,bieres,Demi de bière blonde pression,biere|blonde|pression|demi,square,openverse,glass of lager beer,,,,P1
+pinte-de-biere-blonde,bieres,Pinte de bière blonde,biere|blonde|pinte,square,openverse,pint of lager,,,,P1
+biere-ambree,bieres,Bière ambrée,biere|ambree,square,openverse,amber beer glass,,,,P2
+biere-blanche,bieres,Bière blanche,biere|blanche,square,openverse,wheat beer glass,,,,P2
+biere-brune,bieres,Bière brune,biere|brune|stout,square,openverse,stout beer glass,,,,P3
+ipa,bieres,IPA,biere|ipa|craft,square,openverse,ipa beer glass,,,,P2
+bouteille-de-biere-blonde-33-cl,bieres,Bouteille de bière blonde 33 cl,biere|blonde|bouteille,square,openverse,beer bottle 33cl,,,,P1
+canette-de-biere-50-cl,bieres,Canette de bière 50 cl,biere|canette,square,openverse,beer can,,,,P2
+biere-sans-alcool,bieres,Bière sans alcool,biere|sans alcool,square,openverse,alcohol free beer bottle,,,,P2
+panache,bieres,Panaché,biere|panache|limonade,square,openverse,shandy beer,,,,P3
+cidre-brut,bieres,Cidre brut,cidre|brut|bolee,square,openverse,cider bowl brittany,,,,P2
+bouteille-de-cidre,bieres,Bouteille de cidre,cidre|bouteille,square,openverse,cider bottle,,,,P3
+verre-de-vin-rouge,vins,Verre de vin rouge,vin|rouge|verre,square,openverse,glass of red wine,,,,P1
+verre-de-vin-blanc,vins,Verre de vin blanc,vin|blanc|verre,square,openverse,glass of white wine,,,,P1
+verre-de-vin-rose,vins,Verre de vin rosé,vin|rose|verre,square,openverse,glass of rose wine,,,,P1
+bouteille-de-vin-rouge,vins,Bouteille de vin rouge,vin|rouge|bouteille,square,openverse,red wine bottle,,,,P1
+bouteille-de-vin-blanc,vins,Bouteille de vin blanc,vin|blanc|bouteille,square,openverse,white wine bottle,,,,P1
+bouteille-de-vin-rose,vins,Bouteille de vin rosé,vin|rose|bouteille,square,openverse,rose wine bottle,,,,P1
+pichet-de-vin-rouge,vins,Pichet de vin rouge,vin|rouge|pichet,square,openverse,carafe red wine,,,,P2
+coupe-de-champagne,vins,Coupe de champagne,champagne|coupe|bulles,square,openverse,champagne flute,,,,P1
+bouteille-de-champagne,vins,Bouteille de champagne,champagne|bouteille,square,openverse,champagne bottle,,,,P2
+prosecco,vins,Prosecco,prosecco|petillant|bulles,square,openverse,prosecco glass,,,,P3
+kir,vins,Kir,kir|aperitif|vin blanc|cassis,square,openverse,kir cassis glass,,,,P3
+mojito,aperitifs-cocktails,Mojito,cocktail|mojito|menthe|rhum,square,openverse,mojito cocktail,,,,P1
+virgin-mojito,aperitifs-cocktails,Virgin mojito,cocktail|sans alcool|mojito|mocktail,square,openverse,virgin mojito,,,,P1
+spritz,aperitifs-cocktails,Spritz,cocktail|spritz|aperitif,square,openverse,aperol spritz,,,,P1
+pina-colada,aperitifs-cocktails,Piña colada,cocktail|pina colada|coco|ananas,square,openverse,pina colada,,,,P2
+margarita,aperitifs-cocktails,Margarita,cocktail|margarita|tequila,square,openverse,margarita cocktail,,,,P2
+gin-tonic,aperitifs-cocktails,Gin tonic,cocktail|gin|tonic,square,openverse,gin tonic glass,,,,P2
+cosmopolitan,aperitifs-cocktails,Cosmopolitan,cocktail|cosmopolitan|vodka,square,openverse,cosmopolitan cocktail,,,,P3
+sex-on-the-beach,aperitifs-cocktails,Sex on the beach,cocktail|vodka|peche,square,openverse,sex on the beach cocktail,,,,P3
+caipirinha,aperitifs-cocktails,Caipirinha,cocktail|caipirinha|citron vert,square,openverse,caipirinha,,,,P3
+pastis,aperitifs-cocktails,Pastis,aperitif|pastis|anise,square,openverse,pastis glass water,,,,P2
+whisky,aperitifs-cocktails,Whisky,spiritueux|whisky|glacon,square,openverse,whisky glass ice,,,,P2
+rhum-arrange,aperitifs-cocktails,Rhum arrangé,spiritueux|rhum|arrange,square,openverse,rum infused fruit jar,,,,P3
+cocktail-sans-alcool-fruits-rouges,aperitifs-cocktails,Cocktail sans alcool fruits rouges,mocktail|sans alcool|fruits rouges,square,openverse,berry mocktail,,,,P2
+planche-aperitive,aperitifs-cocktails,Planche apéritive,aperitif|planche|charcuterie|fromage,square,openverse,charcuterie board,,,,P1
+cheeseburger,burgers,Cheeseburger,burger|cheese|fromage|boeuf,square,openverse,cheeseburger,,,,P1
+double-cheeseburger,burgers,Double cheeseburger,burger|double|cheese|boeuf,square,openverse,double cheeseburger,,,,P1
+burger-classique,burgers,Burger classique,burger|boeuf|salade|tomate,square,openverse,classic hamburger,,,,P1
+burger-au-bacon,burgers,Burger au bacon,burger|bacon|boeuf,square,openverse,bacon burger,,,,P1
+burger-au-poulet-croustillant,burgers,Burger au poulet croustillant,burger|poulet|crispy,square,openverse,crispy chicken burger,,,,P1
+burger-vegetarien,burgers,Burger végétarien,burger|vegetarien|veggie,square,openverse,veggie burger,,,,P1
+burger-au-chevre,burgers,Burger au chèvre,burger|chevre|miel,square,openverse,goat cheese burger,,,,P2
+burger-raclette,burgers,Burger raclette,burger|raclette|fromage,square,openverse,raclette burger,,,,P2
+burger-au-poisson,burgers,Burger au poisson,burger|poisson|fish,square,openverse,fish burger,,,,P2
+smash-burger,burgers,Smash burger,burger|smash|boeuf,square,openverse,smash burger,,,,P2
+burger-gourmet,burgers,Burger gourmet,burger|gourmet|brioche,square,openverse,gourmet burger brioche,,,,P2
+burger-enfant,burgers,Burger enfant,burger|enfant|mini,square,openverse,kids mini burger,,,,P2
+menu-burger-frites-boisson,burgers,Menu burger frites boisson,menu|burger|frites|boisson,square,openverse,burger fries drink combo,,,,P1
+jambon-beurre,sandwichs,Jambon-beurre,sandwich|baguette|jambon|beurre,square,openverse,ham butter baguette sandwich,,,,P1
+sandwich-poulet-crudites,sandwichs,Sandwich poulet crudités,sandwich|poulet|crudites,square,openverse,chicken sandwich baguette,,,,P1
+sandwich-thon-crudites,sandwichs,Sandwich thon crudités,sandwich|thon|crudites,square,openverse,tuna sandwich baguette,,,,P2
+croque-monsieur,sandwichs,Croque-monsieur,croque monsieur|jambon|fromage,square,openverse,croque monsieur,,,,P1
+croque-madame,sandwichs,Croque-madame,croque madame|oeuf,square,openverse,croque madame,,,,P2
+panini-jambon-fromage,sandwichs,Panini jambon fromage,panini|jambon|fromage,square,openverse,panini ham cheese,,,,P1
+panini-poulet,sandwichs,Panini poulet,panini|poulet,square,openverse,chicken panini,,,,P2
+club-sandwich,sandwichs,Club sandwich,club sandwich|poulet|bacon,square,openverse,club sandwich,,,,P1
+bagel-saumon,sandwichs,Bagel saumon,bagel|saumon|cream cheese,square,openverse,salmon bagel,,,,P2
+hot-dog,sandwichs,Hot-dog,hot dog|saucisse,square,openverse,hot dog,,,,P1
+sandwich-americain,sandwichs,Sandwich américain,americain|frites|steak|baguette,square,openverse,french americain sandwich fries baguette,,,,P2
+banh-mi,sandwichs,Bánh mì,banh mi|vietnamien|sandwich,square,openverse,banh mi,,,,P3
+wrap-vegetarien,sandwichs,Wrap végétarien,wrap|vegetarien|legumes,square,openverse,veggie wrap,,,,P2
+sandwich-triangle,sandwichs,Sandwich triangle,sandwich|triangle|pain de mie,square,openverse,triangle sandwich,,,,P3
+pizza-margherita,pizzas,Pizza margherita,pizza|margherita|tomate|mozzarella,square,openverse,pizza margherita,,,,P1
+pizza-reine,pizzas,Pizza reine,pizza|reine|jambon|champignons,square,openverse,ham mushroom pizza,,,,P1
+pizza-4-fromages,pizzas,Pizza 4 fromages,pizza|4 fromages|fromage,square,openverse,four cheese pizza,,,,P1
+pizza-pepperoni,pizzas,Pizza pepperoni,pizza|pepperoni|chorizo,square,openverse,pepperoni pizza,,,,P1
+pizza-vegetarienne,pizzas,Pizza végétarienne,pizza|vegetarienne|legumes,square,openverse,vegetable pizza,,,,P1
+pizza-orientale,pizzas,Pizza orientale,pizza|merguez|poivrons,square,openverse,merguez pizza,,,,P2
+pizza-calzone,pizzas,Pizza calzone,pizza|calzone,square,openverse,calzone,,,,P2
+pizza-saumon,pizzas,Pizza saumon,pizza|saumon|creme,square,openverse,salmon pizza white base,,,,P2
+pizza-chevre-miel,pizzas,Pizza chèvre miel,pizza|chevre|miel,square,openverse,goat cheese honey pizza,,,,P2
+pizza-poulet-barbecue,pizzas,Pizza poulet barbecue,pizza|poulet|barbecue,square,openverse,bbq chicken pizza,,,,P2
+pizza-burrata,pizzas,Pizza burrata,pizza|burrata|roquette,square,openverse,burrata pizza,,,,P3
+part-de-pizza,pizzas,Part de pizza,pizza|part|slice,square,openverse,pizza slice,,,,P2
+pizza-a-emporter-dans-sa-boite,pizzas,Pizza à emporter dans sa boîte,pizza|a emporter|boite,square,openverse,pizza in box,,,,P2
+tacos-francais,tacos-wraps,Tacos français,tacos|french tacos|frites|sauce fromagere,square,openverse,french tacos,,,,P1
+kebab-assiette,tacos-wraps,Kebab assiette,kebab|assiette|frites,square,openverse,kebab plate fries,,,,P1
+kebab-sandwich-pain,tacos-wraps,Kebab sandwich pain,kebab|sandwich|pain,square,openverse,doner kebab sandwich,,,,P1
+durum,tacos-wraps,Durum,durum|kebab|galette,square,openverse,durum wrap,,,,P1
+wrap-poulet,tacos-wraps,Wrap poulet,wrap|poulet,square,openverse,chicken wrap,,,,P1
+burrito,tacos-wraps,Burrito,burrito|mexicain,square,openverse,burrito,,,,P2
+tacos-mexicains,tacos-wraps,Tacos mexicains,tacos|mexicain|tortilla,square,openverse,mexican tacos,,,,P2
+quesadilla,tacos-wraps,Quesadilla,quesadilla|fromage|tortilla,square,openverse,quesadilla,,,,P2
+nachos,tacos-wraps,Nachos,nachos|guacamole|fromage,square,openverse,nachos cheese,,,,P2
+falafel,tacos-wraps,Falafel,falafel|pita|vegetarien,square,openverse,falafel pita,,,,P2
+shawarma,tacos-wraps,Shawarma,shawarma|poulet|pita,square,openverse,chicken shawarma,,,,P2
+salade-cesar,salades,Salade César,salade|cesar|poulet|parmesan,square,openverse,caesar salad,,,,P1
+salade-nicoise,salades,Salade niçoise,salade|nicoise|thon|oeuf,square,openverse,salade nicoise,,,,P2
+salade-de-chevre-chaud,salades,Salade de chèvre chaud,salade|chevre chaud,square,openverse,warm goat cheese salad,,,,P1
+salade-grecque,salades,Salade grecque,salade|grecque|feta,square,openverse,greek salad,,,,P2
+salade-composee,salades,Salade composée,salade|composee|crudites,square,openverse,mixed salad,,,,P2
+poke-bowl-saumon,salades,Poke bowl saumon,poke|bowl|saumon,square,openverse,salmon poke bowl,,,,P1
+poke-bowl-poulet,salades,Poke bowl poulet,poke|bowl|poulet,square,openverse,chicken poke bowl,,,,P2
+buddha-bowl,salades,Buddha bowl,bowl|vegetarien|vegan,square,openverse,buddha bowl,,,,P2
+taboule,salades,Taboulé,taboule|semoule,square,openverse,tabbouleh,,,,P3
+salade-de-pates,salades,Salade de pâtes,salade|pates,square,openverse,pasta salad,,,,P3
+spaghetti-bolognaise,pates,Spaghetti bolognaise,pates|spaghetti|bolognaise,square,openverse,spaghetti bolognese,,,,P1
+pates-carbonara,pates,Pâtes carbonara,pates|carbonara|lardons,square,openverse,pasta carbonara,,,,P1
+lasagnes,pates,Lasagnes,lasagnes|boeuf|bechamel,square,openverse,lasagna,,,,P1
+penne-arrabbiata,pates,Penne arrabbiata,pates|penne|arrabbiata|tomate,square,openverse,penne arrabbiata,,,,P2
+pates-au-pesto,pates,Pâtes au pesto,pates|pesto|basilic,square,openverse,pesto pasta,,,,P2
+tagliatelles-au-saumon,pates,Tagliatelles au saumon,pates|tagliatelles|saumon|creme,square,openverse,salmon tagliatelle,,,,P2
+raviolis,pates,Raviolis,raviolis|pates fraiches,square,openverse,ravioli,,,,P2
+gnocchis,pates,Gnocchis,gnocchis|pates,square,openverse,gnocchi,,,,P3
+risotto-aux-champignons,pates,Risotto aux champignons,risotto|champignons,square,openverse,mushroom risotto,,,,P2
+mac-and-cheese,pates,Mac and cheese,pates|fromage|gratin,square,openverse,mac and cheese,,,,P3
+plat-du-jour,plats,Plat du jour,plat du jour|assiette,square,openverse,plate of the day restaurant,,,,P1
+couscous,plats,Couscous,couscous|semoule|legumes|merguez,square,openverse,couscous,,,,P1
+tajine,plats,Tajine,tajine|poulet|citron,square,openverse,tagine,,,,P2
+paella,plats,Paella,paella|riz|fruits de mer,square,openverse,paella,,,,P2
+hachis-parmentier,plats,Hachis parmentier,hachis parmentier|puree,square,openverse,cottage pie,,,,P2
+blanquette-de-veau,plats,Blanquette de veau,blanquette|veau,square,openverse,blanquette de veau,,,,P3
+boeuf-bourguignon,plats,Boeuf bourguignon,boeuf bourguignon|mijote,square,openverse,beef bourguignon,,,,P2
+chili-con-carne,plats,Chili con carne,chili|haricots|boeuf,square,openverse,chili con carne,,,,P2
+curry-de-poulet,plats,Curry de poulet,curry|poulet|riz,square,openverse,chicken curry,,,,P2
+quiche-lorraine,plats,Quiche lorraine,quiche|lardons,square,openverse,quiche lorraine,,,,P2
+omelette,plats,Omelette,omelette|oeufs,square,openverse,omelette,,,,P2
+galette-complete,plats,Galette complète,galette|sarrasin|jambon|oeuf|fromage,square,openverse,buckwheat galette complete,,,,P1
+tartiflette,plats,Tartiflette,tartiflette|reblochon|pommes de terre,square,openverse,tartiflette,,,,P2
+moules-frites,plats,Moules-frites,moules|frites,square,openverse,mussels and fries,,,,P2
+soupe-du-jour,plats,Soupe du jour,soupe|veloute,square,openverse,vegetable soup bowl,,,,P2
+entrecote-grillee,viandes-grillades,Entrecôte grillée,viande|entrecote|boeuf|grill,square,openverse,grilled ribeye steak,,,,P1
+steak-frites,viandes-grillades,Steak frites,steak|frites|boeuf,square,openverse,steak frites,,,,P1
+bavette-a-l-echalote,viandes-grillades,Bavette à l'échalote,bavette|echalote|boeuf,square,openverse,flank steak shallot,,,,P2
+tartare-de-boeuf,viandes-grillades,Tartare de boeuf,tartare|boeuf|cru,square,openverse,beef tartare,,,,P2
+poulet-roti,viandes-grillades,Poulet rôti,poulet|roti,square,openverse,roast chicken,,,,P1
+tenders-de-poulet,viandes-grillades,Tenders de poulet,poulet|tenders|pane,square,openverse,chicken tenders,,,,P1
+nuggets-de-poulet,viandes-grillades,Nuggets de poulet,poulet|nuggets,square,openverse,chicken nuggets,,,,P1
+wings-de-poulet,viandes-grillades,Wings de poulet,poulet|wings|ailes|barbecue,square,openverse,chicken wings,,,,P1
+brochettes-de-poulet,viandes-grillades,Brochettes de poulet,brochettes|poulet|grill,square,openverse,chicken skewers,,,,P2
+cotes-d-agneau,viandes-grillades,Côtes d'agneau,agneau|cotes|grill,square,openverse,lamb chops,,,,P3
+travers-de-porc,viandes-grillades,Travers de porc,porc|ribs|barbecue,square,openverse,bbq pork ribs,,,,P2
+magret-de-canard,viandes-grillades,Magret de canard,canard|magret,square,openverse,duck breast,,,,P2
+merguez-grillees,viandes-grillades,Merguez grillées,merguez|grill,square,openverse,grilled merguez,,,,P2
+escalope-milanaise,viandes-grillades,Escalope milanaise,escalope|panee|milanaise,square,openverse,breaded escalope,,,,P3
+fish-and-chips,poissons,Fish and chips,poisson|fish and chips|frites,square,openverse,fish and chips,,,,P1
+pave-de-saumon,poissons,Pavé de saumon,saumon|poisson,square,openverse,salmon fillet plate,,,,P1
+filet-de-cabillaud,poissons,Filet de cabillaud,cabillaud|poisson,square,openverse,cod fillet,,,,P2
+crevettes-sautees,poissons,Crevettes sautées,crevettes|fruits de mer,square,openverse,sauteed shrimp,,,,P2
+calamars-frits,poissons,Calamars frits,calamars|frits|fruits de mer,square,openverse,fried calamari,,,,P2
+plateau-de-fruits-de-mer,poissons,Plateau de fruits de mer,fruits de mer|huitres|plateau,square,openverse,seafood platter,,,,P3
+huitres,poissons,Huîtres,huitres|fruits de mer,square,openverse,oysters,,,,P3
+tartare-de-saumon,poissons,Tartare de saumon,tartare|saumon|cru,square,openverse,salmon tartare,,,,P2
+bouillabaisse,poissons,Bouillabaisse,bouillabaisse|soupe de poisson,square,openverse,bouillabaisse,,,,P3
+sushis-saumon,asiatique,Sushis saumon,sushi|saumon|japonais,square,openverse,salmon nigiri sushi,,,,P1
+makis,asiatique,Makis,maki|sushi|japonais,square,openverse,maki rolls,,,,P1
+california-rolls,asiatique,California rolls,california|sushi|avocat,square,openverse,california roll,,,,P1
+sashimis,asiatique,Sashimis,sashimi|saumon|thon|cru,square,openverse,sashimi platter,,,,P2
+plateau-de-sushis,asiatique,Plateau de sushis,sushi|plateau|assortiment,square,openverse,sushi platter,,,,P1
+brochettes-yakitori,asiatique,Brochettes yakitori,yakitori|brochettes|japonais,square,openverse,yakitori,,,,P2
+ramen,asiatique,Ramen,ramen|nouilles|bouillon,square,openverse,ramen bowl,,,,P1
+pad-thai,asiatique,Pad thaï,pad thai|nouilles|thai,square,openverse,pad thai,,,,P1
+nouilles-sautees,asiatique,Nouilles sautées,nouilles|sautees|wok,square,openverse,stir fried noodles,,,,P1
+riz-cantonais,asiatique,Riz cantonais,riz|cantonais|chinois,square,openverse,fried rice,,,,P1
+nems,asiatique,Nems,nems|vietnamien|frits,square,openverse,spring rolls fried,,,,P1
+rouleaux-de-printemps,asiatique,Rouleaux de printemps,rouleaux de printemps|vietnamien,square,openverse,fresh spring rolls,,,,P2
+gyozas,asiatique,Gyozas,gyoza|raviolis|japonais,square,openverse,gyoza,,,,P2
+dim-sum,asiatique,Dim sum,dim sum|vapeur|chinois,square,openverse,dim sum basket,,,,P2
+poulet-au-curry-rouge,asiatique,Poulet au curry rouge,curry|thai|poulet,square,openverse,thai red curry,,,,P2
+bo-bun,asiatique,Bo bun,bo bun|vietnamien|vermicelles,square,openverse,bo bun,,,,P1
+butter-chicken,asiatique,Butter chicken,indien|butter chicken|curry,square,openverse,butter chicken,,,,P2
+naan-au-fromage,asiatique,Naan au fromage,indien|naan|fromage,square,openverse,cheese naan,,,,P2
+bibimbap,asiatique,Bibimbap,coreen|bibimbap|riz,square,openverse,bibimbap,,,,P3
+poulet-frit-coreen,asiatique,Poulet frit coréen,coreen|poulet frit,square,openverse,korean fried chicken,,,,P3
+frites,accompagnements,Frites,frites|pommes de terre,square,openverse,french fries,,,,P1
+grandes-frites,accompagnements,Grandes frites,frites|grande portion,square,openverse,large fries cone,,,,P2
+frites-maison,accompagnements,Frites maison,frites|maison,square,openverse,homemade fries,,,,P1
+potatoes,accompagnements,Potatoes,potatoes|pommes de terre|epices,square,openverse,potato wedges,,,,P1
+frites-de-patate-douce,accompagnements,Frites de patate douce,frites|patate douce,square,openverse,sweet potato fries,,,,P2
+onion-rings,accompagnements,Onion rings,onion rings|oignons,square,openverse,onion rings,,,,P2
+riz-blanc,accompagnements,Riz blanc,riz,square,openverse,bowl of rice,,,,P2
+puree-maison,accompagnements,Purée maison,puree|pommes de terre,square,openverse,mashed potatoes,,,,P2
+legumes-grilles,accompagnements,Légumes grillés,legumes|grilles,square,openverse,grilled vegetables,,,,P2
+salade-verte,accompagnements,Salade verte,salade|verte,square,openverse,green salad side,,,,P1
+haricots-verts,accompagnements,Haricots verts,haricots verts|legumes,square,openverse,green beans,,,,P3
+pain,accompagnements,Pain,pain|baguette,square,openverse,bread basket,,,,P2
+coleslaw,accompagnements,Coleslaw,coleslaw|chou,square,openverse,coleslaw,,,,P3
+mozzarella-sticks,accompagnements,Mozzarella sticks,mozzarella sticks|fromage|frits,square,openverse,mozzarella sticks,,,,P2
+cheddar-fondu,accompagnements,Cheddar fondu,cheddar|sauce fromage,square,openverse,nacho cheese sauce,,,,P2
+ketchup,sauces,Ketchup,sauce|ketchup|tomate,square,openverse,ketchup dip bowl,,,,P1
+mayonnaise,sauces,Mayonnaise,sauce|mayonnaise,square,openverse,mayonnaise dip bowl,,,,P1
+sauce-barbecue,sauces,Sauce barbecue,sauce|barbecue,square,openverse,bbq sauce dip,,,,P1
+sauce-algerienne,sauces,Sauce algérienne,sauce|algerienne|epicee,square,openverse,spicy sauce dip,,,,P1
+sauce-samourai,sauces,Sauce samouraï,sauce|samourai|piquante,square,openverse,spicy mayo dip,,,,P1
+sauce-blanche,sauces,Sauce blanche,sauce|blanche|yaourt|kebab,square,openverse,garlic yogurt sauce,,,,P1
+sauce-harissa,sauces,Sauce harissa,sauce|harissa|piquante,square,openverse,harissa,,,,P2
+sauce-moutarde,sauces,Sauce moutarde,sauce|moutarde,square,openverse,mustard dip,,,,P2
+sauce-curry,sauces,Sauce curry,sauce|curry,square,openverse,curry sauce dip,,,,P2
+sauce-poivre,sauces,Sauce poivre,sauce|poivre|viande,square,openverse,pepper sauce,,,,P2
+sauce-fromagere,sauces,Sauce fromagère,sauce|fromagere|tacos,square,openverse,cheese sauce,,,,P1
+sauce-soja,sauces,Sauce soja,sauce|soja|asiatique,square,openverse,soy sauce dish,,,,P2
+guacamole,sauces,Guacamole,sauce|guacamole|avocat,square,openverse,guacamole bowl,,,,P2
+sauce-aigre-douce,sauces,Sauce aigre-douce,sauce|aigre douce,square,openverse,sweet and sour sauce,,,,P3
+tranche-de-cheddar,ingredients,Tranche de cheddar,supplement|fromage|cheddar,square,openverse,cheddar slice isolated,,,,P1
+mozzarella,ingredients,Mozzarella,supplement|fromage|mozzarella,square,openverse,mozzarella ball,,,,P1
+fromage-de-chevre,ingredients,Fromage de chèvre,supplement|fromage|chevre,square,openverse,goat cheese log,,,,P1
+raclette,ingredients,Raclette,supplement|fromage|raclette,square,openverse,raclette cheese slice,,,,P2
+emmental-rape,ingredients,Emmental râpé,supplement|fromage|emmental,square,openverse,grated cheese,,,,P2
+bacon,ingredients,Bacon,supplement|bacon,square,openverse,crispy bacon,,,,P1
+jambon,ingredients,Jambon,supplement|jambon,square,openverse,ham slices,,,,P1
+steak-hache,ingredients,Steak haché,supplement|steak|boeuf,square,openverse,beef patty,,,,P1
+poulet-grille,ingredients,Poulet grillé,supplement|poulet,square,openverse,grilled chicken pieces,,,,P1
+oeuf-au-plat,ingredients,Oeuf au plat,supplement|oeuf,square,openverse,fried egg,,,,P1
+tomate,ingredients,Tomate,supplement|legume|tomate,square,openverse,tomato slices,,,,P1
+salade,ingredients,Salade,supplement|legume|laitue,square,openverse,lettuce leaf,,,,P1
+oignons,ingredients,Oignons,supplement|legume|oignons,square,openverse,onion rings raw,,,,P1
+oignons-frits,ingredients,Oignons frits,supplement|oignons frits,square,openverse,crispy fried onions,,,,P2
+cornichons,ingredients,Cornichons,supplement|cornichons|pickles,square,openverse,pickles,,,,P1
+champignons,ingredients,Champignons,supplement|champignons,square,openverse,sliced mushrooms,,,,P1
+poivrons,ingredients,Poivrons,supplement|poivrons,square,openverse,bell peppers,,,,P2
+olives,ingredients,Olives,supplement|olives,square,openverse,olives bowl,,,,P2
+jalapenos,ingredients,Jalapeños,supplement|jalapenos|piment,square,openverse,jalapeno slices,,,,P2
+avocat,ingredients,Avocat,supplement|avocat,square,openverse,avocado half,,,,P2
+ananas,ingredients,Ananas,supplement|ananas,square,openverse,pineapple chunks,,,,P3
+thon,ingredients,Thon,supplement|thon,square,openverse,tuna chunks,,,,P2
+saumon-fume,ingredients,Saumon fumé,supplement|saumon,square,openverse,smoked salmon slices,,,,P2
+chorizo,ingredients,Chorizo,supplement|chorizo,square,openverse,chorizo slices,,,,P2
+merguez,ingredients,Merguez,supplement|merguez,square,openverse,merguez sausages,,,,P2
+pain-burger-brioche,ingredients,Pain burger brioché,pain|brioche|burger,square,openverse,brioche bun,,,,P2
+pain-sans-gluten,ingredients,Pain sans gluten,pain|sans gluten,square,openverse,gluten free bun,,,,P3
+glacons,ingredients,Glaçons,glacons,square,openverse,ice cubes,,,,P3
+citron,ingredients,Citron,citron|agrume,square,openverse,lemon slice,,,,P2
+menthe-fraiche,ingredients,Menthe fraîche,menthe|herbes,square,openverse,fresh mint leaves,,,,P3
+tiramisu,desserts,Tiramisu,dessert|tiramisu|cafe,square,openverse,tiramisu,,,,P1
+fondant-au-chocolat,desserts,Fondant au chocolat,dessert|fondant|chocolat,square,openverse,chocolate lava cake,,,,P1
+mousse-au-chocolat,desserts,Mousse au chocolat,dessert|mousse|chocolat,square,openverse,chocolate mousse,,,,P1
+creme-brulee,desserts,Crème brûlée,dessert|creme brulee,square,openverse,creme brulee,,,,P1
+panna-cotta,desserts,Panna cotta,dessert|panna cotta|fruits rouges,square,openverse,panna cotta,,,,P2
+cheesecake,desserts,Cheesecake,dessert|cheesecake,square,openverse,cheesecake slice,,,,P1
+tarte-aux-pommes,desserts,Tarte aux pommes,dessert|tarte|pommes,square,openverse,apple tart,,,,P2
+tarte-au-citron-meringuee,desserts,Tarte au citron meringuée,dessert|tarte|citron|meringue,square,openverse,lemon meringue tart,,,,P2
+tarte-aux-fraises,desserts,Tarte aux fraises,dessert|tarte|fraises,square,openverse,strawberry tart,,,,P3
+cookie,desserts,Cookie,dessert|cookie|chocolat,square,openverse,chocolate chip cookie,,,,P1
+brownie,desserts,Brownie,dessert|brownie|chocolat,square,openverse,brownie,,,,P1
+muffin,desserts,Muffin,dessert|muffin,square,openverse,muffin,,,,P2
+donut,desserts,Donut,dessert|donut|beignet,square,openverse,donut,,,,P2
+crepe-au-sucre,desserts,Crêpe au sucre,dessert|crepe|sucre,square,openverse,sugar crepe,,,,P1
+crepe-nutella,desserts,Crêpe Nutella,dessert|crepe|chocolat|pate a tartiner,square,openverse,chocolate crepe,,,,P1
+gaufre,desserts,Gaufre,dessert|gaufre|chantilly,square,openverse,waffle,,,,P1
+profiteroles,desserts,Profiteroles,dessert|profiteroles|chocolat,square,openverse,profiteroles,,,,P3
+ile-flottante,desserts,Île flottante,dessert|ile flottante,square,openverse,floating island dessert,,,,P3
+salade-de-fruits,desserts,Salade de fruits,dessert|fruits|salade,square,openverse,fruit salad,,,,P2
+cafe-gourmand,desserts,Café gourmand,dessert|cafe gourmand|mignardises,square,openverse,cafe gourmand,,,,P2
+tiramisu-en-pot,desserts,Tiramisu en pot,dessert|tiramisu|pot|a emporter,square,openverse,tiramisu cup takeaway,,,,P2
+baklava,desserts,Baklava,dessert|baklava|oriental,square,openverse,baklava,,,,P2
+macarons,desserts,Macarons,dessert|macarons,square,openverse,macarons,,,,P3
+yaourt,desserts,Yaourt,dessert|yaourt|laitage,square,openverse,yogurt pot,,,,P3
+fruit-frais,desserts,Fruit frais,dessert|fruit|pomme,square,openverse,fresh fruit,,,,P3
+glace-vanille,glaces,Glace vanille,glace|vanille|boule,square,openverse,vanilla ice cream scoop,,,,P1
+glace-chocolat,glaces,Glace chocolat,glace|chocolat|boule,square,openverse,chocolate ice cream scoop,,,,P1
+glace-fraise,glaces,Glace fraise,glace|fraise|boule,square,openverse,strawberry ice cream,,,,P2
+sorbet-citron,glaces,Sorbet citron,glace|sorbet|citron,square,openverse,lemon sorbet,,,,P2
+cornet-de-glace,glaces,Cornet de glace,glace|cornet,square,openverse,ice cream cone,,,,P1
+coupe-glacee,glaces,Coupe glacée,glace|coupe|chantilly,square,openverse,ice cream sundae,,,,P2
+glace-a-l-italienne,glaces,Glace à l'italienne,glace|italienne|soft,square,openverse,soft serve ice cream,,,,P2
+dame-blanche,glaces,Dame blanche,glace|dame blanche|chocolat chaud,square,openverse,dame blanche,,,,P3
+batonnet-glace,glaces,Bâtonnet glacé,glace|batonnet|esquimau,square,openverse,ice cream bar,,,,P2
+pot-de-glace,glaces,Pot de glace,glace|pot|a emporter,square,openverse,ice cream tub,,,,P2
+croissant,boulangerie,Croissant,viennoiserie|croissant,square,openverse,croissant,,,,P1
+pain-au-chocolat,boulangerie,Pain au chocolat,viennoiserie|pain au chocolat|chocolatine,square,openverse,pain au chocolat,,,,P1
+pain-aux-raisins,boulangerie,Pain aux raisins,viennoiserie|pain aux raisins,square,openverse,pain aux raisins,,,,P2
+chausson-aux-pommes,boulangerie,Chausson aux pommes,viennoiserie|chausson|pommes,square,openverse,apple turnover,,,,P2
+baguette,boulangerie,Baguette,pain|baguette,square,openverse,french baguette,,,,P1
+pain-de-campagne,boulangerie,Pain de campagne,pain|campagne,square,openverse,country bread loaf,,,,P2
+brioche,boulangerie,Brioche,viennoiserie|brioche,square,openverse,brioche,,,,P2
+eclair-au-chocolat,boulangerie,Éclair au chocolat,patisserie|eclair|chocolat,square,openverse,chocolate eclair,,,,P2
+flan-patissier,boulangerie,Flan pâtissier,patisserie|flan,square,openverse,flan patissier,,,,P2
+paris-brest,boulangerie,Paris-brest,patisserie|paris brest|praline,square,openverse,paris brest,,,,P3
+cannele,boulangerie,Cannelé,patisserie|canele,square,openverse,canele,,,,P3
+madeleines,boulangerie,Madeleines,patisserie|madeleines,square,openverse,madeleines,,,,P3
+petit-dejeuner-complet,petit-dejeuner,Petit-déjeuner complet,petit dejeuner|formule|cafe|croissant|jus,square,openverse,continental breakfast,,,,P1
+tartines-beurre-confiture,petit-dejeuner,Tartines beurre confiture,petit dejeuner|tartines|confiture,square,openverse,bread butter jam,,,,P2
+oeufs-brouilles,petit-dejeuner,Oeufs brouillés,petit dejeuner|oeufs|brouilles,square,openverse,scrambled eggs toast,,,,P2
+oeufs-benedicte,petit-dejeuner,Oeufs Bénédicte,brunch|oeufs benedicte,square,openverse,eggs benedict,,,,P2
+avocado-toast,petit-dejeuner,Avocado toast,brunch|avocat|toast,square,openverse,avocado toast,,,,P2
+pancakes,petit-dejeuner,Pancakes,brunch|pancakes|sirop d'erable,square,openverse,pancakes stack,,,,P1
+pain-perdu,petit-dejeuner,Pain perdu,brunch|pain perdu,square,openverse,french toast,,,,P3
+granola-bowl,petit-dejeuner,Granola bowl,petit dejeuner|granola|yaourt|fruits,square,openverse,granola yogurt bowl,,,,P2
+assiette-brunch,petit-dejeuner,Assiette brunch,brunch|assiette|salé,square,openverse,brunch plate,,,,P2
+bacon-et-oeufs,petit-dejeuner,Bacon et oeufs,petit dejeuner|bacon|oeufs,square,openverse,bacon and eggs,,,,P3
+menu-enfant-nuggets,enfants,Menu enfant nuggets,enfant|menu|nuggets|frites,square,openverse,kids meal nuggets fries,,,,P1
+menu-enfant-burger,enfants,Menu enfant burger,enfant|menu|burger,square,openverse,kids burger meal,,,,P1
+menu-enfant-pates,enfants,Menu enfant pâtes,enfant|menu|pates,square,openverse,kids pasta,,,,P2
+compote-a-boire,enfants,Compote à boire,enfant|compote|gourde,square,openverse,fruit puree pouch,,,,P1
+jus-de-fruits-enfant,enfants,Jus de fruits enfant,enfant|jus|brique,square,openverse,kids juice box,,,,P2
+jouet-surprise,enfants,Jouet surprise,enfant|jouet|cadeau,square,openverse,kids toy surprise,,,,P3
+salle-de-restaurant-chaleureuse,ambiance,Salle de restaurant chaleureuse,ambiance|salle|restaurant,square,openverse,cozy restaurant interior,,,,P2
+terrasse,ambiance,Terrasse,ambiance|terrasse|exterieur,square,openverse,restaurant terrace,,,,P2
+comptoir-de-bar,ambiance,Comptoir de bar,ambiance|bar|comptoir,square,openverse,bar counter,,,,P3
+cuisine-ouverte,ambiance,Cuisine ouverte,ambiance|cuisine|chef,square,openverse,open kitchen chef,,,,P3
+table-dressee,ambiance,Table dressée,ambiance|table|dressage,square,openverse,set table restaurant,,,,P3
+banniere-burgers-et-frites,burgers,Bannière burgers et frites,banniere|burger|frites,banner,openverse,burger and fries,,,,P1
+banniere-pizza-au-feu-de-bois,pizzas,Bannière pizza au feu de bois,banniere|pizza|four,banner,openverse,wood fired pizza oven,,,,P1
+banniere-pizzas-sur-table,pizzas,Bannière pizzas sur table,banniere|pizza|table,banner,openverse,pizzas on table top view,,,,P2
+banniere-kebab-et-tacos,tacos-wraps,Bannière kebab et tacos,banniere|kebab|tacos,banner,openverse,kebab grill,,,,P1
+banniere-sushis,asiatique,Bannière sushis,banniere|sushi|japonais,banner,openverse,sushi platter,,,,P1
+banniere-cuisine-asiatique-au-wok,asiatique,Bannière cuisine asiatique au wok,banniere|wok|asiatique,banner,openverse,wok fire cooking,,,,P2
+banniere-cuisine-indienne,asiatique,Bannière cuisine indienne,banniere|indien|curry,banner,openverse,indian food spread,,,,P3
+banniere-salades-et-bowls,salades,Bannière salades et bowls,banniere|salade|bowl|healthy,banner,openverse,healthy bowls top view,,,,P2
+banniere-cuisine-traditionnelle,plats,Bannière cuisine traditionnelle,banniere|plats|traditionnel|brasserie,banner,openverse,french bistro dishes,,,,P2
+banniere-creperie,plats,Bannière crêperie,banniere|crepes|galettes,banner,openverse,crepes galettes,,,,P2
+banniere-couscous-et-tajines,plats,Bannière couscous et tajines,banniere|couscous|tajine|oriental,banner,openverse,moroccan food spread,,,,P2
+banniere-grillades,viandes-grillades,Bannière grillades,banniere|grill|viande|barbecue,banner,openverse,grill flames meat,,,,P2
+banniere-poulet-frit,viandes-grillades,Bannière poulet frit,banniere|poulet|frit|wings,banner,openverse,fried chicken bucket,,,,P2
+banniere-fruits-de-mer,poissons,Bannière fruits de mer,banniere|fruits de mer|poisson,banner,openverse,seafood,,,,P3
+banniere-cuisine-italienne,pates,Bannière cuisine italienne,banniere|italien|pates,banner,openverse,italian pasta table,,,,P2
+banniere-sandwicherie,sandwichs,Bannière sandwicherie,banniere|sandwich|baguette,banner,openverse,sandwiches,,,,P2
+banniere-desserts,desserts,Bannière desserts,banniere|desserts|patisserie,banner,openverse,desserts table,,,,P2
+banniere-glacier,glaces,Bannière glacier,banniere|glaces|ete,banner,openverse,ice cream shop,,,,P3
+banniere-boulangerie,boulangerie,Bannière boulangerie,banniere|boulangerie|viennoiseries,banner,openverse,bakery display,,,,P2
+banniere-cafe,boissons-chaudes,Bannière café,banniere|cafe|coffee shop,banner,openverse,coffee shop,,,,P1
+banniere-brunch,petit-dejeuner,Bannière brunch,banniere|brunch|petit dejeuner,banner,openverse,brunch table top view,,,,P2
+banniere-bar-a-cocktails,aperitifs-cocktails,Bannière bar à cocktails,banniere|cocktails|bar,banner,openverse,cocktails bar,,,,P2
+banniere-bar-a-vins,vins,Bannière bar à vins,banniere|vin|bar a vins,banner,openverse,wine bar,,,,P3
+banniere-bieres-pression,bieres,Bannière bières pression,banniere|biere|pression|pub,banner,openverse,beer taps pub,,,,P3
+banniere-boissons-fraiches,boissons-soft,Bannière boissons fraîches,banniere|boissons|soda|ete,banner,openverse,cold drinks ice,,,,P2
+banniere-salle-de-restaurant,ambiance,Bannière salle de restaurant,banniere|ambiance|salle,banner,openverse,restaurant interior,,,,P1
+banniere-terrasse,ambiance,Bannière terrasse,banniere|ambiance|terrasse,banner,openverse,restaurant terrace,,,,P2
+banniere-cuisine-en-action,ambiance,Bannière cuisine en action,banniere|ambiance|cuisine|chef,banner,openverse,chef cooking kitchen,,,,P2
+banniere-livraison,ambiance,Bannière livraison,banniere|livraison|a emporter,banner,openverse,food delivery bag,,,,P1
+banniere-table-en-bois-vue-de-dessus,ambiance,Bannière table en bois vue de dessus,banniere|fond|bois|neutre,banner,openverse,empty wooden table top view,,,,P1
+banniere-fond-ardoise,ambiance,Bannière fond ardoise,banniere|fond|ardoise|neutre,banner,openverse,slate background texture,,,,P1
+banniere-ingredients-frais,ambiance,Bannière ingrédients frais,banniere|fond|ingredients|legumes,banner,openverse,fresh ingredients flat lay,,,,P2
+mozzarella-di-bufala,ingredients,Mozzarella di bufala,supplement|fromage|mozzarella|burrata,square,openverse,buffalo mozzarella,,,,P2
+parmesan,ingredients,Parmesan,supplement|fromage|parmesan,square,openverse,parmesan cheese,,,,P2
+feta,ingredients,Feta,supplement|fromage|feta,square,openverse,feta cheese,,,,P2
+reblochon,ingredients,Reblochon,supplement|fromage|reblochon,square,openverse,reblochon cheese,,,,P3
+gorgonzola,ingredients,Gorgonzola,supplement|fromage|bleu,square,openverse,blue cheese,,,,P3
+lardons,ingredients,Lardons,supplement|lardons|porc,square,openverse,diced bacon,,,,P2
+kebab-viande,ingredients,Kebab (viande),supplement|kebab|viande,square,openverse,doner kebab meat,,,,P2
+cordon-bleu,ingredients,Cordon bleu,supplement|cordon bleu|poulet,square,openverse,breaded chicken cutlet,,,,P3
+crevettes,ingredients,Crevettes,supplement|crevettes,square,openverse,shrimp,,,,P2
+basilic,ingredients,Basilic,supplement|herbes|basilic,square,openverse,fresh basil leaves,,,,P2
+persil,ingredients,Persil,supplement|herbes|persil,square,openverse,fresh parsley,,,,P3
+coriandre,ingredients,Coriandre,supplement|herbes|coriandre,square,openverse,fresh coriander,,,,P3
+roquette,ingredients,Roquette,supplement|salade|roquette,square,openverse,arugula,,,,P2
+epinards,ingredients,Épinards,supplement|legume|epinards,square,openverse,spinach leaves,,,,P3
+concombre,ingredients,Concombre,supplement|legume|concombre,square,openverse,sliced cucumber,,,,P2
+carottes-rapees,ingredients,Carottes râpées,supplement|legume|carottes,square,openverse,grated carrots,,,,P3
+mais,ingredients,Maïs,supplement|legume|mais,square,openverse,sweet corn kernels,,,,P2
+aubergine,ingredients,Aubergine,supplement|legume|aubergine,square,openverse,eggplant,,,,P3
+courgette,ingredients,Courgette,supplement|legume|courgette,square,openverse,zucchini,,,,P3
+pommes-de-terre,ingredients,Pommes de terre,supplement|legume|pommes de terre,square,openverse,potatoes,,,,P3
+ail,ingredients,Ail,supplement|ail,square,openverse,garlic bulbs,,,,P3
+piment,ingredients,Piment,supplement|piment|epice,square,openverse,red chili peppers,,,,P2
+tomates-cerises,ingredients,Tomates cerises,supplement|tomates cerises,square,openverse,cherry tomatoes,,,,P2
+oignons-rouges,ingredients,Oignons rouges,supplement|oignons rouges,square,openverse,red onion,,,,P2
+noix,ingredients,Noix,supplement|fruits secs|noix,square,openverse,walnuts,,,,P3
+miel,ingredients,Miel,supplement|miel,square,openverse,honey jar,,,,P2
+creme-fraiche,ingredients,Crème fraîche,supplement|creme,square,openverse,sour cream bowl,,,,P3
+riz-basmati,ingredients,Riz basmati,supplement|riz,square,openverse,basmati rice,,,,P3
+fruits-rouges,ingredients,Fruits rouges,supplement|fruits rouges|framboises|myrtilles,square,openverse,mixed berries,,,,P2
+fraises,ingredients,Fraises,supplement|fruit|fraises,square,openverse,strawberries,,,,P2
+banane,ingredients,Banane,supplement|fruit|banane,square,openverse,banana,,,,P3
+sesame,ingredients,Sésame,supplement|sesame|graines,square,openverse,sesame seeds,,,,P3
+chantilly,ingredients,Chantilly,supplement|chantilly|creme fouettee,square,openverse,whipped cream,,,,P2
+sauce-chocolat,ingredients,Sauce chocolat,supplement|chocolat|nappage,square,openverse,chocolate sauce,,,,P2
+caramel,ingredients,Caramel,supplement|caramel|nappage,square,openverse,caramel sauce,,,,P2

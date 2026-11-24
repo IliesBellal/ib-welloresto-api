@@ -71,7 +71,7 @@ WebSocket hub in `internal/infrastructure/websocket/` for live order events. Bac
 
 ### Image bank & image uploads
 
-Image upload endpoints (menu, ScanNOrder, franchise hub, kiosk, CDS — not the merchant logo, user avatars or HACCP photos) go through `internal/imagepick`. It accepts either a multipart file, compressed by `internal/infrastructure/imageopt` before R2, or a JSON `{"image_url"}` that picks an image from the shared Wello Resto image bank (URL kept as is) or from the merchant's own images (file copied). Bank files (`wello_resto_images_storage/image_bank/`) are never deleted: the guard is in `r2.Client.DeleteFile`. The bank is fed only by `cmd/image_bank_import`. See [docs/banque-images.md](docs/banque-images.md).
+Image upload endpoints (menu, ScanNOrder, franchise hub, kiosk, CDS — not the merchant logo, user avatars or HACCP photos) go through `internal/imagepick`. It accepts either a multipart file, compressed by `internal/infrastructure/imageopt` before R2, or a JSON `{"image_url"}` that picks an image from the shared Wello Resto image bank (URL kept as is) or from the merchant's own images (file copied). Bank files (`wello_resto_images_storage/image_bank/`) are never deleted: the guard is in `r2.Client.DeleteFile`. The bank is fed only by `cmd/image_bank_import`, from images gathered by `cmd/image_bank_fetch` (Openverse CC0 photos + Open Food Facts brand packshots, catalogue in `docs/banque-images/catalogue.csv`). See [docs/banque-images.md](docs/banque-images.md).
 
 ### Webhooks
 

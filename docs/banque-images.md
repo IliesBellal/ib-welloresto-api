@@ -14,7 +14,7 @@ Objectif : simplifier la création du menu en proposant des photos prêtes à l'
 | D4 | L'API ne supprime **jamais** un fichier de la banque : la garde est dans `r2.Client.DeleteFile`, par où passent toutes les suppressions de « l'ancienne image » (remplacement, suppression d'image, retrait d'un média de borne ou d'écran CDS). Retirer une image de la banque = `enabled = false`, le fichier reste en place. |
 | D5 | « Mes images » **copie** le fichier sous la clé de la cible (`CopyFile`, côté R2). Partager l'objet ne tiendrait pas : remplacer l'image du produit A effacerait celle du produit B. |
 | D6 | Pas de nouvel endpoint d'écriture. Les endpoints d'upload existants acceptent aussi un corps JSON `{"image_url": "…"}` (package `internal/imagepick`). Seules les URLs de la banque (image active) ou des dossiers R2 de l'établissement (hors HACCP) sont acceptées. Toute autre URL est refusée (`400 invalid_image_url`). Une image retirée de la banque répond `404 image_not_found`. |
-| D7 | La banque est alimentée uniquement par le script `cmd/image_bank_import`. Il n'y a pas de rôle « admin Wello » dans l'API pour un écran d'administration. |
+| D7 | La banque est alimentée uniquement par les scripts : `cmd/image_bank_fetch` (collecte automatique) puis `cmd/image_bank_import` (publication). Il n'y a pas de rôle « admin Wello » dans l'API pour un écran d'administration. |
 | D8 | Toute image envoyée est **allégée** avant R2 (`internal/infrastructure/imageopt`, Go pur, aucun service externe) : plus grand côté limité à 2000 px, orientation EXIF appliquée, puis JPEG qualité 82, ou PNG si l'image a de la transparence. La version allégée n'est retenue que si elle est plus légère ; une image illisible est envoyée telle quelle. Le traitement s'applique au script d'import **et** à tous les uploads des restaurateurs : produits, options, catégories, catégories marketing, bannière ScanNOrder, hub franchise, veille borne, ruban borne, CDS. L'extension peut changer (un PNG opaque devient un JPEG). Les fichiers existants ne sont pas retraités. |
 | D9 | Dupliquer un produit dont l'image vient de la banque garde la même URL (pas de copie). |
 | D10 | Provenance obligatoire : chaque ligne du manifeste porte `source` et `license` (l'import refuse sinon), conservés en base (`source`, `license`, `author`, `source_url`). |
@@ -42,27 +42,56 @@ Ordre commun : la nouvelle image est placée, puis enregistrée, et seulement en
 
 ## Alimenter la banque
 
-1. Déposer les fichiers (jpg, png, webp) dans un dossier, par exemple `images/boissons-soft/canette-cola-33-cl.png`.
-2. Compléter le manifeste CSV. Le point de départ est [banque-images/liste-images.csv](banque-images/liste-images.csv), au bon format. Colonnes :
-   - `slug` : identifiant stable, clé d'upsert ;
-   - `file` : chemin relatif à `--dir` ;
-   - `category` ;
-   - `name` : nom affiché ;
-   - `tags` : séparés par `|` ;
-   - `format` : `square` ou `banner` ;
-   - `source`, `license` : obligatoires ;
-   - `author`, `source_url` ;
-   - `sort_order`, `enabled` : facultatifs.
+Deux commandes : `cmd/image_bank_fetch` constitue les images automatiquement, puis `cmd/image_bank_import` les allège et les publie.
 
-   Les colonnes supplémentaires (`priority`, `sourcing`, `search_en`) sont ignorées.
-3. Simulation, qui n'écrit rien et affiche le gain de compression :
-   ```
-   go run ./cmd/image_bank_import --manifest images/manifest.csv
-   ```
-4. Import, avec `POSTGRES_URL`, `R2_*` et éventuellement `REDIS_URL` :
-   ```
-   go run ./cmd/image_bank_import --manifest images/manifest.csv --apply
-   ```
+### 1. Collecte automatique (`cmd/image_bank_fetch`)
+
+Elle part du catalogue [banque-images/catalogue.csv](banque-images/catalogue.csv) : 476 entrées, dont 410 photos libres et 66 produits de marque, avec une priorité P1, P2 ou P3. Chaque ligne indique où chercher :
+
+| `provider` | Source | Ce qui est retenu |
+|---|---|---|
+| `openverse` | [Openverse](https://openverse.org), licences **CC0** et **Public Domain Mark** uniquement : plats, ingrédients, boissons génériques, bannières | La recherche (`query`, en anglais) vise d'abord les banques de photos professionnelles (StockSnap, rawpixel, WordPress Photo Directory), puis toutes les photos. Sont écartés les dessins, logos, montages et petites images. Le classement tient compte de la source, des mots trouvés et de l'orientation. |
+| `openfoodfacts` | [Open Food Facts](https://world.openfoodfacts.org), photo de face des produits de marque vendus en France (Coca-Cola, Dada, Evian, Heinz…), licence **CC BY-SA 3.0** | Le produit vient du code-barres imposé (`barcode`), sinon de la marque (`brand`). Son nom doit contenir les mots de `query` et aucun mot de `exclude` ; les lots sont écartés. Jusqu'à 10 produits sont comparés et la photo au fond le plus neutre est retenue, pour préférer un packshot détouré à une photo en rayon. Sous `--off-min-background` (60 % de fond neutre par défaut), l'élément n'est pas rempli : à demander au fournisseur. |
+
+Cadrage :
+- vignettes : recadrées en carré ; les produits de marque sont centrés sur un carré blanc, pour ne pas couper la canette ;
+- bannières : recadrées entre 16:9 et 3:1.
+
+```
+go run ./cmd/image_bank_fetch --out ./banque-images [--priority P1] [--only slug1,slug2] [--limit 50]
+```
+
+- Sortie : les images dans `--out/{catégorie}/`, et `--out/manifest.csv` au format de l'import, provenance et licence remplies. Les éléments sans image convenable sont listés dans `--out/non-trouves.csv`.
+- **Relire les images avant l'import.** Pour en remplacer une, supprimer son fichier et relancer : la commande reprend là où elle s'est arrêtée et cherche une autre photo.
+- Openverse limite les appels anonymes à 200 recherches par jour. Pour tout le catalogue en une fois, créer un compte API gratuit et renseigner `OPENVERSE_CLIENT_ID` / `OPENVERSE_CLIENT_SECRET`. Sinon, procéder par priorité (`--priority P1`, puis P2…) sur plusieurs jours.
+- Open Food Facts : 10 recherches par minute. La commande respecte ces limites et réessaie en cas d'erreur ou de surcharge (une erreur 503 passagère laisse l'élément dans `non-trouves.csv` : relancer).
+- Une image supprimée à la relecture est notée dans `--out/rejetees.txt` et n'est plus proposée.
+- Résolution : les aperçus publics de StockSnap et rawpixel font environ 1 000 px, ce qui donne des vignettes de 640 à 1 000 px. C'est suffisant pour la carte, le kiosque et les miniatures. Les photos WordPress et Open Food Facts montent jusqu'à 2 000 px.
+
+Essai réel (24 éléments) : les 17 photos libres ont été trouvées, mais 3 ne correspondaient pas au plat (des « truffes » pour le tiramisu, par exemple). Côté produits de marque, 5 sur 12 ont un packshot détouré exploitable (Coca-Cola, Fanta, Perrier, 1664, Heinz). Pour les autres, Open Food Facts n'a que des photos en rayon ou en main : à demander au fournisseur, ou `--off-min-background 0.2` pour les accepter. **La relecture avant import reste indispensable.**
+
+### 2. Import (`cmd/image_bank_import`)
+
+Simulation, qui n'écrit rien et affiche le gain de compression :
+```
+go run ./cmd/image_bank_import --manifest ./banque-images/manifest.csv
+```
+
+Import, avec `POSTGRES_URL`, `R2_*` et éventuellement `REDIS_URL` :
+```
+go run ./cmd/image_bank_import --manifest ./banque-images/manifest.csv --apply
+```
+
+Colonnes du manifeste, également utilisables pour des images ajoutées à la main (photos fournies par un fournisseur, par exemple) :
+- `slug` : identifiant stable, clé d'upsert ;
+- `file` : chemin relatif au dossier du manifeste ;
+- `category` ;
+- `name` : nom affiché ;
+- `tags` : séparés par `|` ;
+- `format` : `square` ou `banner` ;
+- `source`, `license` : obligatoires ;
+- `author`, `source_url` ;
+- `sort_order`, `enabled` : facultatifs.
 
 Le script est idempotent : un fichier inchangé (même sha256) n'est pas renvoyé, et seules ses métadonnées sont mises à jour. Changer la catégorie ou l'extension d'une image crée une nouvelle clé ; l'ancien fichier reste en place (D4).
 
@@ -75,29 +104,25 @@ Format conseillé des fichiers source :
 
 | Source | Utilisable pour la banque ? |
 |---|---|
-| **CC0 / domaine public** : [Openverse](https://openverse.org) filtré `license=cc0,pdm`, [WordPress Photo Directory](https://wordpress.org/photos/), Wikimedia Commons CC0 | Oui. C'est la source recommandée pour les plats génériques (colonne `sourcing = libre-cc0`). |
+| **CC0 / domaine public** : [Openverse](https://openverse.org) filtré `license=cc0,pdm`, [WordPress Photo Directory](https://wordpress.org/photos/), Wikimedia Commons CC0 | Oui, sans attribution. C'est la source de `image_bank_fetch` pour les plats, ingrédients et bannières. |
+| **Open Food Facts** (photos de produits de marque) | Avec réserves. Licence CC BY-SA 3.0 : l'attribution « Contributeurs Open Food Facts » est conservée en base, mais elle n'est pas affichée sur les cartes des restaurants. Les marques et logos restent la propriété des fabricants : la photo sert à présenter le produit réellement vendu, rien de plus. À remplacer par les packshots officiels dès qu'un fournisseur les fournit. |
 | **Fournisseurs** (packshots de canettes, bouteilles, glaces) | Oui, avec un **accord écrit** du fournisseur ou du distributeur (kit média) pour une diffusion à tous les restaurateurs. Les marques et logos restent la propriété du fabricant. À noter dans `license` (ex. « Accord écrit Fournisseur X 2026-11 »). |
-| **Photos commandées ou générées par IA** | Oui si le contrat ou les conditions de l'outil cèdent l'usage commercial. Utile pour les produits très français (tacos français, sauce algérienne…) introuvables en CC0 (`sourcing = ia-ou-photographe`). |
+| **Photos commandées ou générées par IA** | Oui si le contrat ou les conditions de l'outil cèdent l'usage commercial. Utile pour les produits très français introuvables en CC0 (tacos français, sauce algérienne… : voir `non-trouves.csv`). |
 | **Unsplash** | Déconseillé : la licence exclut la compilation de photos pour reproduire un service similaire ou concurrent ([aide Unsplash](https://help.unsplash.com/en/articles/2612331-why-can-t-i-compile-photos-from-unsplash-to-replicate-a-similar-or-competing-service)). Une banque proposée à tous les clients s'en approche. |
 | **Pexels** | Déconseillé : interdit de redistribuer les photos sur une autre plateforme de photos ([règles Pexels](https://help.pexels.com/hc/en-us/articles/360042332714-What-are-the-rules-for-using-Pexels-photos-or-videos)). |
 | **Pixabay** | Déconseillé : interdit de distribuer le contenu « tel quel » (*standalone*), même redimensionné ou recadré ([licence Pixabay](https://pixabay.com/service/license/)). |
 
 ## Coût estimé
 
-Les estimations reposent sur la liste fournie (375 images : 343 vignettes, 32 bannières) après allègement :
-- environ 350 Ko par JPEG ;
-- environ 900 Ko par PNG détouré (34 images de fournisseurs) ;
-- **≈ 150 Mo** au total.
+Les estimations reposent sur le catalogue (476 images, dont 32 bannières). Mesuré sur un essai réel de 17 images après allègement : **90 Ko par image en moyenne**, de 32 à 350 Ko. Soit environ 45 Mo au total, et moins de 0,1 Go pour 1 000 images.
 
-Pour 1 000 images, compter environ 0,4 Go.
-
-| Poste | Tarif Cloudflare (nov. 2026) | Banque de 375 images | Banque de 1 000 images |
+| Poste | Tarif Cloudflare (nov. 2026) | Banque de 476 images | Banque de 1 000 images |
 |---|---|---|---|
-| Stockage R2 | 10 Go-mois gratuits, puis 0,015 $/Go-mois | 0 $ (≈ 0,002 $/mois hors gratuité) | 0 $ (≈ 0,006 $/mois) |
-| Écritures (classe A) | 1 M/mois gratuites, puis 4,50 $/M | 375 à l'import : 0 $ | 0 $ |
+| Stockage R2 | 10 Go-mois gratuits, puis 0,015 $/Go-mois | 0 $ (≈ 0,001 $/mois hors gratuité) | 0 $ (≈ 0,002 $/mois) |
+| Écritures (classe A) | 1 M/mois gratuites, puis 4,50 $/M | 476 à l'import : 0 $ | 0 $ |
 | Lectures (classe B) | 10 M/mois gratuites, puis 0,36 $/M | quasi nulles (cache CDN) | 0 $ |
 | Sortie réseau | gratuite | 0 $ | 0 $ |
-| Transformations (miniatures) | 5 000 uniques/mois gratuites, puis 0,50 $ / 1 000 | 375 × 3 largeurs ≈ 1 125 : 0 $ | 3 000 : 0 $ |
+| Transformations (miniatures) | 5 000 uniques/mois gratuites, puis 0,50 $ / 1 000 | 476 × 3 largeurs ≈ 1 430 : 0 $ | 3 000 : 0 $ |
 
 Une image de la banque n'est stockée et transformée **qu'une fois**, quel que soit le nombre d'établissements qui l'utilisent. Une photo envoyée par chaque restaurateur, elle, est stockée et transformée pour chacun. La banque coûte donc moins cher que les uploads qu'elle remplace.
 
