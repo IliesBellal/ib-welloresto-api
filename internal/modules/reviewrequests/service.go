@@ -239,7 +239,7 @@ func (s *Service) SendTest(ctx context.Context, merchantID, to string) error {
 		MerchantName:   name,
 		ReviewURL:      reviewURL,
 		UnsubscribeURL: s.unsubscribeURL("exemple"),
-		TestNotice:     "E-mail de test : vos clients reçoivent le même, avec leur prénom, environ 1 h 30 après la clôture de leur commande ScanNOrder.",
+		TestNotice:     "E-mail de test : vos clients reçoivent le même, avec leur prénom, environ 1 h 30 après la clôture de leur commande.",
 	})
 	return err
 }

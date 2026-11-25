@@ -86,9 +86,16 @@ func TestReviewRequests_Postgres(t *testing.T) {
 	legacy := order(2, camille, "", "-1", "CLOSED", 5*time.Hour)                // ancien marqueur ScanNOrder, order_source vide
 	_ = order(3, camille, "SCANNORDER", "SCANNORDER", "CLOSED", 30*time.Minute) // trop récente
 	_ = order(4, camille, "SCANNORDER", "SCANNORDER", "CLOSED", 72*time.Hour)   // trop ancienne
-	_ = order(5, camille, "WELLO_RESTO_POS", "itest", "CLOSED", 3*time.Hour)    // caisse
+	pos := order(5, camille, "WELLO_RESTO_POS", "itest", "CLOSED", 4*time.Hour) // caisse : tous les canaux sont sollicités
 	_ = order(6, camille, "SCANNORDER", "SCANNORDER", "CANCELED", 3*time.Hour)  // annulée
 	_ = order(7, noEmail, "SCANNORDER", "SCANNORDER", "CLOSED", 3*time.Hour)    // sans e-mail
+
+	// Fiche générique (« Comptoir ») : plus de MaxOrdersPerCustomerPerDay commandes
+	// le même jour, jamais sollicitée.
+	comptoir := customer("Comptoir", "comptoir@example.fr")
+	for i := 0; i <= MaxOrdersPerCustomerPerDay; i++ {
+		_ = order(100+i, comptoir, "WELLO_RESTO_POS", "itest", "CLOSED", 3*time.Hour+time.Duration(i)*time.Minute)
+	}
 
 	repo := NewRepository(db)
 	from, to := now.Add(-ReviewWindow), now.Add(-ReviewDelay)
@@ -110,9 +117,9 @@ func TestReviewRequests_Postgres(t *testing.T) {
 		sort.Strings(ids)
 		return ids
 	}
-	want := []string{due, legacy}
+	want := []string{due, legacy, pos}
 	sort.Strings(want)
-	if got := list(); len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+	if got := list(); len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
 		t.Fatalf("candidats = %v, want %v", got, want)
 	}
 
@@ -126,8 +133,10 @@ func TestReviewRequests_Postgres(t *testing.T) {
 	if ok, err := repo.Insert(ctx, row, now); err != nil || ok {
 		t.Fatalf("second Insert = %v, %v", ok, err)
 	}
-	if got := list(); len(got) != 1 || got[0] != legacy {
-		t.Fatalf("après traitement : %v", got)
+	rest := []string{legacy, pos}
+	sort.Strings(rest)
+	if got := list(); len(got) != 2 || got[0] != rest[0] || got[1] != rest[1] {
+		t.Fatalf("après traitement : %v, want %v", got, rest)
 	}
 
 	// Plafond : une demande pending ou sent compte, depuis la date donnée.
@@ -192,16 +201,18 @@ func TestReviewRequests_Postgres(t *testing.T) {
 	exec("enable", `UPDATE scannorder_settings SET review_request_enabled = true WHERE merchant_id = $1`, mid)
 	m := &fakeMailer{}
 	svc := &Service{repo: repo, mail: m, baseURL: "https://sno.example", log: zap.NewNop(), now: func() time.Time { return now }}
-	// La commande restante (ancien marqueur ScanNOrder) n'est pas envoyée :
-	// Camille a déjà reçu une demande (plafond de 90 jours). Elle est
-	// enregistrée comme ignorée et ne revient plus.
-	if res, err := svc.Run(ctx); err != nil || res.Skipped < 1 || len(m.sent) != 0 {
+	// Les commandes restantes (ancien marqueur ScanNOrder, caisse) ne sont pas
+	// envoyées : Camille a déjà reçu une demande (plafond de 90 jours). Elles
+	// sont enregistrées comme ignorées et ne reviennent plus.
+	if res, err := svc.Run(ctx); err != nil || res.Skipped < 2 || len(m.sent) != 0 {
 		t.Fatalf("Run = %+v, %v, envois %d", res, err, len(m.sent))
 	}
 	if res, err := svc.Run(ctx); err != nil || res != (RunResult{}) {
 		t.Fatalf("second Run = %+v, %v", res, err)
 	}
-	if err := db.QueryRowContext(ctx, `SELECT status FROM review_requests WHERE order_id = $1`, legacy).Scan(&status); err != nil || status != StatusSkippedRecent {
-		t.Fatalf("commande restante : %q, %v", status, err)
+	for _, id := range []string{legacy, pos} {
+		if err := db.QueryRowContext(ctx, `SELECT status FROM review_requests WHERE order_id = $1`, id).Scan(&status); err != nil || status != StatusSkippedRecent {
+			t.Fatalf("commande restante %s : %q, %v", id, status, err)
+		}
 	}
 }

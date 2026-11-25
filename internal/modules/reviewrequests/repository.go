@@ -18,9 +18,12 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{database: db}
 }
 
-// ListCandidates lit les commandes ScanNOrder closes entre from et to, d'un
-// établissement qui demande les avis (lien renseigné, abonnement actif), avec
-// un client joignable par e-mail, pas encore considérées.
+// ListCandidates lit les commandes Wello Resto closes entre from et to, quel
+// que soit le canal (ScanNOrder, caisse, borne), d'un établissement qui demande
+// les avis (lien renseigné, abonnement actif), avec un client joignable par
+// e-mail, pas encore considérées. Sont écartés l'e-mail d'un membre de l'équipe
+// et les fiches client génériques (plus de MaxOrdersPerCustomerPerDay commandes
+// en 24 h).
 func (r *Repository) ListCandidates(ctx context.Context, from, to time.Time, limit int) ([]candidate, error) {
 	db := dbx.GetDB(ctx, r.database)
 	rows, err := db.QueryContext(ctx, `
@@ -32,17 +35,27 @@ func (r *Repository) ListCandidates(ctx context.Context, from, to time.Time, lim
 		JOIN merchant m ON CAST(m.id AS TEXT) = o.merchant_id
 		WHERE o.state = 'CLOSED'
 		  AND o.brand = ?
-		  AND (o.order_source = 'SCANNORDER' OR o.created_by IN ('SCANNORDER', '-1'))
 		  AND o.delivered_on >= ? AND o.delivered_on < ?
 		  AND snos.review_request_enabled = TRUE
 		  AND COALESCE(snos.google_review_url, '') <> ''
 		  AND TRIM(COALESCE(c.customer_email, '')) <> ''
+		  -- Fiche « client » de l'établissement lui-même (comptoir, passage) : l'e-mail
+		  -- est celui d'un membre de l'équipe, pas celui d'un client.
+		  AND NOT EXISTS (SELECT 1 FROM users u
+		                  JOIN users_rights ur ON ur.user_id = u.user_id
+		                  WHERE CAST(ur.merchant_id AS TEXT) = o.merchant_id
+		                    AND LOWER(TRIM(COALESCE(u.email, ''))) = LOWER(TRIM(c.customer_email)))
+		  -- Fiche générique : un même client rattaché à beaucoup de commandes le même jour.
+		  AND (SELECT COUNT(*) FROM orders o2
+		       WHERE o2.merchant_id = o.merchant_id AND o2.customer_id = o.customer_id
+		         AND o2.delivered_on >= o.delivered_on - INTERVAL '12 hours'
+		         AND o2.delivered_on <= o.delivered_on + INTERVAL '12 hours') <= ?
 		  AND NOT EXISTS (SELECT 1 FROM subscriptions sub
 		                  WHERE sub.merchant_id = o.merchant_id
 		                    AND (sub.status IN ('suspended', 'canceled') OR sub.scannorder_enabled = FALSE))
 		  AND NOT EXISTS (SELECT 1 FROM review_requests rr WHERE rr.order_id = o.order_id::text)
 		ORDER BY o.delivered_on
-		LIMIT ?`, models.BrandWelloResto, from, to, limit)
+		LIMIT ?`, models.BrandWelloResto, from, to, MaxOrdersPerCustomerPerDay, limit)
 	if err != nil {
 		return nil, err
 	}

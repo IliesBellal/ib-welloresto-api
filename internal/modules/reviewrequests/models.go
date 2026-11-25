@@ -1,10 +1,10 @@
-// Package reviewrequests envoie aux clients des commandes ScanNOrder une
-// demande d'avis Google par e-mail, au nom de l'établissement, et gère le
-// lien « ne plus recevoir » (docs/scannorder-seo.md, « Fiche Google et
-// demandes d'avis »).
+// Package reviewrequests envoie aux clients des commandes Wello Resto (tous
+// canaux : ScanNOrder, caisse, borne ; ni Uber Eats ni Deliveroo) une demande
+// d'avis Google par e-mail, au nom de l'établissement, et gère le lien « ne
+// plus recevoir » (docs/scannorder-seo.md, « Fiche Google et demandes d'avis »).
 //
 // Règles :
-//   - commande ScanNOrder close depuis au moins ReviewDelay et au plus
+//   - commande Wello Resto close depuis au moins ReviewDelay et au plus
 //     ReviewWindow, établissement ayant activé la demande et renseigné son lien
 //     d'avis Google, client avec e-mail ;
 //   - envoi entre QuietHoursEnd et QuietHoursStart, heure de l'établissement ;
@@ -32,7 +32,10 @@ const (
 	// l'établissement ; en dehors, la commande attend le passage suivant.
 	QuietHoursEnd   = 9
 	QuietHoursStart = 21
-	batchSize       = 100
+	// MaxOrdersPerCustomerPerDay : au-delà, la fiche client est jugée générique
+	// (« Comptoir », « Passage ») et n'est pas sollicitée.
+	MaxOrdersPerCustomerPerDay = 5
+	batchSize                  = 100
 )
 
 // Statuts de review_requests (migration 223).
