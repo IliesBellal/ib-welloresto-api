@@ -537,6 +537,7 @@ client appelant encore en `GET` doit migrer vers `POST` (voir
 | DELETE | `/cash_register/link` | authMiddleware | aucun |
 | GET | `/cash_register/{cash_register_id}/` | authMiddleware | aucun |
 | GET | `/cash_register/{cash_register_id}/summary` | authMiddleware | aucun |
+| GET | `/cash_register/{cash_register_id}/collected` | authMiddleware | aucun |
 | GET | `/cash_register/{cash_register_id}/tva-details` | authMiddleware | aucun |
 | PATCH | `/cash_register/{cash_register_id}/close` | authMiddleware | aucun |
 | PATCH | `/cash_register/{cash_register_id}/enclose` | authMiddleware | aucun |

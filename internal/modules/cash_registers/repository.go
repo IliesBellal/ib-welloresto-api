@@ -181,6 +181,54 @@ func (r *CashRegisterRepository) queryCashRegisterReportMOP(ctx context.Context,
 	return lines, rows.Err()
 }
 
+// collectedPaymentsPreviewSQL : encaissements d'un registre AVANT sa
+// fermeture. Mêmes filtres que cashRegisterReportMOPSQL, plus les paiements
+// que la fermeture rattachera à ce registre (paymentsRequalifySQL, étapes
+// 2 / 3 / 3bis : Scan&Order STRIPE, Uber Eats / Deliveroo, borne KIOSK de
+// commandes clôturées sans registre) — sans eux le rappel serait plus bas
+// que le théorique affiché juste après. Plusieurs registres ouverts verront
+// ces paiements en attente : ils iront au premier qui ferme.
+// Arguments : cashRegisterID, merchantID.
+const collectedPaymentsPreviewSQL = `
+SELECT p.mop, CAST(SUM(ROUND(p.amount, 2)) AS DECIMAL(20,0)) AS amount
+FROM orders o
+INNER JOIN payments p ON p.order_id = o.order_id
+WHERE o.brand_status NOT IN ('DELETED','CANCELED','DELIVERY_CANCELED','DELIVERY_FAILED')
+  AND p.enabled IS TRUE
+  AND (
+    p.cash_register_id = ?
+    OR (
+      p.merchant_id = ?
+      AND o.state = 'CLOSED'
+      AND (
+        (p.mop = 'STRIPE' AND p.cash_register_id = 'SCANNORDER')
+        OR (p.mop IN ('UBER_EATS','DELIVEROO') AND (p.cash_register_id IS NULL OR p.cash_register_id IN ('UBER_EATS','DELIVEROO')))
+        OR (p.mop = 'KIOSK' AND (p.cash_register_id IS NULL OR p.cash_register_id = 'KIOSK'))
+      )
+    )
+  )
+GROUP BY p.mop`
+
+func (r *CashRegisterRepository) queryCollectedPaymentsPreview(ctx context.Context, cashRegisterID, merchantID string) ([]models.MOPLine, error) {
+	db := dbx.GetDB(ctx, r.database)
+
+	rows, err := db.QueryContext(ctx, collectedPaymentsPreviewSQL, cashRegisterID, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var lines []models.MOPLine
+	for rows.Next() {
+		var line models.MOPLine
+		if err := rows.Scan(&line.MOP, &line.Amount); err != nil {
+			return nil, err
+		}
+		lines = append(lines, line)
+	}
+	return lines, rows.Err()
+}
+
 func (r *CashRegisterRepository) GetCashRegisterReport(ctx context.Context, cashRegisterID string) (*models.CashRegisterReport, error) {
 	db := dbx.GetDB(ctx, r.database)
 

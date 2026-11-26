@@ -183,6 +183,24 @@ func (h *CashRegisterHandler) GetCashRegisterSummary(w http.ResponseWriter, r *h
 	models.SendJSON(w, http.StatusOK, "cash_register", "get_summary", summary)
 }
 
+// GetCollectedPayments — GET /cash_register/{cash_register_id}/collected :
+// encaissements par moyen de paiement et mode de clôture, avant fermeture.
+func (h *CashRegisterHandler) GetCollectedPayments(w http.ResponseWriter, r *http.Request) {
+	cashRegisterID := chi.URLParam(r, "cash_register_id")
+	if cashRegisterID == "" {
+		models.SendJSON(w, http.StatusBadRequest, "cash_register", "get_collected", map[string]string{"error": "missing_parameter"})
+		return
+	}
+
+	collected, err := h.cashRegisterService.GetCollectedPayments(r.Context(), cashRegisterID)
+	if err != nil {
+		models.SendErrorJSON(w, "cash_register", "get_collected", err)
+		return
+	}
+
+	models.SendJSON(w, http.StatusOK, "cash_register", "get_collected", collected)
+}
+
 func (h *CashRegisterHandler) GetCashRegisterTVADetails(w http.ResponseWriter, r *http.Request) {
 	token := helpers.ExtractToken(r)
 	if strings.TrimSpace(token) == "" {

@@ -2,6 +2,7 @@ package cash_registers
 
 import (
 	"context"
+	"strings"
 	"time"
 	"welloresto-api/internal/logger"
 	"welloresto-api/internal/middleware"
@@ -212,6 +213,48 @@ func (s *CashRegisterService) GetCashRegisterSummary(ctx context.Context, token 
 		return nil, err
 	}
 	return s.cashRegisterRepo.GetCashRegisterSummary(ctx, cashRegisterID, user.MerchantID)
+}
+
+// CollectedPaymentsResponse : encaissements d'un registre, consultables avant
+// sa fermeture (popup « Voulez-vous fermer ce registre ? » de la caisse).
+type CollectedPaymentsResponse struct {
+	ClosingMode string           `json:"closing_mode"` // MANUAL / AUTO, inscrit à l'ouverture
+	Items       []models.MOPLine `json:"items"`
+	Total       int              `json:"total"` // centimes
+}
+
+// GetCollectedPayments renvoie les encaissements par moyen de paiement d'un
+// registre avant sa fermeture : ceux qui y sont déjà rattachés et ceux que la
+// fermeture y rattachera (collectedPaymentsPreviewSQL), donc les montants du
+// théorique affiché ensuite. Remises et commandes réglées sur compte client
+// exclues, comme dans ce théorique (ce ne sont pas des encaissements).
+func (s *CashRegisterService) GetCollectedPayments(ctx context.Context, cashRegisterID string) (*CollectedPaymentsResponse, error) {
+	user, err := middleware.UserFromContext(ctx)
+	if err != nil {
+		return nil, models.ErrUnauthorized
+	}
+	if err := s.requireOwnRegister(ctx, cashRegisterID, user.MerchantID); err != nil {
+		return nil, err
+	}
+
+	mode, _, err := s.cashRegisterRepo.GetRegisterClosingState(ctx, cashRegisterID)
+	if err != nil {
+		return nil, err
+	}
+	lines, err := s.cashRegisterRepo.queryCollectedPaymentsPreview(ctx, cashRegisterID, user.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &CollectedPaymentsResponse{ClosingMode: mode, Items: []models.MOPLine{}}
+	for _, line := range lines {
+		if models.IsDiscountMOP(line.MOP) || strings.EqualFold(strings.TrimSpace(line.MOP), models.AccountMOP) {
+			continue
+		}
+		resp.Items = append(resp.Items, line)
+		resp.Total += line.Amount
+	}
+	return resp, nil
 }
 
 func (s *CashRegisterService) GetCashRegisterTVADetails(ctx context.Context, token string, cashRegisterID string) (*models.CashRegisterDetails, error) {

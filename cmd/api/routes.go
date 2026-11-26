@@ -735,6 +735,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 
 	authH := authModule.NewAuthHandler(authService)
 	posH := posModule.NewPOSHandler(posService, r2Client)
+	posH.SetImagePicker(imagePicker)
 	statsH := statsModule.NewStatsHandler(statsService)
 	menuH := menuModule.NewMenuHandler(menuService, r2Client, translationRepo, translationService)
 	menuH.SetImagePicker(imagePicker)
@@ -2244,6 +2245,7 @@ func SetupRoutes(log *zap.Logger, selectedDB *sql.DB, analyticsDB *sql.DB, cfg *
 		r.Route("/{cash_register_id}", func(r chi.Router) {
 			r.Get("/", cashRegisterH.GetCashRegisterHistoryByID)
 			r.Get("/summary", cashRegisterH.GetCashRegisterSummary)
+			r.Get("/collected", cashRegisterH.GetCollectedPayments)
 			r.Get("/tva-details", cashRegisterH.GetCashRegisterTVADetails)
 			r.Patch("/close", cashRegisterH.CloseCashRegister)
 			r.Patch("/enclose", cashRegisterH.EncloseCashRegister)
