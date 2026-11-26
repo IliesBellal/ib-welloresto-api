@@ -77,7 +77,9 @@ type UserLoginRow struct {
 	StockEnabled      bool
 	ScanNOrderEnabled bool
 	BookingsEnabled   bool
-	KiosksEnabled     bool
+	// KiosksEnabled : flag d'abonnement ET quota facturé subscriptions.max_kiosks
+	// > 0 (0 = module non inclus) — le flag seul vaut TRUE par défaut.
+	KiosksEnabled bool
 
 	// SNO
 	SNOActivated bool

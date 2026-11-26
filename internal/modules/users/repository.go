@@ -225,7 +225,7 @@ SELECT
 	COALESCE(s.stock_enabled, p.stock_enabled, CASE WHEN p.stock_management > 0 THEN TRUE ELSE FALSE END) AS stock_enabled,
 	COALESCE(s.scannorder_enabled, p.scannorder_enabled, p.scannorder_ready, FALSE) AS scannorder_enabled,
 	COALESCE(s.bookings_enabled, p.bookings_enabled, TRUE) AS bookings_enabled,
-	COALESCE(s.kiosks_enabled, p.kiosks_enabled, TRUE) AS kiosks_enabled,
+	(COALESCE(s.kiosks_enabled, p.kiosks_enabled, TRUE) AND COALESCE(s.max_kiosks, 0) > 0) AS kiosks_enabled,
 
     sset.activated,
 
