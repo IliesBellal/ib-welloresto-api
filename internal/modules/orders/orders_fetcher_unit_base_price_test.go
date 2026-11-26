@@ -83,7 +83,7 @@ func productRow(orderItemID string, price, basePrice int64, discountID *int64, d
 // TestFetchAndBuildOrders_ProductPriceContract verrouille le contrat JSON de
 // l'API commandes : `price` est le prix unitaire AVANT remise (base_price) et
 // `discounted_price` le prix final remisé, présent uniquement si une remise
-// s'applique. Régression : `price` renvoyait le prix remisé, si bien que la
+// s'applique (remise, récompense, ou promotion de plateforme sans discount_id). Régression : `price` renvoyait le prix remisé, si bien que la
 // caisse barrait un prix identique au prix remisé dans l'historique.
 func TestFetchAndBuildOrders_ProductPriceContract(t *testing.T) {
 	fetcher, mock := newFetcherWithMock(t)
@@ -100,7 +100,10 @@ func TestFetchAndBuildOrders_ProductPriceContract(t *testing.T) {
 		AddRow(productRow("item_promo", 800, 1000, &discountID, "Happy hour")...).
 		AddRow(productRow("item_plain", 1000, 1000, nil, "")...).
 		AddRow(productRow("item_legacy", 1000, 0, nil, "")...). // ancienne ligne : base_price = 0 (DEFAULT 0 NOT NULL)
-		AddRow(productRow("item_free", 0, 1000, &discountID, "Offert")...)
+		AddRow(productRow("item_free", 0, 1000, &discountID, "Offert")...).
+		// Promotion Uber Eats / Deliveroo : prix payé dans price, prix de
+		// catalogue dans base_price, aucun discount_id.
+		AddRow(productRow("item_marketplace_promo", 130, 1229, nil, "")...)
 	mock.ExpectQuery("oi.quantity, oi.paid_quantity, oi.price").WillReturnRows(productsMock)
 
 	header := make([]driver.Value, headerColumns)
@@ -143,6 +146,9 @@ func TestFetchAndBuildOrders_ProductPriceContract(t *testing.T) {
 		"item_plain":  {Price: 1000, DiscountedPrice: nil},
 		"item_legacy": {Price: 1000, DiscountedPrice: nil}, // repli sur price, jamais 0
 		"item_free":   {Price: 1000, DiscountedPrice: ptr(0)},
+		// Le prix payé doit sortir, sinon la caisse affiche 12,29 € pour une
+		// ligne facturée 1,30 €.
+		"item_marketplace_promo": {Price: 1229, DiscountedPrice: ptr(130)},
 	}
 	for id, w := range want {
 		g, ok := got[id]

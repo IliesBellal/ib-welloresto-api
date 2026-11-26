@@ -2832,6 +2832,9 @@ func (r *MenuRepository) CreateExternalProductTx(ctx context.Context, merchantID
 	db := dbx.GetDB(ctx, r.database)
 	tva := models.MarketplaceTVAFor(alcohol)
 
+	// Le prix Uber vaut pour les trois modes : la caisse affiche une commande
+	// Uber au prix livraison (price_delivery) et une commande à emporter au prix
+	// emporter. Laissées au défaut 0, ces colonnes affichaient 0 € au POS.
 	query := `
 		INSERT INTO products (
 			merchant_id,
@@ -2839,12 +2842,14 @@ func (r *MenuRepository) CreateExternalProductTx(ctx context.Context, merchantID
 			product_desc,
 			category,
 			price,
+			price_take_away,
+			price_delivery,
 			is_available_on_sno,
 			tva_in_id,
 			tva_delivery_id,
 			tva_take_away_id
 		)
-		VALUES (?, ?, ?, ?, ?, FALSE, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, FALSE, ?, ?, ?)
 	`
 
 	newID, err := db.InsertReturningID(ctx, query, "product_id",
@@ -2852,6 +2857,8 @@ func (r *MenuRepository) CreateExternalProductTx(ctx context.Context, merchantID
 		name,
 		description,
 		models.MarketplaceCategoryUberEats,
+		price,
+		price,
 		price,
 		tva.In,
 		tva.Delivery,

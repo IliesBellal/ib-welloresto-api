@@ -264,9 +264,13 @@ func (r *Repository) SyncProduct(ctx context.Context, merchantID string, item De
 		// alcoolisée reconnue à son nom. Sans cela les trois colonnes tombaient au
 		// défaut de la table (0 = non défini, 0 %).
 		tva := models.MarketplaceTVAFor(models.LooksAlcoholic(item.Name) || models.LooksAlcoholic(item.OperationalName))
+		// Le prix Deliveroo vaut pour les trois modes : la caisse affiche une
+		// commande Deliveroo au prix livraison (price_delivery). Laissées au
+		// défaut 0, ces colonnes affichaient 0 € au POS.
+		price := item.UnitPrice.Fractional
 		newID, err := db.InsertReturningID(txCtx,
-			`INSERT INTO products (merchant_id, name, product_desc, price, category, tva_in_id, tva_take_away_id, tva_delivery_id) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
-			"product_id", merchantID, helpers.TruncateRunes(item.Name, 255), item.OperationalName, item.UnitPrice.Fractional, models.MarketplaceCategoryDeliveroo,
+			`INSERT INTO products (merchant_id, name, product_desc, price, price_take_away, price_delivery, category, tva_in_id, tva_take_away_id, tva_delivery_id) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			"product_id", merchantID, helpers.TruncateRunes(item.Name, 255), item.OperationalName, price, price, price, models.MarketplaceCategoryDeliveroo,
 			tva.In, tva.TakeAway, tva.Delivery)
 		if err != nil {
 			logger.FromContext(ctx).Error(err.Error())

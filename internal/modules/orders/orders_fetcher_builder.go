@@ -584,7 +584,7 @@ func (r *OrdersFetcher) FetchAndBuildOrders(ctx context.Context, merchantID stri
 				DiscountID:                   lineDiscountID(discountID, rewardID),
 				RewardID:                     helpers.NullInt64ToPtr(rewardID),
 				DiscountName:                 helpers.NullStringToPtr(discountName),
-				DiscountedPrice:              helpers.NilIfNullInt64Discount(sql.NullInt64{Int64: price.Int64, Valid: discountID.Valid || rewardID.Valid}, price.Int64),
+				DiscountedPrice:              lineDiscountedPrice(basePrice, price, discountID, rewardID),
 				TVAIn:                        helpers.NullFloat64Ptr(tvaIn),
 				TVADelivery:                  helpers.NullFloat64Ptr(tvaDelivery),
 				TVATakeAway:                  helpers.NullFloat64Ptr(tvaTakeAway),
@@ -1062,6 +1062,28 @@ func unitBasePrice(basePrice, price sql.NullInt64) int64 {
 		return basePrice.Int64
 	}
 	return price.Int64
+}
+
+// lineDiscountedPrice renvoie discounted_price, le prix payé de la ligne
+// (oi.price), quand il diffère du prix de base : ligne remisée par une remise ou
+// une récompense, mais aussi ligne Uber Eats / Deliveroo remisée par une
+// promotion de la plateforme, qui n'a pas de discount_id (le webhook garde le
+// prix de catalogue dans base_price et pose le prix payé dans price, cf.
+// marketplacepromo). Sans cela le POS affichait ces lignes au prix avant promotion,
+// et leur somme ne correspondait plus au total de la commande.
+//
+// `price` reste le prix de base (unitBasePrice) : le POS le renvoie comme prix de
+// base quand il réenregistre la commande ; y mettre le prix payé écraserait
+// base_price et effacerait la remise.
+func lineDiscountedPrice(basePrice, price, discountID, rewardID sql.NullInt64) *int64 {
+	paid := price.Int64
+	if discountID.Valid || rewardID.Valid {
+		return &paid
+	}
+	if basePrice.Valid && basePrice.Int64 > 0 && price.Valid && price.Int64 != basePrice.Int64 {
+		return &paid
+	}
+	return nil
 }
 
 // lineDiscountID est le discount_id renvoyé pour une ligne de commande : la

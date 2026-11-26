@@ -98,6 +98,23 @@ est un test du dépôt (`promotion_mapper_test.go`, données du client retirées
   Le taux est figé sur la ligne à la vente (`orderitems.tva_id`) : corriger un
   produit ne change que les ventes à venir.
 
+### 2.2 bis Prix des produits créés automatiquement (2026-11-26)
+
+Constat : les lignes Uber Eats affichaient 0 € à la caisse (et au ticket). Les
+produits créés à la volée n'avaient que `price` ; `price_take_away` et
+`price_delivery` restaient au défaut 0. Or la caisse recalcule chaque ligne d'une
+commande Uber Eats / Deliveroo / livraison avec `price_delivery` du produit
+(`ProductDto.priceForOrderType`, POS), pas avec le prix de la ligne
+(`orderitems.price`, lui correct).
+
+- Le code crée désormais les trois prix à la même valeur (prix unitaire reçu de la
+  plateforme) : `menu.CreateExternalProductTx` (Uber Eats) et
+  `deliveroo_orders` (`SyncProduct`). `price_uber_eats` / `price_deliveroo` restent
+  à 0 (= pas de prix spécifique, voir `marketplacecatalog.ProductExtras`).
+- Migration `225_marketplace_products_channel_prices` : recopie `price` dans les
+  deux colonnes restées à 0 (catégories `UBER_EATS`, `UBER_EATS_TEMP`,
+  `DELIVEROO`). Sur staging : 310 produits `UBER_EATS_TEMP`, tous concernés.
+
 ### 2.3 Tests
 
 - `marketplacepromo` : BOGO réel, option payante non offerte, prorata, centimes non
@@ -128,6 +145,21 @@ est un test du dépôt (`promotion_mapper_test.go`, données du client retirées
   13,99 € + 1,90 €). Le plafond de remise par unité est donc `unit_price − options`.
   Si ce n'était pas vrai, la remise retomberait sur la répartition au prorata :
   le total reste exact.
+- **Prix affiché à la caisse (corrigé côté POS le 2026-11-26).** Le POS affichait
+  une ligne à emporter / en livraison / plateforme au prix catalogue du produit
+  pour ce mode, jamais au prix de la ligne. Il affiche désormais, pour toute ligne
+  déjà enregistrée, le `price` renvoyé par l'API (`orderitems.base_price`) :
+  `ProductDto.displayUnitPrice` (panier et ticket), dans `wello_resto_flutter`.
+  Le correctif 2.2 bis reste utile aux versions du POS pas encore mises à jour et à
+  l'écran de détail d'un produit (qui part du prix catalogue).
+- **Lignes remisées par une promotion de plateforme (corrigé le 2026-11-26).**
+  Elles n'ont pas de `discount_id` : l'API ne renvoyait donc pas de
+  `discounted_price`, et la caisse les affichait au prix avant promotion (ex.
+  12,29 € au lieu de 1,30 €), sans concordance avec le total. `discounted_price`
+  (= `orderitems.price`) est désormais renvoyé dès que `price ≠ base_price`
+  (`lineDiscountedPrice`, `orders_fetcher_builder.go`). `price` reste
+  `base_price` : le POS le renvoie comme prix de base quand il réenregistre une
+  commande, y mettre le prix payé écraserait `base_price` et effacerait la remise.
 - Une promotion sans `discount_items` (pourcentage ou montant fixe sur le panier)
   est répartie sur toutes les lignes au prorata : les lignes sont moins lisibles
   qu'un « 1 offert » mais les totaux et la TVA sont justes. La méthode utilisée est
