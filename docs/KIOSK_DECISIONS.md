@@ -5179,3 +5179,21 @@ ordre) inchangé — même principe additif que `allergen_details`. Omis sans ta
 Implémentation : `mapProductEntryToKioskProduct` (`service.go`), type `KioskTag`
 (`models.go`). Test : `allergen_details_test.go`. La borne retombe sur sa palette
 interne pour un tag sans couleur ou si le champ est absent.
+
+## Logos établissement et borne : plafond 5 Mo + allègement — 2026-11-25
+
+Les logos étaient plafonnés à 2 Mo (back-office et API), trop bas pour un logo
+net. Les deux passent à **5 Mo** (la plus grande des deux limites d'origine
+était déjà 5 Mo, image de veille). API : `maxKioskLogoBytes` et
+`maxMerchantLogoBytes` à 5 Mo ; back-office : `EstablishmentTab.tsx` et
+`KioskSettingsPage.tsx` (constantes et libellés).
+
+Allègement : le logo borne passait déjà par `imagepick` (imageopt, 2000 px
+max, meilleure version entre l'original et le réencodage). Le logo
+établissement (`POST /pos/settings/logo`) envoyait en revanche le fichier brut
+sur R2 : il passe désormais par `imagepick` lui aussi, avec en prime la banque
+d'images / « Mes images » en JSON `{"image_url"}`. Le corps est borné à 5 Mo
++ 1 Mo de multipart (`http.MaxBytesReader`). L'extension peut changer après
+allègement ; l'ancien fichier est supprimé une fois le nouveau enregistré si
+sa clé diffère. Réponse en cas d'échec : mêmes codes `imagepick` que les autres
+uploads (`file_too_large_or_invalid`, `invalid_image_type`, `missing_file_field`).

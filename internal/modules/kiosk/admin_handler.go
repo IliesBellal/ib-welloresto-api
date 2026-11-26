@@ -37,11 +37,12 @@ func NewAdminHandler(s *Service, r2Client *r2.Client) *AdminHandler {
 }
 
 // Plafonds d'upload par type d'asset Kiosk : logo et image de veille n'ont
-// pas la même taille max (2 Mo vs 5 Mo) — corrigé en incrément 4, les deux
-// partageaient auparavant maxKioskSettingsImageBytes = 2 Mo, voir
-// docs/KIOSK_DECISIONS.md.
+// pas la même taille max — corrigé en incrément 4, les deux partageaient
+// auparavant maxKioskSettingsImageBytes = 2 Mo, voir docs/KIOSK_DECISIONS.md.
+// Le logo est passé de 2 à 5 Mo (2026-11-25) : un logo net dépasse vite 2 Mo,
+// et le fichier est de toute façon allégé par imageopt avant R2.
 const (
-	maxKioskLogoBytes      = 2 << 20
+	maxKioskLogoBytes      = 5 << 20
 	maxKioskIdleImageBytes = 5 << 20
 	maxKioskIdleVideoBytes = 50 << 20
 )
