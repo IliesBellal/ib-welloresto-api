@@ -73,7 +73,7 @@ const upsellLinesWhereClause = `
 	AND o.creation_date >= ?
 	AND o.creation_date < ?
 	AND o.state IN ('CLOSED', 'DONE')
-	AND o.brand_status NOT IN ('DELETED', 'CANCELED')
+	AND o.brand_status NOT IN ('DELETED', 'CANCELED', 'DENIED', 'DELIVERY_CANCELED', 'DELIVERY_FAILED')
 `
 
 // UpsellTotals is GetUpsellTotals' aggregate row.
@@ -143,7 +143,7 @@ func upsellLinesWhereClauseMultiPeriod(merchantIDs []string, windows []PeriodWin
 		AND o.merchant_id = ANY(?)
 		AND ` + orWhere + `
 		AND o.state IN ('CLOSED', 'DONE')
-		AND o.brand_status NOT IN ('DELETED', 'CANCELED')
+		AND o.brand_status NOT IN ('DELETED', 'CANCELED', 'DENIED', 'DELIVERY_CANCELED', 'DELIVERY_FAILED')
 	`
 	args := append([]interface{}{merchantIDs}, orArgs...)
 	return strings.TrimSpace(where), args

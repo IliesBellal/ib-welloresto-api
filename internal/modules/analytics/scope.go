@@ -29,6 +29,11 @@ import (
 // (docs/analytics/PERIMETRE.md §1, recalculating AUDIT.md P5 on the PROD
 // perimeter).
 //
+// DENIED, DELIVERY_CANCELED and DELIVERY_FAILED are excluded too: none of
+// them is a sale (e.g. an Uber Eats order closed on ACCEPT_TIMED_OUT keeps
+// its price but has its payments disabled), so counting them inflated the
+// revenue. Same list as the cash register report, plus DENIED.
+//
 // This is a private string constant, not exported — the only way to use it
 // is through AnalyticsOrdersScope below, which forces every caller to also
 // supply the merchant scope and the period bounds. There is no lower-level
@@ -38,7 +43,7 @@ const analyticsOrdersScopeWhere = `
 	AND o.creation_date >= ?
 	AND o.creation_date < ?
 	AND o.state IN ('CLOSED', 'DONE')
-	AND upper(o.brand_status) NOT IN ('DELETED', 'CANCELED')
+	AND upper(o.brand_status) NOT IN ('DELETED', 'CANCELED', 'DENIED', 'DELIVERY_CANCELED', 'DELIVERY_FAILED')
 `
 
 // AnalyticsOrdersScope returns the WHERE fragment (using `?` placeholders,
@@ -215,7 +220,7 @@ func AnalyticsOrdersScopeMultiPeriod(merchantIDs []string, windows []PeriodWindo
 		o.merchant_id = ANY(?)
 		AND ` + orWhere + `
 		AND o.state IN ('CLOSED', 'DONE')
-		AND upper(o.brand_status) NOT IN ('DELETED', 'CANCELED')
+		AND upper(o.brand_status) NOT IN ('DELETED', 'CANCELED', 'DENIED', 'DELIVERY_CANCELED', 'DELIVERY_FAILED')
 	`
 	args := append([]interface{}{merchantIDs}, orArgs...)
 	return strings.TrimSpace(where), args

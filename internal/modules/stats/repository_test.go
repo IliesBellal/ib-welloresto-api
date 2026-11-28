@@ -21,7 +21,7 @@ func TestStatsRepositorySharedRevenuePredicatesAreIsoBehaviorAndReusableForHT(t 
 	start := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
 
-	baseWhere := `FROM orders o\s+WHERE o\.merchant_id = \?\s+AND o\.creation_date >= \?\s+AND o\.creation_date < \?\s+AND o\.state IN \('CLOSED', 'DONE'\)\s+AND o\.brand_status NOT IN \('DELETED', 'CANCELED'\)`
+	baseWhere := `FROM orders o\s+WHERE o\.merchant_id = \?\s+AND o\.creation_date >= \?\s+AND o\.creation_date < \?\s+AND o\.state IN \('CLOSED', 'DONE'\)\s+AND o\.brand_status NOT IN \('DELETED', 'CANCELED', 'DENIED', 'DELIVERY_CANCELED', 'DELIVERY_FAILED'\)`
 
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(SUM(o.price), 0) as total")+`\s+`+baseWhere).
 		WithArgs("m-1", start, end).

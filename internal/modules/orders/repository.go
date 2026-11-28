@@ -396,7 +396,10 @@ const (
 	// liste : une commande annulee ou a prix nul reste affichee (le POS a un
 	// filtre « supprimees ») mais ne doit peser ni dans le CA ni dans le
 	// nombre de couverts. C'est pourquoi OrdersCount et TotalItems different.
-	summaryScope = " AND o.brand_status NOT IN ('CANCELED','DELETED') AND o.price > 0 "
+	// DENIED (refus ou delai d'acceptation depasse Uber Eats) et
+	// DELIVERY_FAILED / DELIVERY_CANCELED sont aussi des commandes sans vente :
+	// leurs paiements sont desactives, elles ne doivent pas peser dans le CA.
+	summaryScope = " AND upper(o.brand_status) NOT IN ('CANCELED','DELETED','DENIED','DELIVERY_CANCELED','DELIVERY_FAILED') AND o.price > 0 "
 )
 
 // GetHistorySummary agrege TOUTE la periode filtree, sans pagination, pour que

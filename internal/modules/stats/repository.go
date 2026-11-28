@@ -259,7 +259,7 @@ func (r *StatsRepository) GetHourlyData(ctx context.Context, merchantID string, 
 	AND o.creation_date >= ?
 	AND o.creation_date < ?
 	AND o.state IN ('CLOSED', 'DONE')
-	AND o.brand_status NOT IN ('DELETED', 'CANCELED')
+	AND o.brand_status NOT IN ('DELETED', 'CANCELED', 'DENIED', 'DELIVERY_CANCELED', 'DELIVERY_FAILED')
 	AND o.isPaid = true
 	GROUP BY hour
 	ORDER BY hour
@@ -365,7 +365,7 @@ const upsellLinesWhereClause = `
 	AND o.creation_date >= ?
 	AND o.creation_date < ?
 	AND o.state IN ('CLOSED', 'DONE')
-	AND o.brand_status NOT IN ('DELETED', 'CANCELED')
+	AND o.brand_status NOT IN ('DELETED', 'CANCELED', 'DENIED', 'DELIVERY_CANCELED', 'DELIVERY_FAILED')
 `
 
 var upsellLinesBaseQuery = upsellLinesFromJoins + upsellLinesWhereClause
@@ -489,7 +489,7 @@ func sharedOrdersRevenueWhereClause() string {
 		AND o.creation_date >= ?
 		AND o.creation_date < ?
 		AND o.state IN ('CLOSED', 'DONE')
-		AND o.brand_status NOT IN ('DELETED', 'CANCELED')
+		AND o.brand_status NOT IN ('DELETED', 'CANCELED', 'DENIED', 'DELIVERY_CANCELED', 'DELIVERY_FAILED')
 	`)
 }
 
