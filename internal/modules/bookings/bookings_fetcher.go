@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"welloresto-api/internal/database/dbx"
-	"welloresto-api/internal/helpers"
 
 	"go.uber.org/zap"
 )
@@ -101,12 +100,14 @@ func (f *BookingFetcher) FetchAndBuildBookings(ctx context.Context, req *Booking
 			&r.Booking.CreatedBy,
 		)
 
-		r.Booking.BookingDateFrom = helpers.NullTimePtr(date_from).UTC().Unix()
-		r.Booking.BookingDateTo = helpers.NullTimePtr(date_to).UTC().Unix()
-		r.Booking.CreationDate = helpers.NullTimePtr(creation_date).UTC().Unix()
 		if err != nil {
 			return nil, err
 		}
+		// NULL (booking_date_to du flux public legacy) = 0, au lieu d'un
+		// panic nil-pointer sur NullTimePtr(...).UTC().
+		r.Booking.BookingDateFrom = nullTimeUnix(date_from)
+		r.Booking.BookingDateTo = nullTimeUnix(date_to)
+		r.Booking.CreationDate = nullTimeUnix(creation_date)
 
 		// build access link (like PHP)
 		r.Booking.AccessLink = "https://reserve.welloresto.fr/restaurant/" + r.Code + "/" + r.Booking.BookingNumber
@@ -179,4 +180,11 @@ func (f *BookingFetcher) FetchAndBuildBookings(ctx context.Context, req *Booking
 	)
 
 	return bookings, nil
+}
+
+func nullTimeUnix(t sql.NullTime) int64 {
+	if !t.Valid {
+		return 0
+	}
+	return t.Time.UTC().Unix()
 }

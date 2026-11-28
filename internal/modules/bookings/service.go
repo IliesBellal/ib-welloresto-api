@@ -468,12 +468,18 @@ func (s *BookingsService) AssignBookingLocations(ctx context.Context, token, boo
 			locationIDs = append(locationIDs, loc.LocationID)
 		}
 
+		// Booking.StartDate/EndDate ne sont pas remplis par le fetcher : la
+		// fenêtre vient des timestamps (UTC) de la résa. Passer "" à Postgres
+		// faisait échouer toute attribution d'au moins une table
+		// (invalid input syntax for type timestamp).
+		windowFrom, windowTo := bookingUTCWindow(booking)
+
 		conflicts, err := s.repo.FindConflictingBookings(
 			txCtx,
 			user.MerchantID,
 			locationIDs,
-			booking.StartDate,
-			booking.EndDate,
+			windowFrom,
+			windowTo,
 			bookingID,
 		)
 		if err != nil {
@@ -495,6 +501,23 @@ func (s *BookingsService) AssignBookingLocations(ctx context.Context, token, boo
 	}
 
 	return result, nil
+}
+
+// bookingUTCWindow renvoie le créneau [début, fin) d'une résa chargée par
+// GetBookingByID, en UTC au format de la base. Sans booking_date_to (flux
+// public legacy), la fin retombe sur la durée par défaut du marchand (90 min
+// à défaut), même convention que bkgEndOfBooking.
+func bookingUTCWindow(b *Booking) (string, string) {
+	from := time.Unix(b.BookingDateFrom, 0).UTC()
+	to := time.Unix(b.BookingDateTo, 0).UTC()
+	if b.BookingDateTo == 0 || !to.After(from) {
+		minutes := b.Merchant.DefaultBookingDuration
+		if minutes <= 0 {
+			minutes = 90
+		}
+		to = from.Add(time.Duration(minutes) * time.Minute)
+	}
+	return from.Format(bookingWallClockLayout), to.Format(bookingWallClockLayout)
 }
 
 func (s *BookingsService) GetBookingAvailability(ctx context.Context, token, date string) (*BookingAvailabilityResponse, error) {
